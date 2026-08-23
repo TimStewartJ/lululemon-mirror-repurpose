@@ -167,8 +167,15 @@ def find_build_tool(name: str) -> pathlib.Path:
         suffix = f"{name}.bat" if name in {"apksigner", "d8"} else f"{name}.exe"
     else:
         suffix = name
+    def version_key(path: pathlib.Path) -> tuple:
+        return tuple(
+            int(part) if part.isdigit() else part
+            for part in re.split(r"[.-]", path.parent.name)
+        )
+
     candidates = sorted(
         pathlib.Path(sdk).glob(f"build-tools/*/{suffix}"),
+        key=version_key,
         reverse=True,
     )
     if not candidates:
@@ -215,8 +222,9 @@ def verify_helper_manifest(apk: pathlib.Path, profile: dict) -> None:
         raise RuntimeError("Stock helper bind service is not exported as required")
 
 
-def install_home(device: Device) -> None:
-    gradle(":android:mirror-home:assembleDebug", "--no-daemon")
+def home_apk(variant: str) -> pathlib.Path:
+    variant_title = variant.capitalize()
+    gradle(f":android:mirror-home:assemble{variant_title}", "--no-daemon")
     apk = (
         REPO
         / "android"
@@ -224,13 +232,44 @@ def install_home(device: Device) -> None:
         / "build"
         / "outputs"
         / "apk"
-        / "debug"
-        / "mirror-home-debug.apk"
+        / variant
+        / f"mirror-home-{variant}.apk"
     )
+    if not apk.is_file():
+        if variant == "release":
+            raise RuntimeError(
+                "Signed release APK was not produced. Copy "
+                "keystore.properties.example to keystore.properties and "
+                "configure a private release key."
+            )
+        raise RuntimeError(f"Expected APK was not produced: {apk}")
+    return apk
+
+
+def install_home(device: Device, variant: str) -> None:
+    apk = home_apk(variant)
     result = device.command("install", "-r", "-g", str(apk))
     if "Success" not in result:
         raise RuntimeError(f"Mirror Home installation failed: {result}")
     device.shell("am", "start", "-n", "dev.mirror.repurpose/.MainActivity")
+
+
+def installed_certificate_sha256(device: Device, package_name: str) -> str:
+    package_paths = [
+        line.removeprefix("package:").strip()
+        for line in device.shell("pm", "path", package_name).splitlines()
+        if line.startswith("package:")
+    ]
+    base_paths = [path for path in package_paths if path.endswith("/base.apk")]
+    candidates = base_paths or package_paths
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Expected one installed APK for {package_name}, received {package_paths!r}"
+        )
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        local_apk = pathlib.Path(temporary_directory) / f"{package_name}.apk"
+        device.command("pull", candidates[0], str(local_apk))
+        return certificate_sha256(local_apk)
 
 
 def install_helper(device: Device, profile_path: pathlib.Path, profile: dict) -> None:
@@ -238,19 +277,7 @@ def install_helper(device: Device, profile_path: pathlib.Path, profile: dict) ->
     backup(device, profile, backup_dir)
     save_kiosk_settings(device, backup_dir / "kiosk-settings.json")
 
-    home_apk = (
-        REPO
-        / "android"
-        / "mirror-home"
-        / "build"
-        / "outputs"
-        / "apk"
-        / "debug"
-        / "mirror-home-debug.apk"
-    )
-    if not home_apk.is_file():
-        gradle(":android:mirror-home:assembleDebug", "--no-daemon")
-    certificate = certificate_sha256(home_apk)
+    certificate = installed_certificate_sha256(device, "dev.mirror.repurpose")
     gradle(
         ":android:system-helper:assembleDebug",
         "--no-daemon",
@@ -377,8 +404,18 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status")
     subparsers.add_parser("backup")
-    subparsers.add_parser("build")
-    subparsers.add_parser("install-home")
+    build_parser = subparsers.add_parser("build")
+    build_parser.add_argument(
+        "--variant",
+        choices=("debug", "release"),
+        default="debug",
+    )
+    install_home_parser = subparsers.add_parser("install-home")
+    install_home_parser.add_argument(
+        "--variant",
+        choices=("debug", "release"),
+        default="debug",
+    )
     subparsers.add_parser("install-helper")
     restore_parser = subparsers.add_parser("restore-helper")
     restore_parser.add_argument(
@@ -392,8 +429,9 @@ def main() -> None:
 
     profile = load_profile(args.profile)
     if args.command == "build":
+        variant_title = args.variant.capitalize()
         gradle(
-            ":android:mirror-home:assembleDebug",
+            f":android:mirror-home:assemble{variant_title}",
             ":android:system-helper:assembleDebug",
             "--no-daemon",
         )
@@ -406,7 +444,7 @@ def main() -> None:
     elif args.command == "backup":
         backup(device, profile, REPO / "backups" / profile["id"])
     elif args.command == "install-home":
-        install_home(device)
+        install_home(device, args.variant)
     elif args.command == "install-helper":
         install_helper(device, args.profile, profile)
     elif args.command == "restore-helper":

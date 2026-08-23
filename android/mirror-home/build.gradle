@@ -2,6 +2,22 @@ plugins {
     id "com.android.application"
 }
 
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.isFile()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+def releaseSigningKeys = ["storeFile", "storePassword", "keyAlias", "keyPassword"]
+def configuredReleaseSigningKeys = releaseSigningKeys.findAll {
+    keystoreProperties.getProperty(it)
+}
+if (!configuredReleaseSigningKeys.isEmpty()
+        && configuredReleaseSigningKeys.size() != releaseSigningKeys.size()) {
+    throw new GradleException(
+            "keystore.properties must define ${releaseSigningKeys.join(', ')}")
+}
+def hasReleaseSigning = configuredReleaseSigningKeys.size() == releaseSigningKeys.size()
+
 android {
     namespace "dev.mirror.repurpose"
     compileSdk 35
@@ -14,10 +30,24 @@ android {
         versionName "0.3.0"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword keystoreProperties.getProperty("storePassword")
+                keyAlias keystoreProperties.getProperty("keyAlias")
+                keyPassword keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 

@@ -9,10 +9,12 @@ Never commit:
 - Wi-Fi SSIDs or passphrases
 - ADB private keys
 - pairing tokens
+- Android release keystores and their passwords
 - device certificates or private keys
 - proprietary APKs, firmware, or partition dumps
 
-Local configuration belongs in ignored `.env` or `local.properties` files.
+Local configuration belongs in ignored `.env`, `local.properties`,
+`keystore.properties`, or `.secrets/` paths.
 
 ## Privileged helper
 

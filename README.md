@@ -62,9 +62,10 @@ and validated on physical hardware.
 Requirements:
 
 - Windows, macOS, or Linux
-- JDK 17
-- Android SDK Platform 34 and Build Tools 34
+- JDK 17 or newer
+- Android SDK Platform 35 and current Android Build Tools
 - Node.js 22 or newer
+- Python 3.9 or newer
 - ADB authorization on the owned Mirror
 
 Create `local.properties` without committing it:
@@ -104,6 +105,26 @@ safely process the compatibility wrapper.
 
 Use `restore-helper --keep-kiosk-settings` after intentionally applying the
 preferred HOME/kiosk configuration; omit the flag for a full settings rollback.
+
+### Release signing
+
+Debug builds are suitable while developing, but a deployed appliance should use
+a private, backed-up release key. Generate one with the JDK `keytool`, copy
+`keystore.properties.example` to the ignored `keystore.properties`, and replace
+all placeholder values:
+
+```powershell
+New-Item -ItemType Directory -Force .secrets
+keytool -genkeypair -v -keystore .secrets\mirror-home.jks `
+  -alias mirror-home -keyalg RSA -keysize 4096 -validity 10000
+Copy-Item keystore.properties.example keystore.properties
+.\tools\mirror.ps1 install-home --variant release
+```
+
+Keep the keystore and its passwords private and backed up. Android accepts
+future in-place updates only when they are signed by the same key. The transient
+helper reads the certificate from the app actually installed on the Mirror, so
+the same workflow supports both debug and release installations.
 
 Run every build, test, lint, and dependency-audit lane with:
 
