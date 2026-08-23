@@ -1,0 +1,29 @@
+{
+  "id": "ifc6309-mirror-329",
+  "product": "mirror",
+  "device": "msm8916_64",
+  "boardPlatform": "msm8916",
+  "androidRelease": "6.0.1",
+  "sdk": 23,
+  "buildId": "IFC-6309-2.0-MIR",
+  "fingerprint": "mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys",
+  "systemApks": {
+    "co.mirror.datacap": {
+      "path": "/system/app/co.mirror.datacap/co.mirror.datacap.apk",
+      "sha256": "4a524b3d9764eb99091981c7eabf0f079ae3ec0e563cfd8c38e57bae75c2227e"
+    },
+    "com.mirror.launcher": {
+      "path": "/system/app/com.mirror.launcher/com.mirror.launcher.apk",
+      "sha256": "982c859bfb1bfb62154df2a962b0b95f2606320d2dd2f2582668155fce5c69a1"
+    },
+    "com.mirror.services": {
+      "path": "/system/app/com.mirror.services/com.mirror.services.apk",
+      "sha256": "dac2f8f7fc58ffac996f3d7cc9d2419f5b3dad6283df2c22b3d132843c3e704d"
+    }
+  },
+  "edl": {
+    "usbId": "05c6:9008",
+    "hwid": "007060e100000000",
+    "oemPkHash": "35ac01e7ee8478261aea5134e07e45cb6c5621d42716c15bb10dee0c53d65759"
+  }
+}

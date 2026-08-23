@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Mirror Home</string>
+    <string name="bootstrap_status">Mirror Repurpose bootstrap\nUSB setup ready</string>
+</resources>

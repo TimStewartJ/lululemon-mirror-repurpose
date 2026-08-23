@@ -1,0 +1,6 @@
+Mirror Repurpose
+Copyright 2026 Mirror Repurpose contributors
+
+The optional compatibility tooling implements the file-layout behavior
+described by CVE-2017-13156 and Android's December 2017 security fix. It does
+not include or redistribute proprietary MIRROR software.

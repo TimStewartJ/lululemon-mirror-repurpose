@@ -1,0 +1,33 @@
+# Control protocol
+
+Mirror Home exposes a versioned JSON API over HTTP and WebSocket.
+
+## Pairing
+
+1. Mirror Home displays a short-lived numeric pairing code.
+2. The companion submits the code over USB, LAN, or BLE.
+3. Mirror Home returns a random bearer token.
+4. The token is stored locally by the companion and can be revoked on-device.
+
+Pairing codes expire, are single-use, and are rate-limited.
+
+## Planned API surface
+
+```text
+GET  /api/v1/status
+POST /api/v1/pair
+POST /api/v1/wifi/configure
+GET  /api/v1/dashboard
+PUT  /api/v1/dashboard
+POST /api/v1/media/play
+POST /api/v1/media/pause
+POST /api/v1/media/seek
+POST /api/v1/media/stop
+GET  /api/v1/media/status
+GET  /api/v1/events          (WebSocket upgrade)
+```
+
+All endpoints except status and pairing require authentication.
+
+Wi-Fi passphrases are accepted only through authenticated local channels and
+are passed directly to Android's Wi-Fi configuration API.
