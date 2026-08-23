@@ -12,9 +12,10 @@ public final class DashboardLayoutConfigTest {
     public void defaultsAreSubtleAndComplete() throws JSONException {
         JSONObject value = DashboardLayoutConfig.defaults().toJson();
         assertEquals(1, value.getInt("version"));
-        assertEquals("gradient", value.getJSONObject("background").getString("mode"));
+        assertEquals("solid", value.getJSONObject("background").getString("mode"));
+        assertEquals("#000000", value.getJSONObject("background").getString("primary"));
         assertEquals(12, value.getJSONArray("widgets").length());
-        assertTrue(value.getJSONObject("background").getInt("dim") >= 50);
+        assertEquals(0, value.getJSONObject("background").getInt("dim"));
         assertEquals(12, DashboardLayoutConfig.parse(value).toJson()
                 .getJSONArray("widgets").length());
     }

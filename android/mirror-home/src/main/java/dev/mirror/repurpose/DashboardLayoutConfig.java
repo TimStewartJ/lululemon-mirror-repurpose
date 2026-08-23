@@ -38,11 +38,11 @@ public final class DashboardLayoutConfig {
             root.put(
                     "background",
                     new JSONObject()
-                            .put("mode", "gradient")
-                            .put("primary", "#020607")
-                            .put("secondary", "#10242b")
+                            .put("mode", "solid")
+                            .put("primary", "#000000")
+                            .put("secondary", "#000000")
                             .put("photo", "")
-                            .put("dim", 58));
+                            .put("dim", 0));
             root.put("textColor", "#e7eff1");
             root.put("accentColor", "#8ab8c2");
 

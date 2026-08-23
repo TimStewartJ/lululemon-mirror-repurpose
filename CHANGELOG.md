@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.1.4 - 2026-08-23
+
+- Use true black as the built-in dashboard default and reset background.
+
 ## 1.1.0 - 2026-08-23
 
 - Freeform built-in mirror dashboard with movable and resizable widgets.
