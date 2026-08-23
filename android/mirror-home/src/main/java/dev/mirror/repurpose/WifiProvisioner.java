@@ -5,8 +5,10 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.net.wifi.WifiConfiguration;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.SystemClock;
 
 import java.util.List;
 import java.util.Locale;
@@ -55,7 +57,7 @@ public final class WifiProvisioner {
             return new Result(false, "Location permission is required for Wi-Fi provisioning");
         }
 
-        if (!wifiManager.isWifiEnabled() && !wifiManager.setWifiEnabled(true)) {
+        if (!enableWifi()) {
             return new Result(false, "Android rejected enabling Wi-Fi");
         }
 
@@ -64,7 +66,23 @@ public final class WifiProvisioner {
         if (configured != null) {
             for (WifiConfiguration existing : configured) {
                 if (quotedSsid.equals(existing.SSID)) {
-                    wifiManager.removeNetwork(existing.networkId);
+                    WifiInfo current = wifiManager.getConnectionInfo();
+                    if (current != null && current.getNetworkId() == existing.networkId) {
+                        configStore.setManagedWifiSsid(ssid);
+                        return new Result(true, "Already connected to this Wi-Fi network");
+                    }
+                    if (!wifiManager.removeNetwork(existing.networkId)) {
+                        boolean enabled = wifiManager.enableNetwork(existing.networkId, true);
+                        boolean reconnected = wifiManager.reconnect();
+                        if (enabled && reconnected) {
+                            configStore.setManagedWifiSsid(ssid);
+                        }
+                        return new Result(
+                                enabled && reconnected,
+                                enabled && reconnected
+                                        ? "Existing Wi-Fi connection requested"
+                                        : "Existing network could not be activated");
+                    }
                 }
             }
         }
@@ -103,7 +121,7 @@ public final class WifiProvisioner {
         if (ssid.isEmpty() || wifiManager == null || Build.VERSION.SDK_INT >= 29) {
             return false;
         }
-        if (!wifiManager.isWifiEnabled() && !wifiManager.setWifiEnabled(true)) {
+        if (!enableWifi()) {
             return false;
         }
         List<WifiConfiguration> configured = wifiManager.getConfiguredNetworks();
@@ -124,8 +142,22 @@ public final class WifiProvisioner {
         if (wifiManager == null || !wifiManager.isWifiEnabled()) {
             return false;
         }
-        android.net.wifi.WifiInfo info = wifiManager.getConnectionInfo();
+        WifiInfo info = wifiManager.getConnectionInfo();
         return info != null && info.getNetworkId() >= 0 && info.getIpAddress() != 0;
+    }
+
+    private boolean enableWifi() {
+        if (wifiManager.isWifiEnabled()) {
+            return true;
+        }
+        if (!wifiManager.setWifiEnabled(true)) {
+            return false;
+        }
+        long deadline = SystemClock.elapsedRealtime() + 10_000L;
+        while (!wifiManager.isWifiEnabled() && SystemClock.elapsedRealtime() < deadline) {
+            SystemClock.sleep(250L);
+        }
+        return wifiManager.isWifiEnabled();
     }
 
     public static String cleanSsid(String ssid) {
