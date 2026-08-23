@@ -11,26 +11,38 @@ import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextClock;
 import android.widget.TextView;
 
+import androidx.media3.ui.AspectRatioFrameLayout;
+import androidx.media3.ui.PlayerView;
+
 public final class MainActivity extends Activity {
-    private final BroadcastReceiver configurationReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            render();
+            if (ControlServerService.ACTION_CONFIGURATION_CHANGED.equals(intent.getAction())) {
+                renderDashboard();
+            } else if (MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED.equals(intent.getAction())) {
+                updateMediaVisibility();
+            }
         }
     };
 
     private ConfigStore configStore;
     private PairingManager pairingManager;
-    private LinearLayout root;
-    private WebView dashboard;
+    private MediaPlaybackManager media;
+    private FrameLayout root;
+    private View dashboardView;
+    private WebView webDashboard;
+    private PlayerView playerView;
     private String loadedDashboardUrl = "";
 
     @Override
@@ -46,53 +58,83 @@ public final class MainActivity extends Activity {
 
         configStore = new ConfigStore(this);
         pairingManager = PairingManager.getInstance(this);
+        media = MediaPlaybackManager.getInstance(this);
+
+        root = new FrameLayout(this);
+        setContentView(root);
+
+        playerView = new PlayerView(this);
+        playerView.setBackgroundColor(Color.BLACK);
+        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        playerView.setVisibility(View.GONE);
+        root.addView(
+                playerView,
+                new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        media.attach(playerView);
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ControlServerService.ACTION_CONFIGURATION_CHANGED);
+        filter.addAction(MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED);
+        registerReceiver(stateReceiver, filter);
         startService(new Intent(this, ControlServerService.class));
-        registerReceiver(
-                configurationReceiver,
-                new IntentFilter(ControlServerService.ACTION_CONFIGURATION_CHANGED));
-        render();
+
+        renderDashboard();
+        updateMediaVisibility();
     }
 
     @Override
     protected void onDestroy() {
-        unregisterReceiver(configurationReceiver);
-        if (dashboard != null) {
-            dashboard.destroy();
-            dashboard = null;
-        }
+        unregisterReceiver(stateReceiver);
+        media.detach(playerView);
+        destroyWebDashboard();
         super.onDestroy();
     }
 
-    private void render() {
+    private void renderDashboard() {
         String dashboardUrl = configStore.getDashboardUrl();
         if (!dashboardUrl.isEmpty()) {
             renderWebDashboard(dashboardUrl);
-            return;
+        } else {
+            renderNativeDashboard();
         }
-        renderNativeDashboard();
     }
 
     private void renderNativeDashboard() {
-        destroyDashboard();
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setBackgroundColor(Color.rgb(3, 12, 20));
-        root.setPadding(48, 48, 48, 48);
+        if (dashboardView != null && webDashboard == null) {
+            if (dashboardView instanceof LinearLayout) {
+                refreshNativeDashboard((LinearLayout) dashboardView);
+            }
+            return;
+        }
+        removeDashboardView();
+
+        LinearLayout dashboard = new LinearLayout(this);
+        dashboard.setOrientation(LinearLayout.VERTICAL);
+        dashboard.setGravity(Gravity.CENTER);
+        dashboard.setBackgroundColor(Color.rgb(3, 12, 20));
+        dashboard.setPadding(48, 48, 48, 48);
+        refreshNativeDashboard(dashboard);
+        setDashboardView(dashboard);
+    }
+
+    private void refreshNativeDashboard(LinearLayout dashboard) {
+        dashboard.removeAllViews();
 
         TextClock clock = new TextClock(this);
         clock.setFormat12Hour("h:mm");
         clock.setFormat24Hour("HH:mm");
         clock.setTextColor(Color.WHITE);
         clock.setTextSize(72);
-        root.addView(clock);
+        dashboard.addView(clock);
 
         TextClock date = new TextClock(this);
         date.setFormat12Hour("EEEE, MMMM d");
         date.setFormat24Hour("EEEE, MMMM d");
         date.setTextColor(Color.LTGRAY);
         date.setTextSize(26);
-        root.addView(date);
+        dashboard.addView(date);
 
         TextView status = new TextView(this);
         status.setText(buildStatusText());
@@ -100,18 +142,17 @@ public final class MainActivity extends Activity {
         status.setTextSize(20);
         status.setGravity(Gravity.CENTER);
         status.setPadding(0, 48, 0, 0);
-        root.addView(status);
-
-        setContentView(root);
+        dashboard.addView(status);
     }
 
     private void renderWebDashboard(String dashboardUrl) {
-        if (dashboard != null && dashboardUrl.equals(loadedDashboardUrl)) {
+        if (webDashboard != null && dashboardUrl.equals(loadedDashboardUrl)) {
             return;
         }
-        destroyDashboard();
-        dashboard = new WebView(this);
-        WebSettings settings = dashboard.getSettings();
+        removeDashboardView();
+
+        webDashboard = new WebView(this);
+        WebSettings settings = webDashboard.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
@@ -119,20 +160,42 @@ public final class MainActivity extends Activity {
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         }
-        dashboard.setWebViewClient(new WebViewClient());
-        dashboard.setBackgroundColor(Color.BLACK);
-        setContentView(dashboard);
+        webDashboard.setWebViewClient(new WebViewClient());
+        webDashboard.setBackgroundColor(Color.BLACK);
         loadedDashboardUrl = dashboardUrl;
-        dashboard.loadUrl(dashboardUrl);
+        setDashboardView(webDashboard);
+        webDashboard.loadUrl(dashboardUrl);
     }
 
-    private void destroyDashboard() {
-        if (dashboard != null) {
-            dashboard.stopLoading();
-            dashboard.destroy();
-            dashboard = null;
+    private void setDashboardView(View view) {
+        dashboardView = view;
+        root.addView(
+                view,
+                0,
+                new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void removeDashboardView() {
+        if (dashboardView != null) {
+            root.removeView(dashboardView);
+            dashboardView = null;
         }
+        destroyWebDashboard();
         loadedDashboardUrl = "";
+    }
+
+    private void destroyWebDashboard() {
+        if (webDashboard != null) {
+            webDashboard.stopLoading();
+            webDashboard.destroy();
+            webDashboard = null;
+        }
+    }
+
+    private void updateMediaVisibility() {
+        playerView.setVisibility(media.isPresentationActive() ? View.VISIBLE : View.GONE);
     }
 
     private String buildStatusText() {
@@ -141,6 +204,7 @@ public final class MainActivity extends Activity {
         text.append("\n\nPairing code: ").append(pairingManager.currentCode());
         text.append("\nUSB setup: http://127.0.0.1:")
                 .append(ControlServerService.PORT);
+        text.append("\nFCast receiver: port ").append(FCastServer.PORT);
 
         WifiManager wifiManager =
                 (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);

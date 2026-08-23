@@ -55,13 +55,16 @@ The companion does not persist Wi-Fi passphrases by default.
 
 ## Media path
 
-The primary media path is HTTP(S) or RTSP playback through a native Android
-player. The companion can expose a selected local file through a range-capable
-HTTP endpoint and instruct the Mirror to play its LAN URL.
+The primary media path is HTTP(S), HLS, DASH, or RTSP playback through pinned
+Media3 1.9.0, whose minimum API is 23. The companion can expose a selected local
+file through a range-capable HTTP endpoint and instruct the Mirror to play its
+LAN URL.
 
 Chromecast receiver compatibility is not assumed: the proprietary Cast receiver
-stack depends on Google services unavailable on this firmware. DLNA discovery
-and browser convenience integrations can be layered over the same playback API.
+stack depends on Google services unavailable on this firmware. Mirror Home
+instead implements the open FCast v3 protocol on TCP 46899 and advertises
+`_fcast._tcp` through Android NSD. DLNA discovery can be layered over the same
+playback API later.
 
 ## Privilege boundary
 

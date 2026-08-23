@@ -19,6 +19,7 @@ public final class ControlServer extends NanoHTTPD {
 
     private final Context context;
     private final ConfigStore configStore;
+    private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
     private final PairingManager pairing;
     private final SystemHelperClient systemHelper;
@@ -28,6 +29,7 @@ public final class ControlServer extends NanoHTTPD {
         super(port);
         this.context = context.getApplicationContext();
         configStore = new ConfigStore(context);
+        media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
         pairing = PairingManager.getInstance(context);
         systemHelper = SystemHelperClient.getInstance(context);
@@ -71,6 +73,30 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/control/name".equals(uri)) {
                 return updateName(readJson(session));
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/media/status".equals(uri)) {
+                return response(Response.Status.OK, media.snapshot());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/play".equals(uri)) {
+                return playMedia(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/pause".equals(uri)) {
+                media.pause();
+                return response(Response.Status.ACCEPTED, media.snapshot());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/resume".equals(uri)) {
+                media.resume();
+                return response(Response.Status.ACCEPTED, media.snapshot());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/stop".equals(uri)) {
+                media.stop();
+                return response(Response.Status.ACCEPTED, media.snapshot());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/seek".equals(uri)) {
+                return seekMedia(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/media/volume".equals(uri)) {
+                return setMediaVolume(readJson(session));
+            }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/system".equals(uri)) {
                 return systemStatus();
             }
@@ -112,6 +138,7 @@ public final class ControlServer extends NanoHTTPD {
         Integer brightness = mirror.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
+        result.put("media", media.snapshot());
         return result;
     }
 
@@ -185,6 +212,44 @@ public final class ControlServer extends NanoHTTPD {
         return response(
                 prepared ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
                 new JSONObject().put("prepared", prepared));
+    }
+
+    private Response playMedia(JSONObject body) throws JSONException {
+        String url = body.optString("url", null);
+        if (!InputValidator.validMediaUrl(url)) {
+            return error(
+                    Response.Status.BAD_REQUEST,
+                    "Media URL must use HTTP, HTTPS, or RTSP");
+        }
+        MediaPlaybackManager.PlayRequest request = new MediaPlaybackManager.PlayRequest(
+                url,
+                body.optString("mimeType", null),
+                body.optString("title", null),
+                body.optDouble("time", 0),
+                body.has("volume") ? body.optDouble("volume", 1) : 1,
+                body.has("speed") ? body.optDouble("speed", 1) : 1);
+        boolean accepted = media.play(request);
+        return response(
+                accepted ? Response.Status.ACCEPTED : Response.Status.BAD_REQUEST,
+                new JSONObject().put("accepted", accepted));
+    }
+
+    private Response seekMedia(JSONObject body) throws JSONException {
+        double seconds = body.optDouble("time", Double.NaN);
+        if (Double.isNaN(seconds) || seconds < 0) {
+            return error(Response.Status.BAD_REQUEST, "Seek time must be non-negative");
+        }
+        media.seek(seconds);
+        return response(Response.Status.ACCEPTED, new JSONObject().put("time", seconds));
+    }
+
+    private Response setMediaVolume(JSONObject body) throws JSONException {
+        double volume = body.optDouble("volume", Double.NaN);
+        if (Double.isNaN(volume) || volume < 0 || volume > 1) {
+            return error(Response.Status.BAD_REQUEST, "Volume must be between 0 and 1");
+        }
+        media.setVolume(volume);
+        return response(Response.Status.ACCEPTED, new JSONObject().put("volume", volume));
     }
 
     private JSONObject readJson(IHTTPSession session)

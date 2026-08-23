@@ -39,4 +39,20 @@ public final class InputValidator {
             return false;
         }
     }
+
+    public static boolean validMediaUrl(String value) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            return uri.getHost() != null
+                    && ("http".equalsIgnoreCase(scheme)
+                    || "https".equalsIgnoreCase(scheme)
+                    || "rtsp".equalsIgnoreCase(scheme));
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
 }

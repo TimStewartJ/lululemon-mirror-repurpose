@@ -14,6 +14,7 @@ public final class ControlServerService extends Service {
 
     private static final String TAG = "ControlServerService";
     private ControlServer server;
+    private FCastServer fcastServer;
 
     @Override
     public void onCreate() {
@@ -25,6 +26,18 @@ public final class ControlServerService extends Service {
         } catch (IOException error) {
             Log.e(TAG, "Unable to start control server", error);
             stopSelf();
+            return;
+        }
+
+        try {
+            fcastServer = new FCastServer(
+                    this,
+                    MediaPlaybackManager.getInstance(this),
+                    new ConfigStore(this));
+            fcastServer.start();
+        } catch (IOException error) {
+            fcastServer = null;
+            Log.e(TAG, "Unable to start FCast receiver", error);
         }
     }
 
@@ -38,6 +51,10 @@ public final class ControlServerService extends Service {
         if (server != null) {
             server.stop();
             server = null;
+        }
+        if (fcastServer != null) {
+            fcastServer.stop();
+            fcastServer = null;
         }
         super.onDestroy();
     }

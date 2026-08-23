@@ -27,4 +27,13 @@ public final class InputValidatorTest {
         assertFalse(InputValidator.validDashboardUrl("javascript:alert(1)"));
         assertFalse(InputValidator.validDashboardUrl("not a url"));
     }
+
+    @Test
+    public void validatesMediaUrls() {
+        assertTrue(InputValidator.validMediaUrl("http://192.168.1.20:4317/media-files/demo.mp4"));
+        assertTrue(InputValidator.validMediaUrl("https://example.test/live/stream.m3u8"));
+        assertTrue(InputValidator.validMediaUrl("rtsp://192.168.1.20/live"));
+        assertFalse(InputValidator.validMediaUrl("file:///sdcard/private.mp4"));
+        assertFalse(InputValidator.validMediaUrl("javascript:alert(1)"));
+    }
 }

@@ -21,7 +21,9 @@ GET  /api/v1/dashboard
 PUT  /api/v1/dashboard
 POST /api/v1/media/play
 POST /api/v1/media/pause
+POST /api/v1/media/resume
 POST /api/v1/media/seek
+POST /api/v1/media/volume
 POST /api/v1/media/stop
 GET  /api/v1/media/status
 GET  /api/v1/system
@@ -37,3 +39,16 @@ are passed directly to Android's Wi-Fi configuration API.
 The device API does not emit permissive CORS headers. Browser clients use the
 companion's same-origin proxy, preventing unrelated websites from scripting the
 pairing endpoint through a visitor's browser.
+
+## FCast
+
+Mirror Home implements FCast protocol v3 on TCP port `46899`:
+
+- Version and Initial handshakes
+- Play, Pause, Resume, Stop, Seek, SetVolume, and SetSpeed
+- PlaybackUpdate, VolumeUpdate, PlaybackError, Ping, and Pong
+- `_fcast._tcp` DNS-SD advertisement
+
+Packets larger than 32 KB and more than eight simultaneous clients are rejected.
+Idle clients expire, malformed commands receive a playback error without
+tearing down an otherwise healthy connection.
