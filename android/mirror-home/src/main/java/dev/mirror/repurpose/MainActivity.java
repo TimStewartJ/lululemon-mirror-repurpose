@@ -34,6 +34,9 @@ public final class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             if (ControlServerService.ACTION_CONFIGURATION_CHANGED.equals(intent.getAction())) {
                 renderDashboard();
+            } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(intent.getAction())
+                    || WifiManager.WIFI_STATE_CHANGED_ACTION.equals(intent.getAction())) {
+                renderDashboard();
             } else if (MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED.equals(intent.getAction())) {
                 updateMediaVisibility();
             }
@@ -82,6 +85,8 @@ public final class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ControlServerService.ACTION_CONFIGURATION_CHANGED);
         filter.addAction(MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED);
+        filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
+        filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -91,6 +96,14 @@ public final class MainActivity extends Activity {
 
         renderDashboard();
         updateMediaVisibility();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (root != null) {
+            renderDashboard();
+        }
     }
 
     @Override
