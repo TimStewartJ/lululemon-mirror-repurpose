@@ -46,6 +46,28 @@ The companion's **Restore stock HOME** action changes the preferred activity
 back to `com.mirror.launcher/.SplashActivity`. The stock package is never
 disabled or removed.
 
+## Mirror Home update rollback
+
+`install-home` is transactional. It:
+
+1. verifies the exact device profile,
+2. builds the requested variant,
+3. refuses a signing-certificate mismatch,
+4. pulls the currently installed APK into the ignored backup directory,
+5. installs the candidate,
+6. starts HOME and verifies its reported version and resumed activity,
+7. automatically reinstalls the previous APK if the health check fails.
+
+Manual rollback uses the latest backup unless an explicit APK is supplied:
+
+```powershell
+.\tools\mirror.ps1 rollback-home
+.\tools\mirror.ps1 rollback-home --backup C:\path\to\base.apk
+```
+
+The application also schedules a 15-minute watchdog that restarts its control
+service and reconnects the stock Binder after process loss.
+
 ## Fastboot
 
 The IFC6309 LK bootloader is secure and locked:

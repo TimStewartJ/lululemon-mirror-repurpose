@@ -28,13 +28,29 @@ The optional helper is intentionally capability-based:
 - local backup and verified rollback before installation
 - transient installation only; restore the factory APK before reboot
 
-The companion and Mirror authenticate using a user-confirmed pairing code and a
-random token. LAN control is denied until pairing succeeds.
+The Mirror issues an independent random token for every named browser/client
+after a user-confirmed pairing code. Only SHA-256 token hashes are persisted,
+and clients can be revoked independently. LAN control is denied until pairing
+succeeds.
 
 The device API does not enable cross-origin browser access. The companion
 proxies browser requests over the same origin. NanoHTTPD temporary storage is
 redirected into the application's private cache, request bodies are bounded,
 and the server does not use NanoHTTPD's general-purpose file handler.
+
+## Local transport limitations
+
+The stock Android 6 image cannot provide a browser-trusted local TLS identity
+without installing a private CA or using an external HTTPS reverse proxy.
+Mirror Home therefore serves its direct controls over authenticated HTTP on the
+trusted LAN. Bearer tokens never appear in query strings; first-run origin
+handoff uses a URL fragment, which is not transmitted to the server and is
+removed immediately.
+
+Do not expose ports `8787` or `46899` to the public Internet or an untrusted
+wireless network. FCast v3 is plaintext and has no standard sender
+authentication. The owner-controlled OS plan moves controls and FCast v4 to
+TLS-capable current components.
 
 ## Reporting
 

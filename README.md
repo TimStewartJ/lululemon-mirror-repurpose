@@ -12,8 +12,11 @@ The project intentionally separates:
   installed through a device-specific signature-verification flaw. It applies
   persistent kiosk/default-HOME settings and must be restored to the factory APK
   before reboot. It is not required for normal dashboard operation.
-- **Companion**: a local web application for USB setup, LAN administration,
-  Bluetooth provisioning, automation, and media streaming.
+- **Device-hosted controls**: a responsive local web application served by
+  Mirror Home itself for phone/desktop pairing, dashboards, schedules, photos,
+  Wi-Fi, media, and client revocation.
+- **Companion**: an optional desktop application for ADB recovery, USB media,
+  and development workflows.
 
 ## Supported hardware
 
@@ -48,14 +51,14 @@ See [Recovery](docs/recovery.md) before installing anything.
 
 ## Project status
 
-Development is active. Mirror Home currently provides a device-validated
-full-screen HOME activity, authenticated USB/LAN control API, pairing flow,
-Wi-Fi enrollment, configurable web-dashboard URL, and stock Binder-backed
-brightness/name controls. Media3 playback supports HTTP(S), HLS, DASH, and
-RTSP, while an FCast v3 receiver provides open cast-style LAN control on the
-standard port. Encrypted BLE provisioning is available for first-run setup,
-with USB/ADB as the unattended fallback. Feature checkpoints are tracked in Git
-and validated on physical hardware.
+Mirror Home is a device-validated standalone appliance. It serves its own
+phone/desktop control UI, displays QR onboarding, creates a Wi-Fi Direct setup
+network when no managed Wi-Fi exists, supports named revocable clients,
+device-local clock/photo dashboards, custom and Home Assistant URLs, offline
+fallback, timezone-aware sleep/wake schedules, and watchdog recovery. Media3
+supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
+The desktop companion remains available but is no longer required for daily
+operation.
 
 ## Development
 
@@ -80,11 +83,15 @@ Build:
 .\gradlew.bat :android:mirror-home:assembleDebug
 ```
 
-The eventual one-command workflow is exposed through `tools\mirror.ps1`.
+The one-command build, installation, rollback, and recovery workflow is exposed
+through `tools\mirror.ps1`.
 
-See [Streaming](docs/streaming.md) for sender compatibility and recommended
+Start with the [User guide](docs/user-guide.md). See
+[Streaming](docs/streaming.md) for sender compatibility and recommended
 media formats and [Provisioning](docs/provisioning.md) for USB, BLE, and LAN
-setup. See [Automation](docs/automation.md) for REST examples.
+setup. See [Automation](docs/automation.md) for REST examples,
+[Casting roadmap](docs/casting-roadmap.md), and
+[OS replacement](docs/os-replacement.md).
 
 Common development commands:
 
@@ -92,6 +99,7 @@ Common development commands:
 .\tools\mirror.ps1 status
 .\tools\mirror.ps1 backup
 .\tools\mirror.ps1 install-home
+.\tools\mirror.ps1 rollback-home
 .\tools\mirror.ps1 install-helper
 .\tools\mirror.ps1 forward
 .\tools\mirror.ps1 restore-helper

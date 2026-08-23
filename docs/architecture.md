@@ -3,12 +3,12 @@
 ## Components
 
 ```text
-Browser companion
-  | USB: adb forward
-  | LAN: authenticated HTTP
-  | BLE: provisioning GATT service
+Phone / desktop browser
+  | QR + LAN/Wi-Fi Direct: same-origin authenticated HTTP
+  | BLE: encrypted provisioning GATT service
   v
 Mirror Home (ordinary APK, default HOME)
+  | device-hosted responsive controls
   | dashboard renderer
   | Wi-Fi provisioning
   | media player
@@ -39,7 +39,18 @@ It requests only normal or user-grantable permissions. The stock
 `com.mirror.services` Binder is used where available for brightness, backlight,
 name, and setup-state controls.
 
-## Companion
+## Device-hosted controls
+
+Mirror Home serves the control application and its API from the same origin on
+port `8787`. No CORS access is enabled. A browser pairs with the code shown on
+the physical display and stores its own revocable credential. Tokens are stored
+hashed on the Mirror.
+
+The app advertises `_http._tcp` and `_mirror-home._tcp` through Android NSD.
+When no managed Wi-Fi exists, it creates a WPA2 Wi-Fi Direct group and displays
+join/open QR codes.
+
+## Optional companion
 
 The companion is a local Node.js service and static browser UI:
 
@@ -51,7 +62,8 @@ The companion is a local Node.js service and static browser UI:
 - hosts local media files with range requests
 - sends playback, dashboard, and automation commands
 
-The companion does not persist Wi-Fi passphrases by default.
+The companion does not persist Wi-Fi passphrases and is not required for daily
+control.
 
 BLE characteristics require an encrypted bond. The on-screen pairing code then
 authorizes token issuance and Wi-Fi enrollment at the application layer.
@@ -66,8 +78,8 @@ LAN URL.
 Chromecast receiver compatibility is not assumed: the proprietary Cast receiver
 stack depends on Google services unavailable on this firmware. Mirror Home
 instead implements the open FCast v3 protocol on TCP 46899 and advertises
-`_fcast._tcp` through Android NSD. DLNA discovery can be layered over the same
-playback API later.
+`_fcast._tcp` through Android NSD. FCast v4/WebRTC mirroring is intentionally deferred to the owner-controlled OS
+because it requires TLS 1.3, FlatBuffers, and a WebRTC answerer.
 
 ## Privilege boundary
 

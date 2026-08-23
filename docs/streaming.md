@@ -5,6 +5,11 @@
 Mirror Home is an FCast v3 receiver on TCP port `46899`. Compatible FCast
 senders can discover it through `_fcast._tcp` and send normal media URLs.
 
+The current receiver does not claim FCast v4 screen-mirroring capability.
+Version 4 requires TLS 1.3, FlatBuffers, certificate pinning, and a WebRTC
+answerer that are not present in the Android 6 appliance. See
+[Casting roadmap](casting-roadmap.md).
+
 The companion can also host a local file and call Mirror Home's authenticated
 media API directly. This works over USB during setup and over Wi-Fi once the
 Mirror has joined the LAN.
@@ -35,6 +40,9 @@ Container: fast-start MP4, fragmented MP4, or HLS
 Avoid AV1. Treat VP9 and high-resolution HEVC as requiring companion-side
 transcoding. For progressive MP4, place `moov` before `mdat` (`ffmpeg
 -movflags +faststart`).
+
+For an interim desktop-screen stream, publish H.264 as RTSP or low-latency HLS
+from OBS/FFmpeg and submit that URL through the Mirror-hosted Media page.
 
 ## Why not Chromecast
 

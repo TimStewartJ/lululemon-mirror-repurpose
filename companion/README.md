@@ -5,6 +5,11 @@ a repurposed MIRROR device running Mirror Home. See the repository root
 [architecture](../docs/architecture.md) and [protocol](../docs/protocol.md)
 docs for how the companion fits into the wider project.
 
+Mirror Home now serves its primary responsive controls directly from port
+`8787`; this desktop companion is optional. Keep it for ADB recovery, USB media
+hosting, development, or managing a Mirror before normal LAN access is
+available.
+
 The companion never talks to the device API directly from the browser: the
 device API intentionally has no CORS headers, so the static UI calls
 same-origin companion endpoints, and the companion server forwards those calls to the device over an `adb forward`-ed
