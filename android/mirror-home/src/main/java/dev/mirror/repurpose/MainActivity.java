@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,6 +31,18 @@ import androidx.media3.ui.PlayerView;
 
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
+    private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
+
+    private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private final Runnable statusRefresh = new Runnable() {
+        @Override
+        public void run() {
+            if (nativeStatus != null) {
+                nativeStatus.setText(buildStatusText());
+            }
+            statusHandler.postDelayed(this, STATUS_REFRESH_INTERVAL_MS);
+        }
+    };
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -50,6 +64,7 @@ public final class MainActivity extends Activity {
     private View dashboardView;
     private WebView webDashboard;
     private PlayerView playerView;
+    private TextView nativeStatus;
     private String loadedDashboardUrl = "";
 
     @Override
@@ -104,10 +119,19 @@ public final class MainActivity extends Activity {
         if (root != null) {
             renderDashboard();
         }
+        statusHandler.removeCallbacks(statusRefresh);
+        statusHandler.post(statusRefresh);
+    }
+
+    @Override
+    protected void onPause() {
+        statusHandler.removeCallbacks(statusRefresh);
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        statusHandler.removeCallbacks(statusRefresh);
         unregisterReceiver(stateReceiver);
         media.detach(playerView);
         destroyWebDashboard();
@@ -165,6 +189,7 @@ public final class MainActivity extends Activity {
         status.setGravity(Gravity.CENTER);
         status.setPadding(0, 48, 0, 0);
         dashboard.addView(status);
+        nativeStatus = status;
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -199,6 +224,7 @@ public final class MainActivity extends Activity {
     }
 
     private void removeDashboardView() {
+        nativeStatus = null;
         if (dashboardView != null) {
             root.removeView(dashboardView);
             dashboardView = null;
