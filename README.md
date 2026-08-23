@@ -52,8 +52,9 @@ full-screen HOME activity, authenticated USB/LAN control API, pairing flow,
 Wi-Fi enrollment, configurable web-dashboard URL, and stock Binder-backed
 brightness/name controls. Media3 playback supports HTTP(S), HLS, DASH, and
 RTSP, while an FCast v3 receiver provides open cast-style LAN control on the
-standard port. Feature checkpoints are tracked in Git and validated on physical
-hardware.
+standard port. Encrypted BLE provisioning is available for first-run setup,
+with USB/ADB as the unattended fallback. Feature checkpoints are tracked in Git
+and validated on physical hardware.
 
 ## Development
 
@@ -80,7 +81,8 @@ Build:
 The eventual one-command workflow is exposed through `tools\mirror.ps1`.
 
 See [Streaming](docs/streaming.md) for sender compatibility and recommended
-media formats.
+media formats and [Provisioning](docs/provisioning.md) for USB, BLE, and LAN
+setup.
 
 Common development commands:
 

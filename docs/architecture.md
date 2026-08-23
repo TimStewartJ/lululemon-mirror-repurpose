@@ -53,6 +53,9 @@ The companion is a local Node.js service and static browser UI:
 
 The companion does not persist Wi-Fi passphrases by default.
 
+BLE characteristics require an encrypted bond. The on-screen pairing code then
+authorizes token issuance and Wi-Fi enrollment at the application layer.
+
 ## Media path
 
 The primary media path is HTTP(S), HLS, DASH, or RTSP playback through pinned
