@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sharedUserId="android.uid.system">
+
+    <application
+        android:name=".DataCapApp"
+        android:allowBackup="false"
+        android:label="Mirror System Helper">
+        <service
+            android:name=".DataCapIntentService"
+            android:enabled="true"
+            android:exported="true" />
+        <service
+            android:name=".PushHandlerService"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
+            android:name=".StartupReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

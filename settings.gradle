@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "mirror-repurpose"
 include(":android:mirror-home")
+include(":android:system-helper")

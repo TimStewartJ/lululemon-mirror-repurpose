@@ -9,6 +9,7 @@ public final class MirrorHomeApplication extends Application {
         super.onCreate();
         System.setProperty("java.io.tmpdir", getCacheDir().getAbsolutePath());
         MirrorBinderClient.getInstance(this).connect();
+        SystemHelperClient.getInstance(this).connect();
         startService(new Intent(this, ControlServerService.class));
     }
 }

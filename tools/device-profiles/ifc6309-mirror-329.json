@@ -21,6 +21,20 @@
       "sha256": "dac2f8f7fc58ffac996f3d7cc9d2419f5b3dad6283df2c22b3d132843c3e704d"
     }
   },
+  "helperContract": {
+    "package": "co.mirror.datacap",
+    "sharedUserId": "android.uid.system",
+    "application": "co.mirror.datacap.DataCapApp",
+    "bindService": "co.mirror.datacap.DataCapIntentService",
+    "requiredComponents": [
+      "co.mirror.datacap.DataCapApp",
+      "co.mirror.datacap.DataCapIntentService",
+      "co.mirror.datacap.PushHandlerService",
+      "co.mirror.datacap.StartupReceiver",
+      "com.amazonaws.mobileconnectors.s3.transferutility.TransferService"
+    ],
+    "bindServiceExported": true
+  },
   "edl": {
     "usbId": "05c6:9008",
     "hwid": "007060e100000000",

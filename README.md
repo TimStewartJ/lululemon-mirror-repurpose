@@ -77,6 +77,21 @@ Build:
 
 The eventual one-command workflow is exposed through `tools\mirror.ps1`.
 
+Common development commands:
+
+```powershell
+.\tools\mirror.ps1 status
+.\tools\mirror.ps1 backup
+.\tools\mirror.ps1 install-home
+.\tools\mirror.ps1 install-helper
+.\tools\mirror.ps1 forward
+.\tools\mirror.ps1 restore-helper
+```
+
+`install-helper` refuses unknown firmware and APK hashes, backs up the factory
+APKs, binds the helper to the current Mirror Home signing certificate, verifies
+the stock manifest contract, and checks that the helper process starts.
+
 ## License
 
 Apache-2.0. See `LICENSE` and `NOTICE`.

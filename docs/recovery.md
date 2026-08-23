@@ -20,6 +20,9 @@ The final path must be:
 package:/system/app/co.mirror.datacap/co.mirror.datacap.apk
 ```
 
+`mirrorctl restore-helper` also restores the kiosk-related settings captured
+before the first helper installation.
+
 If removal leaves the package unavailable, reinstall the locally backed-up
 original APK, reboot, and investigate before continuing.
 

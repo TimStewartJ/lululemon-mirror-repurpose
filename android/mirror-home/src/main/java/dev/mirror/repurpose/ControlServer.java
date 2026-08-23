@@ -21,6 +21,7 @@ public final class ControlServer extends NanoHTTPD {
     private final ConfigStore configStore;
     private final MirrorBinderClient mirror;
     private final PairingManager pairing;
+    private final SystemHelperClient systemHelper;
     private final WifiProvisioner wifi;
 
     public ControlServer(Context context, int port) {
@@ -29,6 +30,7 @@ public final class ControlServer extends NanoHTTPD {
         configStore = new ConfigStore(context);
         mirror = MirrorBinderClient.getInstance(context);
         pairing = PairingManager.getInstance(context);
+        systemHelper = SystemHelperClient.getInstance(context);
         wifi = new WifiProvisioner(context);
     }
 
@@ -69,6 +71,13 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/control/name".equals(uri)) {
                 return updateName(readJson(session));
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/system".equals(uri)) {
+                return systemStatus();
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/system/prepare-kiosk".equals(uri)) {
+                return prepareKiosk();
+            }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/revoke".equals(uri)) {
                 pairing.revoke();
                 return response(Response.Status.OK, new JSONObject().put("revoked", true));
@@ -99,6 +108,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("paired", pairing.isPaired());
         result.put("displayName", configStore.getDisplayName());
         result.put("mirrorBinderConnected", mirror.isConnected());
+        result.put("systemHelperConnected", systemHelper.isConnected());
         Integer brightness = mirror.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
@@ -158,6 +168,23 @@ public final class ControlServer extends NanoHTTPD {
         return response(
                 changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
                 new JSONObject().put("changed", changed).put("name", name));
+    }
+
+    private Response systemStatus() throws JSONException {
+        systemHelper.connect();
+        JSONObject capabilities = systemHelper.capabilities();
+        JSONObject result = new JSONObject();
+        result.put("connected", systemHelper.isConnected());
+        result.put("capabilities", capabilities == null ? JSONObject.NULL : capabilities);
+        return response(Response.Status.OK, result);
+    }
+
+    private Response prepareKiosk() throws JSONException {
+        systemHelper.connect();
+        boolean prepared = systemHelper.prepareKiosk();
+        return response(
+                prepared ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
+                new JSONObject().put("prepared", prepared));
     }
 
     private JSONObject readJson(IHTTPSession session)

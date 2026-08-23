@@ -1,0 +1,34 @@
+plugins {
+    id "com.android.application"
+}
+
+def trustedHomeCertificate = providers
+        .gradleProperty("mirrorHomeCertificateSha256")
+        .orElse("")
+        .get()
+
+android {
+    namespace "co.mirror.datacap"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "co.mirror.datacap"
+        minSdk 23
+        targetSdk 23
+        versionCode 10000329
+        versionName "1.0.329"
+        buildConfigField(
+                "String",
+                "TRUSTED_HOME_CERTIFICATE_SHA256",
+                "\"${trustedHomeCertificate.toLowerCase()}\"")
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}

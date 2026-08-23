@@ -20,6 +20,8 @@ generated/
 *.apk
 *.aab
 *.log
+__pycache__/
+*.py[cod]
 
 .idea/
 .vscode/

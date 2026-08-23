@@ -68,3 +68,12 @@ and browser convenience integrations can be layered over the same playback API.
 The optional helper is not part of the media data path. Mirror Home calls a
 small authenticated local interface for operations that ordinary Android APIs
 cannot perform. Removing the helper returns the device to the stock system APK.
+
+The helper authenticates Binder callers by both the exact HOME package name and
+the SHA-256 digest of the HOME signing certificate supplied at build time. It
+does not expose a command shell or generic settings/file APIs.
+
+The `android/system-helper` manifest exists only to compile and test the payload.
+The installed package retains the stock APK manifest and signature. Tooling
+therefore verifies the exact source-APK hash and its required shared UID,
+Application, receiver, and exported service contract before wrapping.
