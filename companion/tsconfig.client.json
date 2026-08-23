@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2020",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "dist/client",
+    "rootDir": "src/client",
+    "types": []
+  },
+  "include": ["src/client/**/*.ts"]
+}

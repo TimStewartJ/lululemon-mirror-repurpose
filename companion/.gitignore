@@ -1,0 +1,16 @@
+# Companion-local ignores. The repository root .gitignore already covers
+# node_modules/, dist/, coverage/, and .env*, but these are listed here too
+# so the companion app's ignore rules are self-contained and explicit.
+node_modules/
+dist/
+coverage/
+
+# Local runtime state: paired token, cached device config, uploaded media.
+# Never commit anything under here.
+.data/
+
+.env
+.env.*
+!.env.example
+
+*.log

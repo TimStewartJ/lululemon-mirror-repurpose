@@ -1,0 +1,29 @@
+{
+  "name": "mirror-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Node.js companion service and browser UI for Mirror Home: USB (ADB) setup, pairing, dashboard/Wi-Fi/brightness/name control, and media hosting.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:client": "tsc -p tsconfig.client.json",
+    "build:assets": "node scripts/copy-assets.mjs",
+    "build": "npm run clean && npm run build:server && npm run build:client && npm run build:assets",
+    "pretest": "npm run build:server && npm run build:client && npm run build:assets",
+    "test": "node --test \"dist/server/__tests__/**/*.test.js\"",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
