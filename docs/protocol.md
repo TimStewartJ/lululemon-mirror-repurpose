@@ -31,3 +31,7 @@ All endpoints except status and pairing require authentication.
 
 Wi-Fi passphrases are accepted only through authenticated local channels and
 are passed directly to Android's Wi-Fi configuration API.
+
+The device API does not emit permissive CORS headers. Browser clients use the
+companion's same-origin proxy, preventing unrelated websites from scripting the
+pairing endpoint through a visitor's browser.

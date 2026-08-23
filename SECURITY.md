@@ -28,6 +28,11 @@ The optional helper is intentionally capability-based:
 The companion and Mirror authenticate using a user-confirmed pairing code and a
 random token. LAN control is denied until pairing succeeds.
 
+The device API does not enable cross-origin browser access. The companion
+proxies browser requests over the same origin. NanoHTTPD temporary storage is
+redirected into the application's private cache, request bodies are bounded,
+and the server does not use NanoHTTPD's general-purpose file handler.
+
 ## Reporting
 
 Open a private security report before publishing a vulnerability that affects

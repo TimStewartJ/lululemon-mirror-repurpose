@@ -47,9 +47,11 @@ See [Recovery](docs/recovery.md) before installing anything.
 
 ## Project status
 
-Development is active. The current repository checkpoint provides a buildable
-Android bootstrap, exact device profile, architecture, and recovery contract.
-Feature checkpoints are tracked in Git and validated on physical hardware.
+Development is active. Mirror Home currently provides a device-validated
+full-screen HOME activity, authenticated USB/LAN control API, pairing flow,
+Wi-Fi enrollment, configurable web-dashboard URL, and stock Binder-backed
+brightness/name controls. Feature checkpoints are tracked in Git and validated
+on physical hardware.
 
 ## Development
 

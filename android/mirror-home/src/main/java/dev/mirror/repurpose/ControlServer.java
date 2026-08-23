@@ -1,0 +1,221 @@
+package dev.mirror.repurpose;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+import fi.iki.elonen.NanoHTTPD;
+
+public final class ControlServer extends NanoHTTPD {
+    private static final int MAX_BODY_BYTES = 64 * 1024;
+
+    private final Context context;
+    private final ConfigStore configStore;
+    private final MirrorBinderClient mirror;
+    private final PairingManager pairing;
+    private final WifiProvisioner wifi;
+
+    public ControlServer(Context context, int port) {
+        super(port);
+        this.context = context.getApplicationContext();
+        configStore = new ConfigStore(context);
+        mirror = MirrorBinderClient.getInstance(context);
+        pairing = PairingManager.getInstance(context);
+        wifi = new WifiProvisioner(context);
+    }
+
+    @Override
+    public Response serve(IHTTPSession session) {
+        if (Method.OPTIONS.equals(session.getMethod())) {
+            return error(Response.Status.METHOD_NOT_ALLOWED, "Cross-origin requests are disabled");
+        }
+
+        String uri = session.getUri();
+        try {
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/status".equals(uri)) {
+                return response(Response.Status.OK, status());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/pair".equals(uri)) {
+                return pair(readJson(session));
+            }
+            if (!authorized(session)) {
+                return error(Response.Status.UNAUTHORIZED, "Authentication required");
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/dashboard".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        new JSONObject().put("url", configStore.getDashboardUrl()));
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/dashboard".equals(uri)) {
+                return updateDashboard(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/wifi/configure".equals(uri)) {
+                return configureWifi(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/control/brightness".equals(uri)) {
+                return updateBrightness(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/control/name".equals(uri)) {
+                return updateName(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/revoke".equals(uri)) {
+                pairing.revoke();
+                return response(Response.Status.OK, new JSONObject().put("revoked", true));
+            }
+            return error(Response.Status.NOT_FOUND, "Endpoint not found");
+        } catch (JSONException error) {
+            return error(Response.Status.BAD_REQUEST, "Invalid JSON request");
+        } catch (IOException | ResponseException error) {
+            return error(Response.Status.BAD_REQUEST, "Unable to read request");
+        }
+    }
+
+    private JSONObject status() throws JSONException {
+        WifiManager manager =
+                (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+        WifiInfo info = manager == null ? null : manager.getConnectionInfo();
+        JSONObject wifiStatus = new JSONObject();
+        if (info != null && info.getNetworkId() >= 0) {
+            wifiStatus.put("connected", true);
+            wifiStatus.put("ssid", WifiProvisioner.cleanSsid(info.getSSID()));
+            wifiStatus.put("ipAddress", WifiProvisioner.ipAddress(info.getIpAddress()));
+        } else {
+            wifiStatus.put("connected", false);
+        }
+
+        JSONObject result = new JSONObject();
+        result.put("apiVersion", 1);
+        result.put("paired", pairing.isPaired());
+        result.put("displayName", configStore.getDisplayName());
+        result.put("mirrorBinderConnected", mirror.isConnected());
+        Integer brightness = mirror.getBrightness();
+        result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
+        result.put("wifi", wifiStatus);
+        return result;
+    }
+
+    private Response pair(JSONObject body) throws JSONException {
+        String token = pairing.pair(body.optString("code", null));
+        if (token == null) {
+            return error(Response.Status.UNAUTHORIZED, "Invalid or expired pairing code");
+        }
+        return response(Response.Status.OK, new JSONObject().put("token", token));
+    }
+
+    private Response updateDashboard(JSONObject body) throws JSONException {
+        String url = body.optString("url", "");
+        if (!InputValidator.validDashboardUrl(url)) {
+            return error(Response.Status.BAD_REQUEST, "Dashboard URL must use HTTP or HTTPS");
+        }
+        configStore.setDashboardUrl(url);
+        notifyConfigurationChanged();
+        return response(Response.Status.OK, new JSONObject().put("url", url));
+    }
+
+    private Response configureWifi(JSONObject body) throws JSONException {
+        String ssid = body.optString("ssid", null);
+        String passphrase = body.optString("passphrase", null);
+        boolean hidden = body.optBoolean("hidden", false);
+        WifiProvisioner.Result result = wifi.configure(ssid, passphrase, hidden);
+        return response(
+                result.success ? Response.Status.ACCEPTED : Response.Status.BAD_REQUEST,
+                new JSONObject()
+                        .put("accepted", result.success)
+                        .put("message", result.message));
+    }
+
+    private Response updateBrightness(JSONObject body) throws JSONException {
+        int value = body.optInt("value", -1);
+        if (value < 1 || value > 255) {
+            return error(Response.Status.BAD_REQUEST, "Brightness must be between 1 and 255");
+        }
+        boolean changed = mirror.setBrightness(value);
+        return response(
+                changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
+                new JSONObject().put("changed", changed).put("value", value));
+    }
+
+    private Response updateName(JSONObject body) throws JSONException {
+        String name = body.optString("name", null);
+        if (name == null || name.trim().isEmpty() || name.length() > 64) {
+            return error(Response.Status.BAD_REQUEST, "Name must contain 1-64 characters");
+        }
+        boolean changed = mirror.setName(name);
+        if (changed) {
+            configStore.setDisplayName(name);
+        }
+        return response(
+                changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
+                new JSONObject().put("changed", changed).put("name", name));
+    }
+
+    private JSONObject readJson(IHTTPSession session)
+            throws IOException, ResponseException, JSONException {
+        String lengthValue = session.getHeaders().get("content-length");
+        if (lengthValue == null) {
+            throw new ResponseException(
+                    Response.Status.BAD_REQUEST,
+                    "Content-Length is required");
+        }
+        try {
+            if (Integer.parseInt(lengthValue) > MAX_BODY_BYTES) {
+                throw new ResponseException(
+                        Response.Status.BAD_REQUEST,
+                        "Request body is too large");
+            }
+        } catch (NumberFormatException error) {
+            throw new ResponseException(
+                    Response.Status.BAD_REQUEST,
+                    "Invalid Content-Length header");
+        }
+        Map<String, String> files = new HashMap<>();
+        session.parseBody(files);
+        String body = files.get("postData");
+        if (body == null || body.isEmpty()) {
+            return new JSONObject();
+        }
+        return new JSONObject(body);
+    }
+
+    private boolean authorized(IHTTPSession session) {
+        String authorization = session.getHeaders().get("authorization");
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return false;
+        }
+        return pairing.authenticate(authorization.substring("Bearer ".length()));
+    }
+
+    private void notifyConfigurationChanged() {
+        Intent intent = new Intent(ControlServerService.ACTION_CONFIGURATION_CHANGED);
+        intent.setPackage(context.getPackageName());
+        context.sendBroadcast(intent);
+    }
+
+    private static Response error(Response.Status status, String message) {
+        try {
+            return response(status, new JSONObject().put("error", message));
+        } catch (JSONException impossible) {
+            return newFixedLengthResponse(status, MIME_PLAINTEXT, message);
+        }
+    }
+
+    private static Response response(Response.Status status, JSONObject body) {
+        Response response = newFixedLengthResponse(
+                status,
+                "application/json; charset=utf-8",
+                body.toString());
+        response.addHeader("Cache-Control", "no-store");
+        return response;
+    }
+}

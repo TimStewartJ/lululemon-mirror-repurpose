@@ -18,3 +18,7 @@ The machine-readable profile is `tools/device-profiles/ifc6309-mirror-329.json`.
 
 Do not assume compatibility with later NXP i.MX8-based MIRROR revisions. Those
 devices use a different SoC, bootloader, Android release, and trust chain.
+
+The current Wi-Fi provisioning implementation intentionally uses Android 6's
+`WifiConfiguration` APIs and rejects Android 10 or newer, where ordinary apps
+can no longer manage saved networks through that API.

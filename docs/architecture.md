@@ -45,6 +45,7 @@ The companion is a local Node.js service and static browser UI:
 
 - discovers ADB devices and validates the exact profile
 - forwards a localhost port to Mirror Home over USB
+- proxies browser requests server-side so the device API does not require CORS
 - opens the same UI over LAN after Wi-Fi provisioning
 - uses Web Bluetooth for initial provisioning where supported
 - hosts local media files with range requests
