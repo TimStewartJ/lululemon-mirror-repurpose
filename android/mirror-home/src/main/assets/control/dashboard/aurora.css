@@ -1,0 +1,11 @@
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center;color:#f5fbfc;background:#061019;font-family:sans-serif}
+body:before,body:after{content:"";position:absolute;width:70vw;height:70vw;border-radius:50%;filter:blur(90px);opacity:.24}
+body:before{background:#35e3b8;left:-30vw;top:-20vw}
+body:after{background:#3c9cf3;right:-30vw;bottom:-20vw}
+main{position:relative;text-align:center;padding:6vw;width:100%}
+#time{font-size:24vw;font-weight:200;line-height:.9;letter-spacing:-.07em}
+#date{margin-top:4vh;font-size:4vw;color:#aac2ca;letter-spacing:.08em;text-transform:uppercase}
+#name{margin-top:12vh;font-size:3vw;color:#55e6c1}
+#status{margin-top:2vh;font-size:2.2vw;color:#78939d}

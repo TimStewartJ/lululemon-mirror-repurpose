@@ -8,7 +8,10 @@ import android.net.wifi.WifiManager;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -45,6 +48,12 @@ public final class ControlServer extends NanoHTTPD {
 
         String uri = session.getUri();
         try {
+            if (Method.GET.equals(session.getMethod())) {
+                Response asset = controlAsset(uri);
+                if (asset != null) {
+                    return asset;
+                }
+            }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/status".equals(uri)) {
                 return response(Response.Status.OK, status());
             }
@@ -109,9 +118,24 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/system/home".equals(uri)) {
                 return setHome(readJson(session));
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/clients".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        new JSONObject().put("clients", pairing.clients()));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/clients/revoke".equals(uri)) {
+                String clientId = readJson(session).optString("id", "");
+                boolean revoked = pairing.revokeClient(clientId);
+                return response(
+                        revoked ? Response.Status.OK : Response.Status.NOT_FOUND,
+                        new JSONObject().put("revoked", revoked));
+            }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/revoke".equals(uri)) {
-                pairing.revoke();
-                return response(Response.Status.OK, new JSONObject().put("revoked", true));
+                boolean revoked = pairing.revokeToken(bearerToken(session));
+                return response(
+                        revoked ? Response.Status.OK : Response.Status.NOT_FOUND,
+                        new JSONObject().put("revoked", revoked));
             }
             return error(Response.Status.NOT_FOUND, "Endpoint not found");
         } catch (JSONException error) {
@@ -149,12 +173,19 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private Response pair(JSONObject body) throws JSONException {
-        String token = pairing.pair(body.optString("code", null));
-        if (token == null) {
+        PairingManager.PairingResult result = pairing.pair(
+                body.optString("code", null),
+                body.optString("name", "Device"));
+        if (result == null) {
             return error(Response.Status.UNAUTHORIZED, "Invalid or expired pairing code");
         }
         notifyConfigurationChanged();
-        return response(Response.Status.OK, new JSONObject().put("token", token));
+        return response(
+                Response.Status.OK,
+                new JSONObject()
+                        .put("token", result.token)
+                        .put("clientId", result.clientId)
+                        .put("clientName", result.clientName));
     }
 
     private Response updateDashboard(JSONObject body) throws JSONException {
@@ -329,11 +360,85 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private boolean authorized(IHTTPSession session) {
+        return pairing.authenticate(bearerToken(session));
+    }
+
+    private static String bearerToken(IHTTPSession session) {
         String authorization = session.getHeaders().get("authorization");
-        if (authorization == null || !authorization.startsWith("Bearer ")) {
-            return false;
+        return authorization != null && authorization.startsWith("Bearer ")
+                ? authorization.substring("Bearer ".length())
+                : null;
+    }
+
+    private Response controlAsset(String uri) throws IOException {
+        String assetName;
+        String mimeType;
+        boolean document = false;
+        switch (uri) {
+            case "/":
+            case "/index.html":
+                assetName = "control/index.html";
+                mimeType = "text/html; charset=utf-8";
+                document = true;
+                break;
+            case "/app.js":
+                assetName = "control/app.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
+            case "/styles.css":
+                assetName = "control/styles.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/manifest.webmanifest":
+                assetName = "control/manifest.webmanifest";
+                mimeType = "application/manifest+json; charset=utf-8";
+                break;
+            case "/icon.svg":
+                assetName = "control/icon.svg";
+                mimeType = "image/svg+xml";
+                break;
+            case "/dashboard/aurora.html":
+                assetName = "control/dashboard/aurora.html";
+                mimeType = "text/html; charset=utf-8";
+                document = true;
+                break;
+            case "/dashboard/aurora.css":
+                assetName = "control/dashboard/aurora.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/dashboard/aurora.js":
+                assetName = "control/dashboard/aurora.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
+            default:
+                return null;
         }
-        return pairing.authenticate(authorization.substring("Bearer ".length()));
+
+        byte[] contents;
+        try (InputStream input = context.getAssets().open(assetName);
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+            }
+            contents = output.toByteArray();
+        }
+        Response result = newFixedLengthResponse(
+                Response.Status.OK,
+                mimeType,
+                new ByteArrayInputStream(contents),
+                contents.length);
+        result.addHeader("Cache-Control", document ? "no-store" : "public, max-age=3600");
+        result.addHeader(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                        + "img-src 'self' data:; connect-src 'self'; "
+                        + "frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+        result.addHeader("X-Content-Type-Options", "nosniff");
+        result.addHeader("X-Frame-Options", "DENY");
+        result.addHeader("Referrer-Policy", "no-referrer");
+        return result;
     }
 
     private void notifyConfigurationChanged() {

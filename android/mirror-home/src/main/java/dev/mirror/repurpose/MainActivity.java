@@ -20,6 +20,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextClock;
 import android.widget.TextView;
@@ -182,6 +183,27 @@ public final class MainActivity extends Activity {
         date.setTextSize(26);
         dashboard.addView(date);
 
+        String address = currentIpAddress();
+        if (!address.isEmpty()) {
+            String setupUrl = "http://" + address + ":" + ControlServerService.PORT + "/";
+            ImageView qrCode = new ImageView(this);
+            qrCode.setImageBitmap(QrCodeRenderer.render(setupUrl, 360));
+            qrCode.setContentDescription("Scan to open Mirror Home controls");
+            qrCode.setBackgroundColor(Color.WHITE);
+            qrCode.setPadding(12, 12, 12, 12);
+            LinearLayout.LayoutParams qrLayout = new LinearLayout.LayoutParams(384, 384);
+            qrLayout.setMargins(0, 42, 0, 12);
+            qrCode.setLayoutParams(qrLayout);
+            dashboard.addView(qrCode);
+
+            TextView qrHint = new TextView(this);
+            qrHint.setText("Scan to control this Mirror");
+            qrHint.setTextColor(Color.WHITE);
+            qrHint.setTextSize(18);
+            qrHint.setGravity(Gravity.CENTER);
+            dashboard.addView(qrHint);
+        }
+
         TextView status = new TextView(this);
         status.setText(buildStatusText());
         status.setTextColor(Color.rgb(80, 235, 255));
@@ -269,5 +291,14 @@ public final class MainActivity extends Activity {
             text.append("\nWi-Fi: not connected");
         }
         return text.toString();
+    }
+
+    private String currentIpAddress() {
+        WifiManager wifiManager =
+                (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        WifiInfo info = wifiManager == null ? null : wifiManager.getConnectionInfo();
+        return info == null || info.getNetworkId() < 0
+                ? ""
+                : WifiProvisioner.ipAddress(info.getIpAddress());
     }
 }

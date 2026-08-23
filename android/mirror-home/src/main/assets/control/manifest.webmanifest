@@ -1,0 +1,17 @@
+{
+  "name": "Mirror Home",
+  "short_name": "Mirror",
+  "description": "Private local control for Mirror Home",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#061019",
+  "theme_color": "#07131d",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

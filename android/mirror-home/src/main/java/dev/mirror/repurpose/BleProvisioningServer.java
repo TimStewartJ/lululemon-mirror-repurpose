@@ -370,10 +370,13 @@ public final class BleProvisioningServer {
                     || !InputValidator.validWpaPassphrase(passphrase)) {
                 throw new IllegalArgumentException("Invalid Wi-Fi credentials");
             }
-            String token = pairing.pair(request.optString("code", null));
-            if (token == null) {
+            PairingManager.PairingResult pairingResult = pairing.pair(
+                    request.optString("code", null),
+                    request.optString("name", "Bluetooth device"));
+            if (pairingResult == null) {
                 throw new SecurityException("Invalid or expired pairing code");
             }
+            String token = pairingResult.token;
 
             WifiProvisioner.Result wifiResult = wifi.configure(
                     ssid,
@@ -394,7 +397,7 @@ public final class BleProvisioningServer {
                 changed.setPackage(context.getPackageName());
                 context.sendBroadcast(changed);
             } else {
-                pairing.revoke();
+                pairing.revokeToken(token);
                 Intent changed =
                         new Intent(ControlServerService.ACTION_CONFIGURATION_CHANGED);
                 changed.setPackage(context.getPackageName());

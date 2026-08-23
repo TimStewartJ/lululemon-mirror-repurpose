@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07131d">
+  <meta name="description" content="Private local control for Mirror Home">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <title>Mirror Home</title>
+</head>
+<body>
+  <header class="hero">
+    <div class="brand-mark" aria-hidden="true"></div>
+    <div>
+      <p class="eyebrow">Private local control</p>
+      <h1 id="mirror-name">Mirror Home</h1>
+    </div>
+    <span id="connection-pill" class="pill">Connecting</span>
+  </header>
+
+  <main>
+    <section id="pairing-card" class="card pairing-card hidden">
+      <div>
+        <p class="eyebrow">First connection</p>
+        <h2>Pair this device</h2>
+        <p>Enter the current six-digit code shown on the Mirror. This browser receives its own revocable credential.</p>
+      </div>
+      <form id="pair-form" class="form-grid">
+        <label>
+          <span>Device name</span>
+          <input id="client-name" maxlength="64" autocomplete="name" value="My phone">
+        </label>
+        <label>
+          <span>Pairing code</span>
+          <input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        </label>
+        <button type="submit">Pair securely</button>
+      </form>
+      <p id="pair-message" class="message" role="status"></p>
+    </section>
+
+    <div id="app-shell" class="hidden">
+      <nav class="tabs" aria-label="Mirror controls">
+        <button class="tab active" data-panel="overview">Overview</button>
+        <button class="tab" data-panel="display">Display</button>
+        <button class="tab" data-panel="media">Media</button>
+        <button class="tab" data-panel="network">Network</button>
+        <button class="tab" data-panel="access">Access</button>
+      </nav>
+
+      <section id="overview" class="panel active">
+        <div class="metric-grid">
+          <article class="metric">
+            <span>Wi-Fi</span>
+            <strong id="wifi-summary">Checking</strong>
+          </article>
+          <article class="metric">
+            <span>Playback</span>
+            <strong id="media-summary">Idle</strong>
+          </article>
+          <article class="metric">
+            <span>FCast</span>
+            <strong>Ready</strong>
+          </article>
+          <article class="metric">
+            <span>Bluetooth setup</span>
+            <strong id="ble-summary">Checking</strong>
+          </article>
+        </div>
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">At a glance</p>
+              <h2>Appliance status</h2>
+            </div>
+            <button id="refresh-status" class="secondary">Refresh</button>
+          </div>
+          <dl class="status-list">
+            <div><dt>Address</dt><dd id="ip-address">—</dd></div>
+            <div><dt>Brightness</dt><dd id="brightness-status">—</dd></div>
+            <div><dt>Mirror services</dt><dd id="binder-status">—</dd></div>
+            <div><dt>System helper</dt><dd id="helper-status">Not installed</dd></div>
+          </dl>
+        </article>
+      </section>
+
+      <section id="display" class="panel">
+        <article class="card">
+          <p class="eyebrow">What the Mirror shows</p>
+          <h2>Dashboard</h2>
+          <form id="dashboard-form" class="form-grid">
+            <label>
+              <span>Mode</span>
+              <select id="dashboard-mode">
+                <option value="native">Native clock and setup</option>
+                <option value="aurora">Aurora clock</option>
+                <option value="custom">Custom or Home Assistant URL</option>
+              </select>
+            </label>
+            <label id="dashboard-url-row">
+              <span>Dashboard URL</span>
+              <input id="dashboard-url" type="url" inputmode="url" placeholder="http://home-assistant.local:8123/dashboard-mirror">
+            </label>
+            <button type="submit">Apply dashboard</button>
+          </form>
+          <p id="dashboard-message" class="message" role="status"></p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Appearance</p>
+          <h2>Name and brightness</h2>
+          <form id="name-form" class="inline-form">
+            <label><span>Mirror name</span><input id="display-name" maxlength="64" required></label>
+            <button type="submit">Save</button>
+          </form>
+          <form id="brightness-form" class="slider-form">
+            <label for="brightness">Brightness <output id="brightness-output">128</output></label>
+            <input id="brightness" type="range" min="1" max="255" value="128">
+            <button type="submit">Set brightness</button>
+          </form>
+          <p id="display-message" class="message" role="status"></p>
+        </article>
+      </section>
+
+      <section id="media" class="panel">
+        <article class="card">
+          <p class="eyebrow">Direct playback</p>
+          <h2>Play a media URL</h2>
+          <form id="media-form" class="form-grid">
+            <label><span>HTTP, HLS, DASH, or RTSP URL</span><input id="media-url" type="url" inputmode="url" required></label>
+            <label><span>Title</span><input id="media-title" maxlength="120"></label>
+            <label class="check"><input id="media-muted" type="checkbox" checked><span>Start muted</span></label>
+            <button type="submit">Play on Mirror</button>
+          </form>
+          <div class="button-row">
+            <button id="media-pause" class="secondary">Pause</button>
+            <button id="media-resume" class="secondary">Resume</button>
+            <button id="media-stop" class="danger">Stop</button>
+          </div>
+          <p id="media-message" class="message" role="status"></p>
+        </article>
+      </section>
+
+      <section id="network" class="panel">
+        <article class="card">
+          <p class="eyebrow">Local network</p>
+          <h2>Wi-Fi</h2>
+          <p>The passphrase goes directly to Android and is never returned by the Mirror.</p>
+          <form id="wifi-form" class="form-grid">
+            <label><span>Network name</span><input id="wifi-ssid" maxlength="32" autocomplete="off" required></label>
+            <label><span>Passphrase</span><input id="wifi-passphrase" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
+            <label class="check"><input id="wifi-hidden" type="checkbox"><span>Hidden network</span></label>
+            <button type="submit">Connect</button>
+          </form>
+          <p id="wifi-message" class="message" role="status"></p>
+        </article>
+      </section>
+
+      <section id="access" class="panel">
+        <article class="card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Revocable credentials</p>
+              <h2>Paired devices</h2>
+            </div>
+            <button id="refresh-clients" class="secondary">Refresh</button>
+          </div>
+          <ul id="client-list" class="client-list"></ul>
+          <button id="forget-this-device" class="danger">Forget this browser</button>
+          <p id="access-message" class="message" role="status"></p>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <footer>Local-first control · no cloud account required</footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>
