@@ -149,21 +149,21 @@ label span, .slider-form label {
   font-weight: 650;
 }
 
-input, select, button {
+input, select, textarea, button {
   min-height: 2.8rem;
   border: 1px solid var(--line);
   border-radius: .75rem;
   font: inherit;
 }
 
-input, select {
+input, select, textarea {
   width: 100%;
   padding: .7rem .8rem;
   color: var(--text);
   background: rgba(3,12,20,.76);
 }
 
-input:focus, select:focus, button:focus-visible {
+input:focus, select:focus, textarea:focus, button:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 2px;
 }
@@ -185,6 +185,128 @@ button.danger { color: #351017; background: var(--danger); }
 .check input { width: 1.2rem; min-height: 1.2rem; }
 .check span { margin: 0; }
 .button-row { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.button-row.compact { margin-top: 0; justify-content: flex-end; }
+
+.layout-editor {
+  display: grid;
+  grid-template-columns: minmax(260px, 390px) minmax(220px, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.layout-preview-wrap {
+  width: 100%;
+  max-width: 390px;
+  margin-inline: auto;
+  padding: .5rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: #020609;
+}
+
+.layout-preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  border-radius: .65rem;
+  background: linear-gradient(155deg, #020607, #10242b);
+  touch-action: none;
+  user-select: none;
+}
+
+.layout-preview::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size: 10% 10%;
+}
+
+.layout-preview-photo,
+.layout-preview-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.layout-preview-photo {
+  background-position: center;
+  background-size: cover;
+}
+
+.layout-widget {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  padding: .18rem .3rem;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: .35rem;
+  color: #e7eff1;
+  font-size: .62rem;
+  line-height: 1.05;
+  white-space: nowrap;
+  text-shadow: 0 1px 6px #000;
+  cursor: move;
+}
+
+.layout-widget.align-start { justify-content: flex-start; text-align: left; }
+.layout-widget.align-center { justify-content: center; text-align: center; }
+.layout-widget.align-end { justify-content: flex-end; text-align: right; }
+.layout-widget.selected { border-color: var(--accent); background: rgba(85,230,193,.08); }
+.layout-widget.is-hidden { opacity: .22 !important; border-style: dashed; border-color: var(--muted); }
+.layout-widget-clock { font-size: 1.4rem; font-weight: 250; letter-spacing: -.05em; }
+.layout-widget-date { letter-spacing: .08em; text-transform: uppercase; }
+.layout-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: .85rem;
+  height: .85rem;
+  border: 0;
+  border-radius: .2rem 0 0 0;
+  background: var(--accent);
+  cursor: nwse-resize;
+}
+
+.layout-controls {
+  display: grid;
+  gap: .8rem;
+}
+
+.color-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .65rem;
+}
+
+.geometry-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: .45rem;
+}
+
+.geometry-row input {
+  min-width: 0;
+}
+
+.color-row input[type="color"] {
+  padding: .25rem;
+}
+
+.layout-controls hr {
+  width: 100%;
+  margin: .25rem 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
 
 .status-list { margin: 0; }
 .status-list div { display: flex; justify-content: space-between; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--line); }
@@ -211,6 +333,11 @@ footer { padding: 2rem 0 max(2rem, env(safe-area-inset-bottom)); color: var(--mu
   .tab { padding-inline: .75rem; }
   .inline-form, .slider-form { grid-template-columns: 1fr; }
   .inline-form button, .slider-form button { width: 100%; }
+  .layout-editor { grid-template-columns: 1fr; }
+  .layout-preview-wrap { max-width: 330px; }
+  .layout-editor-card .section-heading { flex-direction: column; }
+  .button-row.compact { justify-content: flex-start; }
+  .geometry-row { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {

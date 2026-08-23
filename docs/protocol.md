@@ -24,6 +24,9 @@ POST /api/v1/clients/revoke
 POST /api/v1/wifi/configure
 GET  /api/v1/dashboard
 PUT  /api/v1/dashboard
+GET  /api/v1/dashboard/layout
+PUT  /api/v1/dashboard/layout
+POST /api/v1/dashboard/layout/reset
 GET  /api/v1/preferences
 PUT  /api/v1/preferences
 GET  /api/v1/automation

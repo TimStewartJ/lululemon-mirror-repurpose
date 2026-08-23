@@ -1,0 +1,19 @@
+*{box-sizing:border-box}
+html,body,#dashboard{width:100%;height:100%;margin:0;overflow:hidden}
+body{background:#020607;color:#e7eff1;font-family:"Helvetica Neue",Arial,sans-serif}
+#dashboard{position:relative;background:#020607}
+#background-photo,#background-shade{position:absolute;top:0;right:0;bottom:0;left:0}
+#background-photo{background-position:center;background-size:cover;background-repeat:no-repeat}
+#background-shade{background:rgba(0,0,0,.58)}
+#widgets{position:absolute;top:0;right:0;bottom:0;left:0}
+.mirror-widget{position:absolute;display:flex;flex-direction:column;justify-content:center;overflow:hidden;white-space:nowrap;text-shadow:0 2px 16px rgba(0,0,0,.82)}
+.mirror-widget.align-start{align-items:flex-start;text-align:left}
+.mirror-widget.align-center{align-items:center;text-align:center}
+.mirror-widget.align-end{align-items:flex-end;text-align:right}
+.widget-clock{font-weight:200;letter-spacing:-.055em;line-height:.92}
+.widget-date{font-weight:400;letter-spacing:.08em;text-transform:uppercase}
+.widget-name{font-weight:450;letter-spacing:.08em}
+.widget-metric{font-weight:500;letter-spacing:.13em;text-transform:uppercase}
+.widget-note{font-weight:300;line-height:1.25;white-space:normal}
+.widget-label{opacity:.62;font-size:.48em;letter-spacing:.16em;margin-bottom:.3em}
+.widget-value{line-height:1.1}

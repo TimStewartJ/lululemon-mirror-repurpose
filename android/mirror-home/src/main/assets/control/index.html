@@ -96,7 +96,7 @@
             <label>
               <span>Mode</span>
               <select id="dashboard-mode">
-                <option value="native">Native clock and setup</option>
+                <option value="native">Built-in mirror dashboard</option>
                 <option value="aurora">Aurora clock</option>
                 <option value="gallery">Local photo gallery</option>
                 <option value="custom">Custom or Home Assistant URL</option>
@@ -109,6 +109,80 @@
             <button type="submit">Apply dashboard</button>
           </form>
           <p id="dashboard-message" class="message" role="status"></p>
+        </article>
+
+        <article class="card layout-editor-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Visual editor</p>
+              <h2>Arrange the mirror</h2>
+              <p>Drag widgets to move them. Use the corner handle to resize. Hidden widgets remain selectable from the menu.</p>
+            </div>
+            <div class="button-row compact">
+              <button id="save-dashboard-layout" type="button">Save &amp; use</button>
+              <button id="reset-dashboard-layout" type="button" class="secondary">Reset subtle layout</button>
+            </div>
+          </div>
+          <div class="layout-editor">
+            <div class="layout-preview-wrap">
+              <div id="layout-preview" class="layout-preview" aria-label="Dashboard layout preview"></div>
+            </div>
+            <div class="layout-controls">
+              <label>
+                <span>Background</span>
+                <select id="layout-background-mode">
+                  <option value="gradient">Subtle gradient</option>
+                  <option value="solid">Solid color</option>
+                  <option value="photo">Gallery photo</option>
+                </select>
+              </label>
+              <div class="color-row">
+                <label><span>Primary</span><input id="layout-primary-color" type="color"></label>
+                <label><span>Secondary</span><input id="layout-secondary-color" type="color"></label>
+              </div>
+              <label id="layout-background-photo-row">
+                <span>Background photo</span>
+                <select id="layout-background-photo"></select>
+              </label>
+              <label>
+                <span>Background dim <output id="layout-dim-output">58%</output></span>
+                <input id="layout-background-dim" type="range" min="0" max="90" value="58">
+              </label>
+              <div class="color-row">
+                <label><span>Text</span><input id="layout-text-color" type="color"></label>
+                <label><span>Metrics</span><input id="layout-accent-color" type="color"></label>
+              </div>
+              <hr>
+              <label>
+                <span>Widget</span>
+                <select id="layout-widget-select"></select>
+              </label>
+              <label class="check"><input id="layout-widget-visible" type="checkbox"><span>Visible</span></label>
+              <label>
+                <span>Alignment</span>
+                <select id="layout-widget-align">
+                  <option value="start">Left</option>
+                  <option value="center">Center</option>
+                  <option value="end">Right</option>
+                </select>
+              </label>
+              <label>
+                <span>Opacity <output id="layout-opacity-output">100%</output></span>
+                <input id="layout-widget-opacity" type="range" min="10" max="100" value="100">
+              </label>
+              <div class="geometry-row">
+                <label><span>X</span><input id="layout-widget-x" type="number" min="0" max="1000"></label>
+                <label><span>Y</span><input id="layout-widget-y" type="number" min="0" max="1000"></label>
+                <label><span>Width</span><input id="layout-widget-width" type="number" min="24" max="1000"></label>
+                <label><span>Height</span><input id="layout-widget-height" type="number" min="24" max="1000"></label>
+              </div>
+              <label id="layout-note-row">
+                <span>Custom note</span>
+                <textarea id="layout-note-text" maxlength="120" rows="3"></textarea>
+              </label>
+            </div>
+          </div>
+          <p id="layout-message" class="message" role="status"></p>
         </article>
 
         <article class="card">

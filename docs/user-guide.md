@@ -32,13 +32,31 @@ after repeated failures.
 
 The **Display** tab provides:
 
-- **Native clock and setup**: always-available recovery/status screen.
+- **Built-in mirror dashboard**: an offline, customizable freeform canvas.
 - **Aurora clock**: an offline, device-local ambient clock.
 - **Local photo gallery**: private images stored inside Mirror Home.
 - **Custom or Home Assistant URL**: any HTTP(S) page reachable by the Mirror.
 
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
+
+### Visual layout editor
+
+Open **Display > Arrange the mirror** from any paired phone or desktop:
+
+- drag a widget to move it,
+- drag its lower-right handle to resize it,
+- select hidden widgets from the Widget menu,
+- change visibility, alignment, and opacity,
+- choose a solid color, subtle gradient, or gallery photo background,
+- adjust background dimming and text/metric colors,
+- edit the optional custom note,
+- select **Save & use** to switch immediately to the built-in dashboard.
+
+**Reset subtle layout** restores the quiet mirror-oriented default without
+changing Wi-Fi, pairings, photos, or schedules. First-run and disconnected
+states continue to use the native QR recovery screen regardless of the saved
+daily layout.
 
 The gallery accepts JPEG, PNG, WebP, and GIF images up to 20 MB each, with a
 250 MB total library limit. Photo bytes are served only to the Mirror's

@@ -16,6 +16,23 @@
     window.history.replaceState(null, document.title, window.location.pathname);
   }
   var token = window.localStorage.getItem(TOKEN_KEY);
+  var dashboardLayout = null;
+  var selectedWidgetId = 'clock';
+  var layoutPhotoObjectUrl = null;
+  var widgetLabels = {
+    clock: 'Clock',
+    date: 'Date',
+    name: 'Mirror name',
+    wifi: 'Wi-Fi',
+    media: 'Media',
+    schedule: 'Sleep schedule',
+    brightness: 'Brightness',
+    fcast: 'FCast',
+    ble: 'Bluetooth',
+    uptime: 'Uptime',
+    pairing: 'Pairing code',
+    note: 'Custom note'
+  };
 
   function byId(id) {
     return document.getElementById(id);
@@ -136,6 +153,148 @@
     });
   }
 
+  function selectedWidget() {
+    if (!dashboardLayout) return null;
+    return dashboardLayout.widgets.find(function (widget) {
+      return widget.id === selectedWidgetId;
+    }) || null;
+  }
+
+  function previewWidgetText(widget) {
+    var examples = {
+      clock: '8:42',
+      date: 'SATURDAY, AUGUST 23',
+      name: byId('display-name').value || 'Mirror',
+      wifi: 'WI-FI  HOME',
+      media: 'MEDIA  IDLE',
+      schedule: 'RHYTHM  SLEEP 10:30',
+      brightness: 'LIGHT  190',
+      fcast: 'FCAST  READY',
+      ble: 'BLUETOOTH  READY',
+      uptime: 'UPTIME  3H 18M',
+      pairing: 'PAIR  123456',
+      note: widget.text || 'Make space for what matters.'
+    };
+    return examples[widget.type] || widget.type;
+  }
+
+  function updateLayoutPreviewBackground() {
+    if (!dashboardLayout) return;
+    var preview = byId('layout-preview');
+    var background = dashboardLayout.background;
+    var photoLayer = preview.querySelector('.layout-preview-photo');
+    var shadeLayer = preview.querySelector('.layout-preview-shade');
+    if (!photoLayer) {
+      photoLayer = document.createElement('div');
+      photoLayer.className = 'layout-preview-photo';
+      shadeLayer = document.createElement('div');
+      shadeLayer.className = 'layout-preview-shade';
+      preview.append(photoLayer, shadeLayer);
+    }
+    preview.style.background = background.mode === 'solid'
+      ? background.primary
+      : 'linear-gradient(155deg,' + background.primary + ',' + background.secondary + ')';
+    shadeLayer.style.background = 'rgba(0,0,0,' + (Number(background.dim) / 100) + ')';
+    photoLayer.style.backgroundImage = '';
+    if (layoutPhotoObjectUrl) {
+      URL.revokeObjectURL(layoutPhotoObjectUrl);
+      layoutPhotoObjectUrl = null;
+    }
+    if (background.mode === 'photo' && background.photo) {
+      fetch('/api/v1/photos/' + encodeURIComponent(background.photo), {
+        headers: { Authorization: 'Bearer ' + token }
+      }).then(function (response) {
+        if (!response.ok) throw new Error('Background photo unavailable');
+        return response.blob();
+      }).then(function (blob) {
+        layoutPhotoObjectUrl = URL.createObjectURL(blob);
+        photoLayer.style.backgroundImage = 'url("' + layoutPhotoObjectUrl + '")';
+      }).catch(function () {
+        photoLayer.style.backgroundImage = '';
+      });
+    }
+  }
+
+  function updateWidgetControls() {
+    var widget = selectedWidget();
+    if (!widget) return;
+    byId('layout-widget-select').value = widget.id;
+    byId('layout-widget-visible').checked = Boolean(widget.visible);
+    byId('layout-widget-align').value = widget.align;
+    byId('layout-widget-opacity').value = String(widget.opacity);
+    byId('layout-opacity-output').textContent = widget.opacity + '%';
+    byId('layout-widget-x').value = String(widget.x);
+    byId('layout-widget-y').value = String(widget.y);
+    byId('layout-widget-width').value = String(widget.w);
+    byId('layout-widget-height').value = String(widget.h);
+    byId('layout-note-row').classList.toggle('hidden', widget.type !== 'note');
+    byId('layout-note-text').value = widget.text || '';
+  }
+
+  function renderLayoutEditor() {
+    if (!dashboardLayout) return;
+    var preview = byId('layout-preview');
+    Array.from(preview.querySelectorAll('.layout-widget')).forEach(function (element) {
+      element.remove();
+    });
+    updateLayoutPreviewBackground();
+    dashboardLayout.widgets.forEach(function (widget) {
+      var element = document.createElement('div');
+      element.className = 'layout-widget layout-widget-' + widget.type +
+        ' align-' + widget.align +
+        (widget.id === selectedWidgetId ? ' selected' : '') +
+        (!widget.visible ? ' is-hidden' : '');
+      element.dataset.widgetId = widget.id;
+      element.tabIndex = 0;
+      element.setAttribute('role', 'button');
+      element.setAttribute('aria-label', (widgetLabels[widget.id] || widget.id) + ' widget');
+      element.style.left = (widget.x / 10) + '%';
+      element.style.top = (widget.y / 10) + '%';
+      element.style.width = (widget.w / 10) + '%';
+      element.style.height = (widget.h / 10) + '%';
+      element.style.opacity = String(widget.opacity / 100);
+      element.style.color = ['clock', 'date', 'name', 'note'].indexOf(widget.type) >= 0
+        ? dashboardLayout.textColor
+        : dashboardLayout.accentColor;
+      element.textContent = previewWidgetText(widget);
+      var handle = document.createElement('span');
+      handle.className = 'layout-resize-handle';
+      handle.setAttribute('aria-hidden', 'true');
+      element.appendChild(handle);
+      preview.appendChild(element);
+    });
+    byId('layout-background-mode').value = dashboardLayout.background.mode;
+    byId('layout-primary-color').value = dashboardLayout.background.primary;
+    byId('layout-secondary-color').value = dashboardLayout.background.secondary;
+    byId('layout-background-dim').value = String(dashboardLayout.background.dim);
+    byId('layout-dim-output').textContent = dashboardLayout.background.dim + '%';
+    byId('layout-text-color').value = dashboardLayout.textColor;
+    byId('layout-accent-color').value = dashboardLayout.accentColor;
+    byId('layout-background-photo').value = dashboardLayout.background.photo || '';
+    byId('layout-background-photo-row').classList.toggle(
+      'hidden',
+      dashboardLayout.background.mode !== 'photo'
+    );
+    updateWidgetControls();
+  }
+
+  function refreshDashboardLayout() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/dashboard/layout').then(function (layout) {
+      dashboardLayout = layout;
+      if (!selectedWidget()) selectedWidgetId = 'clock';
+      var selector = byId('layout-widget-select');
+      selector.textContent = '';
+      dashboardLayout.widgets.forEach(function (widget) {
+        var option = document.createElement('option');
+        option.value = widget.id;
+        option.textContent = widgetLabels[widget.id] || widget.id;
+        selector.appendChild(option);
+      });
+      renderLayoutEditor();
+    });
+  }
+
   function refreshClients() {
     if (!token) return Promise.resolve();
     return request('/api/v1/clients').then(function (result) {
@@ -207,8 +366,19 @@
     if (!token) return Promise.resolve();
     return request('/api/v1/photos').then(function (result) {
       var list = byId('photo-list');
+      var backgroundSelect = byId('layout-background-photo');
+      var selectedBackground = dashboardLayout ? dashboardLayout.background.photo : '';
       list.textContent = '';
+      backgroundSelect.textContent = '';
+      var noPhoto = document.createElement('option');
+      noPhoto.value = '';
+      noPhoto.textContent = 'Select a gallery photo';
+      backgroundSelect.appendChild(noPhoto);
       (result.photos || []).forEach(function (photo) {
+        var option = document.createElement('option');
+        option.value = photo.name;
+        option.textContent = photo.name;
+        backgroundSelect.appendChild(option);
         var item = document.createElement('li');
         var label = document.createElement('span');
         label.textContent = photo.name;
@@ -224,6 +394,7 @@
         item.appendChild(remove);
         list.appendChild(item);
       });
+      backgroundSelect.value = selectedBackground || '';
     });
   }
 
@@ -241,6 +412,7 @@
       .then(function () {
         return Promise.all([
           refreshDashboard(),
+          refreshDashboardLayout(),
           refreshClients(),
           refreshPreferences(),
           refreshAutomation(),
@@ -313,6 +485,193 @@
       .then(function () { setMessage('dashboard-message', 'Dashboard applied.'); })
       .catch(function (error) { setMessage('dashboard-message', error.message, true); });
   });
+
+  function updateLayoutBackground() {
+    if (!dashboardLayout) return;
+    dashboardLayout.background.mode = byId('layout-background-mode').value;
+    dashboardLayout.background.primary = byId('layout-primary-color').value;
+    dashboardLayout.background.secondary = byId('layout-secondary-color').value;
+    dashboardLayout.background.photo = byId('layout-background-photo').value;
+    dashboardLayout.background.dim = Number(byId('layout-background-dim').value);
+    dashboardLayout.textColor = byId('layout-text-color').value;
+    dashboardLayout.accentColor = byId('layout-accent-color').value;
+    byId('layout-dim-output').textContent = dashboardLayout.background.dim + '%';
+    renderLayoutEditor();
+  }
+
+  [
+    'layout-background-mode',
+    'layout-primary-color',
+    'layout-secondary-color',
+    'layout-background-photo',
+    'layout-background-dim',
+    'layout-text-color',
+    'layout-accent-color'
+  ].forEach(function (id) {
+    byId(id).addEventListener('input', updateLayoutBackground);
+    byId(id).addEventListener('change', updateLayoutBackground);
+  });
+
+  byId('layout-widget-select').addEventListener('change', function () {
+    selectedWidgetId = byId('layout-widget-select').value;
+    renderLayoutEditor();
+  });
+
+  byId('layout-widget-visible').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.visible = byId('layout-widget-visible').checked;
+    renderLayoutEditor();
+  });
+
+  byId('layout-widget-align').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.align = byId('layout-widget-align').value;
+    renderLayoutEditor();
+  });
+
+  byId('layout-widget-opacity').addEventListener('input', function () {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.opacity = Number(byId('layout-widget-opacity').value);
+    byId('layout-opacity-output').textContent = widget.opacity + '%';
+    renderLayoutEditor();
+  });
+
+  byId('layout-note-text').addEventListener('input', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.type !== 'note') return;
+    widget.text = byId('layout-note-text').value;
+    renderLayoutEditor();
+  });
+
+  function updateWidgetGeometry() {
+    var widget = selectedWidget();
+    if (!widget) return;
+    var x = Number(byId('layout-widget-x').value);
+    var y = Number(byId('layout-widget-y').value);
+    var width = Number(byId('layout-widget-width').value);
+    var height = Number(byId('layout-widget-height').value);
+    width = Math.max(24, Math.min(1000 - x, width));
+    height = Math.max(24, Math.min(1000 - y, height));
+    widget.x = Math.max(0, Math.min(1000 - width, x));
+    widget.y = Math.max(0, Math.min(1000 - height, y));
+    widget.w = width;
+    widget.h = height;
+    renderLayoutEditor();
+  }
+
+  [
+    'layout-widget-x',
+    'layout-widget-y',
+    'layout-widget-width',
+    'layout-widget-height'
+  ].forEach(function (id) {
+    byId(id).addEventListener('change', updateWidgetGeometry);
+  });
+
+  byId('save-dashboard-layout').addEventListener('click', function () {
+    if (!dashboardLayout) return;
+    setMessage('layout-message', 'Saving…');
+    request('/api/v1/dashboard/layout', json('PUT', dashboardLayout))
+      .then(function (saved) {
+        dashboardLayout = saved;
+        return request('/api/v1/dashboard', json('PUT', { url: '' }));
+      })
+      .then(function () {
+        byId('dashboard-mode').value = 'native';
+        updateDashboardFields();
+        renderLayoutEditor();
+        setMessage('layout-message', 'Built-in dashboard updated.');
+      })
+      .catch(function (error) { setMessage('layout-message', error.message, true); });
+  });
+
+  byId('reset-dashboard-layout').addEventListener('click', function () {
+    setMessage('layout-message', 'Restoring the subtle default…');
+    request('/api/v1/dashboard/layout/reset', json('POST', {}))
+      .then(function (layout) {
+        dashboardLayout = layout;
+        selectedWidgetId = 'clock';
+        return request('/api/v1/dashboard', json('PUT', { url: '' }));
+      })
+      .then(function () {
+        byId('dashboard-mode').value = 'native';
+        updateDashboardFields();
+        renderLayoutEditor();
+        setMessage('layout-message', 'Subtle default restored.');
+      })
+      .catch(function (error) { setMessage('layout-message', error.message, true); });
+  });
+
+  (function enableLayoutGestures() {
+    var preview = byId('layout-preview');
+    var gesture = null;
+
+    function clamp(value, minimum, maximum) {
+      return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    preview.addEventListener('pointerdown', function (event) {
+      var element = event.target.closest('.layout-widget');
+      if (!element || !dashboardLayout) return;
+      selectedWidgetId = element.dataset.widgetId;
+      Array.from(preview.querySelectorAll('.layout-widget')).forEach(function (item) {
+        item.classList.toggle('selected', item === element);
+      });
+      updateWidgetControls();
+      var widget = selectedWidget();
+      var bounds = preview.getBoundingClientRect();
+      gesture = {
+        pointerId: event.pointerId,
+        element: element,
+        resize: event.target.classList.contains('layout-resize-handle'),
+        startX: event.clientX,
+        startY: event.clientY,
+        canvasWidth: bounds.width,
+        canvasHeight: bounds.height,
+        x: widget.x,
+        y: widget.y,
+        w: widget.w,
+        h: widget.h
+      };
+      preview.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+
+    preview.addEventListener('pointermove', function (event) {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      var widget = selectedWidget();
+      if (!widget) return;
+      var deltaX = Math.round((event.clientX - gesture.startX) / gesture.canvasWidth * 1000);
+      var deltaY = Math.round((event.clientY - gesture.startY) / gesture.canvasHeight * 1000);
+      if (gesture.resize) {
+        widget.w = clamp(gesture.w + deltaX, 24, 1000 - widget.x);
+        widget.h = clamp(gesture.h + deltaY, 24, 1000 - widget.y);
+      } else {
+        widget.x = clamp(gesture.x + deltaX, 0, 1000 - widget.w);
+        widget.y = clamp(gesture.y + deltaY, 0, 1000 - widget.h);
+      }
+      gesture.element.style.left = (widget.x / 10) + '%';
+      gesture.element.style.top = (widget.y / 10) + '%';
+      gesture.element.style.width = (widget.w / 10) + '%';
+      gesture.element.style.height = (widget.h / 10) + '%';
+      event.preventDefault();
+    });
+
+    function endGesture(event) {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      if (preview.hasPointerCapture(event.pointerId)) {
+        preview.releasePointerCapture(event.pointerId);
+      }
+      gesture = null;
+      renderLayoutEditor();
+    }
+
+    preview.addEventListener('pointerup', endGesture);
+    preview.addEventListener('pointercancel', endGesture);
+  }());
 
   byId('name-form').addEventListener('submit', function (event) {
     event.preventDefault();
@@ -425,21 +784,21 @@
       byId('wifi-passphrase').value = '';
       setMessage('wifi-message', error.message, true);
     });
+  });
 
-    byId('start-setup-network').addEventListener('click', function () {
-      request('/api/v1/onboarding/start', json('POST', {}))
-        .then(function () {
-          setMessage('onboarding-message', 'Starting the recovery setup network…');
-          window.setTimeout(refreshOnboarding, 3000);
-        })
-        .catch(function (error) { setMessage('onboarding-message', error.message, true); });
-    });
+  byId('start-setup-network').addEventListener('click', function () {
+    request('/api/v1/onboarding/start', json('POST', {}))
+      .then(function () {
+        setMessage('onboarding-message', 'Starting the recovery setup network…');
+        window.setTimeout(refreshOnboarding, 3000);
+      })
+      .catch(function (error) { setMessage('onboarding-message', error.message, true); });
+  });
 
-    byId('stop-setup-network').addEventListener('click', function () {
-      request('/api/v1/onboarding/stop', json('POST', {}))
-        .then(function () { return refreshOnboarding(); })
-        .catch(function (error) { setMessage('onboarding-message', error.message, true); });
-    });
+  byId('stop-setup-network').addEventListener('click', function () {
+    request('/api/v1/onboarding/stop', json('POST', {}))
+      .then(function () { return refreshOnboarding(); })
+      .catch(function (error) { setMessage('onboarding-message', error.message, true); });
   });
 
   byId('media-form').addEventListener('submit', function (event) {

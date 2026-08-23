@@ -69,6 +69,18 @@ public final class ControlServer extends NanoHTTPD {
                     && isLoopback(session)) {
                 return servePhoto(uri.substring("/photos/".length()));
             }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/dashboard/runtime".equals(uri)
+                    && isLoopback(session)) {
+                return response(Response.Status.OK, dashboardRuntime());
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/dashboard/layout".equals(uri)
+                    && isLoopback(session)) {
+                return response(
+                        Response.Status.OK,
+                        configStore.getDashboardLayout().toJson());
+            }
             if (Method.GET.equals(session.getMethod())) {
                 Response asset = controlAsset(uri);
                 if (asset != null) {
@@ -96,6 +108,24 @@ public final class ControlServer extends NanoHTTPD {
             }
             if (Method.PUT.equals(session.getMethod()) && "/api/v1/dashboard".equals(uri)) {
                 return updateDashboard(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/dashboard/layout".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        configStore.getDashboardLayout().toJson());
+            }
+            if (Method.PUT.equals(session.getMethod())
+                    && "/api/v1/dashboard/layout".equals(uri)) {
+                return updateDashboardLayout(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/dashboard/layout/reset".equals(uri)) {
+                configStore.resetDashboardLayout();
+                notifyConfigurationChanged();
+                return response(
+                        Response.Status.OK,
+                        configStore.getDashboardLayout().toJson());
             }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/preferences".equals(uri)) {
                 return response(Response.Status.OK, preferences());
@@ -141,6 +171,9 @@ public final class ControlServer extends NanoHTTPD {
                 return response(
                         Response.Status.OK,
                         new JSONObject().put("photos", photos.list()));
+            }
+            if (Method.GET.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
+                return servePhoto(uri.substring("/api/v1/photos/".length()));
             }
             if (Method.PUT.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
                 return uploadPhoto(session, uri.substring("/api/v1/photos/".length()));
@@ -262,6 +295,13 @@ public final class ControlServer extends NanoHTTPD {
                 .put("paired", pairing.isPaired());
     }
 
+    private JSONObject dashboardRuntime() throws JSONException {
+        JSONObject runtime = status();
+        runtime.put("pairingCode", pairing.currentCode());
+        runtime.put("controlUrl", controlUrl());
+        return runtime;
+    }
+
     private Response pair(JSONObject body) throws JSONException {
         PairingManager.PairingResult result = pairing.pair(
                 body.optString("code", null),
@@ -294,6 +334,23 @@ public final class ControlServer extends NanoHTTPD {
         configStore.setDashboardUrl(url);
         notifyConfigurationChanged();
         return response(Response.Status.OK, new JSONObject().put("url", url));
+    }
+
+    private Response updateDashboardLayout(JSONObject body) throws JSONException {
+        DashboardLayoutConfig layout = DashboardLayoutConfig.parse(body);
+        configStore.setDashboardLayout(layout);
+        notifyConfigurationChanged();
+        return response(Response.Status.OK, layout.toJson());
+    }
+
+    private String controlUrl() {
+        WifiManager manager =
+                (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+        WifiInfo info = manager == null ? null : manager.getConnectionInfo();
+        String address = info == null ? "" : WifiProvisioner.ipAddress(info.getIpAddress());
+        return address.isEmpty()
+                ? "http://127.0.0.1:" + ControlServerService.PORT + "/"
+                : "http://" + address + ":" + ControlServerService.PORT + "/";
     }
 
     private JSONObject preferences() throws JSONException {
@@ -653,6 +710,19 @@ public final class ControlServer extends NanoHTTPD {
                 break;
             case "/dashboard/gallery.js":
                 assetName = "control/dashboard/gallery.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
+            case "/dashboard/custom.html":
+                assetName = "control/dashboard/custom.html";
+                mimeType = "text/html; charset=utf-8";
+                document = true;
+                break;
+            case "/dashboard/custom.css":
+                assetName = "control/dashboard/custom.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/dashboard/custom.js":
+                assetName = "control/dashboard/custom.js";
                 mimeType = "application/javascript; charset=utf-8";
                 break;
             default:

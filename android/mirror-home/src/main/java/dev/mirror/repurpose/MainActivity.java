@@ -39,6 +39,8 @@ public final class MainActivity extends Activity {
     private static final long DASHBOARD_RETRY_INTERVAL_MS = 60_000L;
     private static final String OFFLINE_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/offline.html";
+    private static final String BUILT_IN_DASHBOARD_URL =
+            "http://127.0.0.1:8787/dashboard/custom.html";
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
@@ -186,6 +188,8 @@ public final class MainActivity extends Activity {
         String dashboardUrl = configStore.getDashboardUrl();
         if (!dashboardUrl.isEmpty()) {
             renderWebDashboard(dashboardUrl);
+        } else if (pairingManager.isPaired() && !currentIpAddress().isEmpty()) {
+            renderWebDashboard(BUILT_IN_DASHBOARD_URL);
         } else {
             renderNativeDashboard();
         }

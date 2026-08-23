@@ -20,6 +20,7 @@ public final class ConfigStore {
     private static final String KEY_AMBIENT_ENABLED = "automation_ambient_enabled";
     private static final String KEY_AMBIENT_MIN = "automation_ambient_min";
     private static final String KEY_AMBIENT_MAX = "automation_ambient_max";
+    private static final String KEY_DASHBOARD_LAYOUT = "dashboard_layout_v1";
 
     private final SharedPreferences preferences;
 
@@ -34,6 +35,26 @@ public final class ConfigStore {
 
     public void setDashboardUrl(String dashboardUrl) {
         preferences.edit().putString(KEY_DASHBOARD_URL, dashboardUrl).apply();
+    }
+
+    public DashboardLayoutConfig getDashboardLayout() {
+        String serialized = preferences.getString(KEY_DASHBOARD_LAYOUT, "");
+        if (serialized == null || serialized.isEmpty()) {
+            return DashboardLayoutConfig.defaults();
+        }
+        try {
+            return DashboardLayoutConfig.parse(serialized);
+        } catch (org.json.JSONException error) {
+            return DashboardLayoutConfig.defaults();
+        }
+    }
+
+    public void setDashboardLayout(DashboardLayoutConfig layout) {
+        preferences.edit().putString(KEY_DASHBOARD_LAYOUT, layout.serialize()).apply();
+    }
+
+    public void resetDashboardLayout() {
+        preferences.edit().remove(KEY_DASHBOARD_LAYOUT).apply();
     }
 
     public String getDisplayName() {

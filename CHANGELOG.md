@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-23
+
+- Freeform built-in mirror dashboard with movable and resizable widgets.
+- Responsive visual layout editor in the Mirror-hosted control application.
+- Custom solid, gradient, or gallery-photo backgrounds with adjustable dimming.
+- Configurable widget visibility, opacity, alignment, and custom note.
+- More subtle default layout with optional Wi-Fi, media, schedule, light, FCast,
+  Bluetooth, uptime, and pairing metrics.
+
 ## 1.0.0 - 2026-08-23
 
 First owner-controlled appliance release for the IFC6309 MIRROR profile.
