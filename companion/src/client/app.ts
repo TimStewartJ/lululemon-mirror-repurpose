@@ -225,11 +225,8 @@ async function refreshMedia(): Promise<void> {
   for (const entry of entries) {
     const li = document.createElement('li');
 
-    const link = document.createElement('a');
-    link.href = `/media-files/${encodeURIComponent(entry.name)}`;
-    link.textContent = entry.name;
-    link.target = '_blank';
-    link.rel = 'noopener';
+    const name = document.createElement('span');
+    name.textContent = entry.name;
 
     const size = document.createElement('span');
     size.textContent = formatBytes(entry.sizeBytes);
@@ -264,7 +261,7 @@ async function refreshMedia(): Promise<void> {
       }),
     );
 
-    li.append(link, size, playButton, stopButton, deleteButton);
+    li.append(name, size, playButton, stopButton, deleteButton);
     mediaListEl.appendChild(li);
   }
 }
@@ -288,16 +285,6 @@ byId<HTMLFormElement>('upload-form').addEventListener('submit', (event) => {
     return `Uploaded ${file.name}.`;
   });
 });
-
-// --- Bluetooth (stub) --------------------------------------------------------
-
-const bluetoothStatusEl = byId<HTMLParagraphElement>('bluetooth-status');
-void companionApi
-  .bluetoothStatus()
-  .then((status) => {
-    setStatus(bluetoothStatusEl, status.reason ?? (status.supported ? 'Available' : 'Not available'));
-  })
-  .catch((error) => setStatus(bluetoothStatusEl, (error as Error).message, true));
 
 // --- System helper -------------------------------------------------------------
 

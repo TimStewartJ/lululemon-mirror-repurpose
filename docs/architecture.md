@@ -5,7 +5,7 @@
 ```text
 Browser companion
   | USB: adb forward
-  | LAN: authenticated HTTP/WebSocket
+  | LAN: authenticated HTTP
   | BLE: provisioning GATT service
   v
 Mirror Home (ordinary APK, default HOME)
@@ -28,7 +28,7 @@ Mirror Home owns all user-facing behavior:
 - full-screen portrait dashboard
 - clock, status, and configurable web dashboard
 - pairing code and connection status
-- embedded HTTP/WebSocket control plane
+- embedded HTTP control plane
 - BLE provisioning service
 - Wi-Fi network enrollment
 - media playback overlay and queue
@@ -49,7 +49,7 @@ The companion is a local Node.js service and static browser UI:
 - opens the same UI over LAN after Wi-Fi provisioning
 - uses Web Bluetooth for initial provisioning where supported
 - hosts local media files with range requests
-- sends playback, dashboard, schedule, and automation commands
+- sends playback, dashboard, and automation commands
 
 The companion does not persist Wi-Fi passphrases by default.
 

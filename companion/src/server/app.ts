@@ -4,11 +4,9 @@ import { CompanionEnv } from './env';
 import { ConfigStore } from './config-store';
 import { DeviceManager } from './device-manager';
 import { MediaLibrary } from './media/media-library';
-import { NotImplementedBluetoothAdapter } from './bluetooth-adapter';
 import { createDevicesRouter } from './routes/devices-router';
 import { createDeviceProxyRouter } from './routes/device-proxy-router';
 import { createMediaRouter, createMediaFilesRouter } from './routes/media-router';
-import { createBluetoothRouter } from './routes/bluetooth-router';
 import { createAccessTokenMiddleware } from './security';
 import { logger } from './logger';
 
@@ -36,7 +34,6 @@ export function createApp(env: CompanionEnv): AppContext {
     env.deviceMediaPort,
   );
   const mediaLibrary = new MediaLibrary(env.mediaRoot);
-  const bluetoothAdapter = new NotImplementedBluetoothAdapter();
 
   // Guards every companion/device/media route. A no-op passthrough when no
   // COMPANION_ACCESS_TOKEN is configured (the default loopback-only setup);
@@ -49,7 +46,6 @@ export function createApp(env: CompanionEnv): AppContext {
   app.use('/media-files', accessTokenMiddleware);
 
   app.use('/api/companion', createDevicesRouter(deviceManager));
-  app.use('/api/companion', createBluetoothRouter(bluetoothAdapter));
   app.use('/api/device', createDeviceProxyRouter(deviceManager, configStore));
   app.use('/api/companion', createMediaRouter(mediaLibrary, deviceManager, {
     companionPort: env.port,

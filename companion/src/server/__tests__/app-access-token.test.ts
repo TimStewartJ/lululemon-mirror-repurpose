@@ -63,7 +63,7 @@ describe('access token middleware wiring in the full app (finding #4 regression)
   test('requests succeed without a header when no access token is configured', async () => {
     const { baseUrl, close } = await startApp(baseEnv({}, dataDir, mediaRoot));
     try {
-      const response = await fetch(`${baseUrl}/api/companion/bluetooth/status`);
+      const response = await fetch(`${baseUrl}/api/companion/media`);
       assert.equal(response.status, 200);
     } finally {
       await close();
@@ -73,7 +73,7 @@ describe('access token middleware wiring in the full app (finding #4 regression)
   test('rejects /api/companion requests without the header once a token is configured', async () => {
     const { baseUrl, close } = await startApp(baseEnv({ accessToken: 'secret-token' }, dataDir, mediaRoot));
     try {
-      const response = await fetch(`${baseUrl}/api/companion/bluetooth/status`);
+      const response = await fetch(`${baseUrl}/api/companion/media`);
       assert.equal(response.status, 401);
     } finally {
       await close();
@@ -83,7 +83,7 @@ describe('access token middleware wiring in the full app (finding #4 regression)
   test('accepts /api/companion requests with the correct X-Companion-Token header', async () => {
     const { baseUrl, close } = await startApp(baseEnv({ accessToken: 'secret-token' }, dataDir, mediaRoot));
     try {
-      const response = await fetch(`${baseUrl}/api/companion/bluetooth/status`, {
+      const response = await fetch(`${baseUrl}/api/companion/media`, {
         headers: { 'X-Companion-Token': 'secret-token' },
       });
       assert.equal(response.status, 200);

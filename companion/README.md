@@ -7,9 +7,8 @@ docs for how the companion fits into the wider project.
 
 The companion never talks to the device API directly from the browser: the
 device API intentionally has no CORS headers, so the static UI calls
-same-origin companion endpoints, and the companion server forwards those
-calls to the device (over an `adb forward`-ed loopback port, or later over
-LAN) attaching the bearer token itself.
+same-origin companion endpoints, and the companion server forwards those calls to the device over an `adb forward`-ed
+loopback port or a validated LAN connection, attaching the bearer token itself.
 
 ## Features
 
@@ -197,7 +196,6 @@ Companion-only endpoints:
 | `POST /api/companion/devices/disconnect` | Remove the active `adb forward` (or clear LAN state) |
 | `POST /api/companion/devices/lan/connect` | Connect over LAN using a validated RFC1918/link-local IPv4 host + pairing token (from the BLE flow) |
 | `GET /api/companion/devices/connection` | Current connection state |
-| `GET /api/companion/bluetooth/status` | Reports server-mediated Bluetooth as not implemented (see the BLE section below for the working browser-mediated flow) |
 | `GET /api/companion/media` | List uploaded media files |
 | `PUT /api/companion/media/:name` | Upload a file (raw body) |
 | `DELETE /api/companion/media/:name` | Delete a file |
@@ -222,14 +220,11 @@ via query string, so it can't leak into access logs, browser history, or
 gated, so the page always loads; it's the API calls it makes that require
 the token.
 
-The web UI has a "Companion access" card where you paste the token; it's
+The web UI has a "Companion access" card where you paste the token; it is
 kept only in that browser tab's `sessionStorage` (cleared when the tab
-closes) and attached automatically to every companion API call. Note that a
-plain `<a href="/media-files/...">` link (used for direct playback) cannot
-carry a custom header, so when a LAN token is configured, opening a media
-link directly in a new tab will 401 — playback initiated via the companion
-UI's own fetch-based flows is authenticated correctly, but direct links are
-a known limitation of this scaffolding stage.
+closes) and attached automatically to every companion API call. Media
+filenames are displayed as text rather than unauthenticated direct links;
+the Play, Stop, and Delete actions all use authenticated API requests.
 
 Generate a token with, for example:
 
@@ -353,14 +348,3 @@ media URL itself and is never logged. USB playback always resolves to a
 `127.0.0.1` URL reached through the `adb reverse` tunnel, which mirrors a
 loopback-style origin from the device's perspective, so no token is
 attached there.
-
-## Bluetooth (server-mediated path, not implemented)
-
-`src/server/bluetooth-adapter.ts` defines `BluetoothProvisioningAdapter`, an
-interface for a possible future *server-mediated* BLE path (e.g. a native
-BLE library running alongside the companion process, useful for browsers
-without Web Bluetooth support). This is separate from -- and not required
-by -- the working browser-mediated Web Bluetooth flow described above; the
-current `NotImplementedBluetoothAdapter` always reports itself as
-unsupported and rejects any operation with a clear error, so callers cannot
-mistake it for a working, empty-result implementation.

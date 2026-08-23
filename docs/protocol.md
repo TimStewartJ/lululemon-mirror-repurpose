@@ -1,6 +1,6 @@
 # Control protocol
 
-Mirror Home exposes a versioned JSON API over HTTP and WebSocket.
+Mirror Home exposes a versioned JSON API over HTTP.
 
 ## Pairing
 
@@ -11,14 +11,17 @@ Mirror Home exposes a versioned JSON API over HTTP and WebSocket.
 
 Pairing codes expire, are single-use, and are rate-limited.
 
-## Planned API surface
+## API surface
 
 ```text
 GET  /api/v1/status
 POST /api/v1/pair
+POST /api/v1/pair/revoke
 POST /api/v1/wifi/configure
 GET  /api/v1/dashboard
 PUT  /api/v1/dashboard
+POST /api/v1/control/brightness
+POST /api/v1/control/name
 POST /api/v1/media/play
 POST /api/v1/media/pause
 POST /api/v1/media/resume
@@ -29,7 +32,6 @@ GET  /api/v1/media/status
 GET  /api/v1/system
 POST /api/v1/system/prepare-kiosk
 POST /api/v1/system/home
-GET  /api/v1/events          (WebSocket upgrade)
 ```
 
 All endpoints except status and pairing require authentication.

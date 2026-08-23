@@ -44,8 +44,6 @@ export const companionApi = {
     }),
   disconnectDevice: () =>
     requestJson<{ connected: boolean }>('/api/companion/devices/disconnect', { method: 'POST' }),
-  bluetoothStatus: () =>
-    requestJson<{ supported: boolean; reason?: string }>('/api/companion/bluetooth/status'),
   connectDeviceLan: (token: string, ipAddress: string) =>
     requestJson<{ connected: boolean; mode: string; host: string }>('/api/companion/devices/lan/connect', {
       method: 'POST',
@@ -125,4 +123,3 @@ export const companionApi = {
     }
   },
 };
-
