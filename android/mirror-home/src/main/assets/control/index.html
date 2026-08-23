@@ -45,6 +45,7 @@
       <nav class="tabs" aria-label="Mirror controls">
         <button class="tab active" data-panel="overview">Overview</button>
         <button class="tab" data-panel="display">Display</button>
+        <button class="tab" data-panel="automation">Schedule</button>
         <button class="tab" data-panel="media">Media</button>
         <button class="tab" data-panel="network">Network</button>
         <button class="tab" data-panel="access">Access</button>
@@ -121,6 +122,38 @@
             <button type="submit">Set brightness</button>
           </form>
           <p id="display-message" class="message" role="status"></p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Local time</p>
+          <h2>Clock</h2>
+          <form id="clock-form" class="form-grid">
+            <label><span>IANA time zone</span><input id="time-zone" placeholder="America/Los_Angeles" required></label>
+            <label class="check"><input id="clock-24-hour" type="checkbox"><span>Use 24-hour time</span></label>
+            <button type="submit">Save clock settings</button>
+          </form>
+          <p id="clock-message" class="message" role="status"></p>
+        </article>
+      </section>
+
+      <section id="automation" class="panel">
+        <article class="card">
+          <p class="eyebrow">Daily rhythm</p>
+          <h2>Sleep, wake, and brightness</h2>
+          <form id="automation-form" class="form-grid">
+            <label class="check"><input id="automation-enabled" type="checkbox"><span>Enable schedule</span></label>
+            <label><span>Wake time</span><input id="wake-time" type="time" required></label>
+            <label><span>Sleep time</span><input id="sleep-time" type="time" required></label>
+            <label><span>Wake brightness</span><input id="wake-brightness" type="range" min="1" max="255" value="180"></label>
+            <label class="check"><input id="ambient-enabled" type="checkbox"><span>Adjust to ambient light when a sensor is available</span></label>
+            <button type="submit">Save schedule</button>
+          </form>
+          <div class="button-row">
+            <button id="wake-now" class="secondary">Wake now</button>
+            <button id="sleep-now" class="danger">Sleep now</button>
+          </div>
+          <p id="automation-capability" class="message"></p>
+          <p id="automation-message" class="message" role="status"></p>
         </article>
       </section>
 

@@ -1,6 +1,7 @@
 package dev.mirror.repurpose;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -35,5 +36,22 @@ public final class InputValidatorTest {
         assertTrue(InputValidator.validMediaUrl("rtsp://192.168.1.20/live"));
         assertFalse(InputValidator.validMediaUrl("file:///sdcard/private.mp4"));
         assertFalse(InputValidator.validMediaUrl("javascript:alert(1)"));
+    }
+
+    @Test
+    public void validatesTimeZones() {
+        assertTrue(InputValidator.validTimeZone("America/Los_Angeles"));
+        assertTrue(InputValidator.validTimeZone("UTC"));
+        assertFalse(InputValidator.validTimeZone("not a time zone"));
+        assertFalse(InputValidator.validTimeZone(""));
+    }
+
+    @Test
+    public void parsesScheduleTimes() {
+        assertEquals(0, InputValidator.parseTimeMinutes("00:00"));
+        assertEquals(7 * 60 + 30, InputValidator.parseTimeMinutes("07:30"));
+        assertEquals(23 * 60 + 59, InputValidator.parseTimeMinutes("23:59"));
+        assertEquals(-1, InputValidator.parseTimeMinutes("24:00"));
+        assertEquals(-1, InputValidator.parseTimeMinutes("7:30"));
     }
 }

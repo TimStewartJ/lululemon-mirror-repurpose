@@ -10,6 +10,8 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
@@ -23,6 +25,7 @@ public final class ControlServer extends NanoHTTPD {
 
     private final Context context;
     private final ConfigStore configStore;
+    private final AutomationManager automation;
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
     private final PairingManager pairing;
@@ -33,6 +36,7 @@ public final class ControlServer extends NanoHTTPD {
         super(port);
         this.context = context.getApplicationContext();
         configStore = new ConfigStore(context);
+        automation = AutomationManager.getInstance(context);
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
         pairing = PairingManager.getInstance(context);
@@ -70,6 +74,28 @@ public final class ControlServer extends NanoHTTPD {
             }
             if (Method.PUT.equals(session.getMethod()) && "/api/v1/dashboard".equals(uri)) {
                 return updateDashboard(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/preferences".equals(uri)) {
+                return response(Response.Status.OK, preferences());
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/preferences".equals(uri)) {
+                return updatePreferences(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/automation".equals(uri)) {
+                return response(Response.Status.OK, automation.snapshot());
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/automation".equals(uri)) {
+                return updateAutomation(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/automation/sleep".equals(uri)) {
+                automation.setManualSleeping(true);
+                return response(Response.Status.OK, automation.snapshot());
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/automation/wake".equals(uri)) {
+                automation.setManualSleeping(false);
+                return response(Response.Status.OK, automation.snapshot());
             }
             if (Method.POST.equals(session.getMethod())
                     && "/api/v1/wifi/configure".equals(uri)) {
@@ -162,6 +188,9 @@ public final class ControlServer extends NanoHTTPD {
         result.put("apiVersion", 1);
         result.put("paired", pairing.isPaired());
         result.put("displayName", configStore.getDisplayName());
+        result.put("timeZone", configStore.getTimeZoneId());
+        result.put("utcOffsetMinutes", configStore.getUtcOffsetMinutes());
+        result.put("clock24Hour", configStore.isClock24Hour());
         result.put("mirrorBinderConnected", mirror.isConnected());
         result.put("systemHelperConnected", systemHelper.isConnected());
         Integer brightness = mirror.getBrightness();
@@ -169,6 +198,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("wifi", wifiStatus);
         result.put("media", media.snapshot());
         result.put("bleProvisioning", BleProvisioningServer.lastKnownStatus());
+        result.put("automation", automation.snapshot());
         return result;
     }
 
@@ -178,6 +208,14 @@ public final class ControlServer extends NanoHTTPD {
                 body.optString("name", "Device"));
         if (result == null) {
             return error(Response.Status.UNAUTHORIZED, "Invalid or expired pairing code");
+        }
+        String timeZone = body.optString("timeZone", "");
+        if (InputValidator.validTimeZone(timeZone)) {
+            configStore.setTimeZoneId(timeZone);
+            int offset = body.optInt("utcOffsetMinutes", 0);
+            if (offset >= -14 * 60 && offset <= 14 * 60) {
+                configStore.setUtcOffsetMinutes(offset);
+            }
         }
         notifyConfigurationChanged();
         return response(
@@ -196,6 +234,37 @@ public final class ControlServer extends NanoHTTPD {
         configStore.setDashboardUrl(url);
         notifyConfigurationChanged();
         return response(Response.Status.OK, new JSONObject().put("url", url));
+    }
+
+    private JSONObject preferences() throws JSONException {
+        return new JSONObject()
+                .put("timeZone", configStore.getTimeZoneId())
+                .put("utcOffsetMinutes", configStore.getUtcOffsetMinutes())
+                .put("clock24Hour", configStore.isClock24Hour())
+                .put("ambientLightAvailable", automation.hasAmbientLightSensor());
+    }
+
+    private Response updatePreferences(JSONObject body) throws JSONException {
+        String timeZone = body.optString("timeZone", "");
+        if (!InputValidator.validTimeZone(timeZone)) {
+            return error(Response.Status.BAD_REQUEST, "Unknown IANA time zone");
+        }
+        configStore.setTimeZoneId(timeZone);
+        int offset = body.optInt("utcOffsetMinutes", 0);
+        if (offset < -14 * 60 || offset > 14 * 60) {
+            return error(Response.Status.BAD_REQUEST, "Invalid UTC offset");
+        }
+        configStore.setUtcOffsetMinutes(offset);
+        configStore.setClock24Hour(body.optBoolean("clock24Hour", false));
+        notifyConfigurationChanged();
+        return response(Response.Status.OK, preferences());
+    }
+
+    private Response updateAutomation(JSONObject body) throws JSONException {
+        if (!automation.update(body)) {
+            return error(Response.Status.BAD_REQUEST, "Invalid automation settings");
+        }
+        return response(Response.Status.OK, automation.snapshot());
     }
 
     private Response configureWifi(JSONObject body) throws JSONException {
@@ -353,10 +422,32 @@ public final class ControlServer extends NanoHTTPD {
         Map<String, String> files = new HashMap<>();
         session.parseBody(files);
         String body = files.get("postData");
+        if (body == null && files.get("content") != null) {
+            body = readTemporaryBody(files.get("content"));
+        }
         if (body == null || body.isEmpty()) {
             return new JSONObject();
         }
         return new JSONObject(body);
+    }
+
+    private static String readTemporaryBody(String path) throws IOException {
+        File source = new File(path);
+        if (!source.isFile() || source.length() > MAX_BODY_BYTES) {
+            throw new IOException("Invalid temporary request body");
+        }
+        try (FileInputStream input = new FileInputStream(source);
+                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+                if (output.size() > MAX_BODY_BYTES) {
+                    throw new IOException("Request body is too large");
+                }
+            }
+            return new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 
     private boolean authorized(IHTTPSession session) {
@@ -408,6 +499,19 @@ public final class ControlServer extends NanoHTTPD {
                 break;
             case "/dashboard/aurora.js":
                 assetName = "control/dashboard/aurora.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
+            case "/dashboard/offline.html":
+                assetName = "control/dashboard/offline.html";
+                mimeType = "text/html; charset=utf-8";
+                document = true;
+                break;
+            case "/dashboard/offline.css":
+                assetName = "control/dashboard/offline.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/dashboard/offline.js":
+                assetName = "control/dashboard/offline.js";
                 mimeType = "application/javascript; charset=utf-8";
                 break;
             default:

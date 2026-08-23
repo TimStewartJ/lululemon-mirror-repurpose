@@ -83,7 +83,7 @@ export function createDeviceProxyRouter(deviceManager: DeviceManagerPort, config
 
   router.put('/dashboard', async (req, res) => {
     const url = typeof req.body?.url === 'string' ? req.body.url : undefined;
-    if (!url) {
+    if (url === undefined) {
       res.status(400).json({ error: 'url is required' });
       return;
     }

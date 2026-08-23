@@ -36,6 +36,9 @@
         if (!response.ok) {
           var error = new Error(body && body.error ? body.error : 'Request failed (' + response.status + ')');
           error.status = response.status;
+          if (response.status === 401 && authenticated !== false) {
+            forgetLocalCredential();
+          }
           throw error;
         }
         return body;
@@ -137,9 +140,50 @@
     });
   }
 
+  function refreshPreferences() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/preferences').then(function (preferences) {
+      byId('time-zone').value = preferences.timeZone
+        || (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+      byId('clock-24-hour').checked = Boolean(preferences.clock24Hour);
+      var browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      var browserOffset = -new Date().getTimezoneOffset();
+      if (preferences.timeZone === browserZone
+          && preferences.utcOffsetMinutes !== browserOffset) {
+        return request('/api/v1/preferences', json('PUT', {
+          timeZone: browserZone,
+          utcOffsetMinutes: browserOffset,
+          clock24Hour: Boolean(preferences.clock24Hour)
+        }));
+      }
+    });
+  }
+
+  function refreshAutomation() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/automation').then(function (automation) {
+      byId('automation-enabled').checked = Boolean(automation.enabled);
+      byId('wake-time').value = automation.wakeTime || '07:00';
+      byId('sleep-time').value = automation.sleepTime || '23:00';
+      byId('wake-brightness').value = String(automation.wakeBrightness || 180);
+      byId('ambient-enabled').checked = Boolean(automation.ambientEnabled);
+      byId('ambient-enabled').disabled = !automation.ambientLightAvailable;
+      byId('automation-capability').textContent = automation.ambientLightAvailable
+        ? 'Ambient light sensor available.'
+        : 'No ambient-light sensor was detected; time-based brightness remains available.';
+    });
+  }
+
   function refreshAll() {
     return refreshStatus()
-      .then(function () { return Promise.all([refreshDashboard(), refreshClients()]); })
+      .then(function () {
+        return Promise.all([
+          refreshDashboard(),
+          refreshClients(),
+          refreshPreferences(),
+          refreshAutomation()
+        ]);
+      })
       .catch(function (error) {
         if (error.status !== 401) setMessage('pair-message', error.message, true);
       });
@@ -170,7 +214,9 @@
     setMessage('pair-message', 'Pairing…');
     request('/api/v1/pair', json('POST', {
       code: byId('pair-code').value.trim(),
-      name: byId('client-name').value.trim()
+      name: byId('client-name').value.trim(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+      utcOffsetMinutes: -new Date().getTimezoneOffset()
     }), false).then(function (result) {
       token = result.token;
       window.localStorage.setItem(TOKEN_KEY, token);
@@ -225,6 +271,46 @@
       .catch(function (error) { setMessage('display-message', error.message, true); });
   });
 
+  byId('clock-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    request('/api/v1/preferences', json('PUT', {
+      timeZone: byId('time-zone').value.trim(),
+      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+      clock24Hour: byId('clock-24-hour').checked
+    })).then(function () {
+      setMessage('clock-message', 'Clock settings saved.');
+      return refreshStatus();
+    }).catch(function (error) { setMessage('clock-message', error.message, true); });
+  });
+
+  byId('automation-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    request('/api/v1/automation', json('PUT', {
+      enabled: byId('automation-enabled').checked,
+      wakeTime: byId('wake-time').value,
+      sleepTime: byId('sleep-time').value,
+      wakeBrightness: Number(byId('wake-brightness').value),
+      ambientEnabled: byId('ambient-enabled').checked,
+      ambientMinimum: 20,
+      ambientMaximum: 220
+    })).then(function () {
+      setMessage('automation-message', 'Schedule saved.');
+      return refreshAutomation();
+    }).catch(function (error) { setMessage('automation-message', error.message, true); });
+  });
+
+  byId('wake-now').addEventListener('click', function () {
+    request('/api/v1/automation/wake', json('POST', {}))
+      .then(function () { setMessage('automation-message', 'Mirror awake for the next four hours.'); })
+      .catch(function (error) { setMessage('automation-message', error.message, true); });
+  });
+
+  byId('sleep-now').addEventListener('click', function () {
+    request('/api/v1/automation/sleep', json('POST', {}))
+      .then(function () { setMessage('automation-message', 'Mirror sleeping. Use Wake now to restore it.'); })
+      .catch(function (error) { setMessage('automation-message', error.message, true); });
+  });
+
   byId('wifi-form').addEventListener('submit', function (event) {
     event.preventDefault();
     var passphrase = byId('wifi-passphrase').value;
@@ -277,6 +363,9 @@
   });
 
   updateDashboardFields();
+  if (!byId('time-zone').value) {
+    byId('time-zone').value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  }
   showPairedState(Boolean(token));
   refreshAll();
   window.setInterval(function () {

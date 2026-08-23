@@ -22,6 +22,7 @@ public final class MirrorHomeApplication extends Application {
         MirrorBinderClient.getInstance(this).connect();
         SystemHelperClient.getInstance(this).connect();
         MediaPlaybackManager.getInstance(this);
+        AutomationManager.getInstance(this);
         startService(new Intent(this, ControlServerService.class));
     }
 

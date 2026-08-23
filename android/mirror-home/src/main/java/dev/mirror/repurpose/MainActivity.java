@@ -17,6 +17,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -33,8 +36,22 @@ import androidx.media3.ui.PlayerView;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
+    private static final long DASHBOARD_RETRY_INTERVAL_MS = 60_000L;
+    private static final String OFFLINE_DASHBOARD_URL =
+            "http://127.0.0.1:8787/dashboard/offline.html";
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
+    private final Runnable dashboardRetry = new Runnable() {
+        @Override
+        public void run() {
+            if (webDashboard != null
+                    && dashboardOffline
+                    && !loadedDashboardUrl.isEmpty()) {
+                webDashboard.loadUrl(loadedDashboardUrl);
+            }
+        }
+    };
     private final Runnable statusRefresh = new Runnable() {
         @Override
         public void run() {
@@ -54,19 +71,24 @@ public final class MainActivity extends Activity {
                 renderDashboard();
             } else if (MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED.equals(intent.getAction())) {
                 updateMediaVisibility();
+            } else if (AutomationManager.ACTION_STATE_CHANGED.equals(intent.getAction())) {
+                updateSleepVisibility();
             }
         }
     };
 
     private ConfigStore configStore;
+    private AutomationManager automation;
     private PairingManager pairingManager;
     private MediaPlaybackManager media;
     private FrameLayout root;
     private View dashboardView;
     private WebView webDashboard;
     private PlayerView playerView;
+    private View sleepOverlay;
     private TextView nativeStatus;
     private String loadedDashboardUrl = "";
+    private boolean dashboardOffline;
 
     @Override
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -81,6 +103,7 @@ public final class MainActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
         configStore = new ConfigStore(this);
+        automation = AutomationManager.getInstance(this);
         pairingManager = PairingManager.getInstance(this);
         media = MediaPlaybackManager.getInstance(this);
 
@@ -98,11 +121,21 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT));
         media.attach(playerView);
 
+        sleepOverlay = new View(this);
+        sleepOverlay.setBackgroundColor(Color.BLACK);
+        sleepOverlay.setVisibility(View.GONE);
+        root.addView(
+                sleepOverlay,
+                new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+
         IntentFilter filter = new IntentFilter();
         filter.addAction(ControlServerService.ACTION_CONFIGURATION_CHANGED);
         filter.addAction(MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED);
         filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
+        filter.addAction(AutomationManager.ACTION_STATE_CHANGED);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -112,6 +145,7 @@ public final class MainActivity extends Activity {
 
         renderDashboard();
         updateMediaVisibility();
+        updateSleepVisibility();
     }
 
     @Override
@@ -122,17 +156,23 @@ public final class MainActivity extends Activity {
         }
         statusHandler.removeCallbacks(statusRefresh);
         statusHandler.post(statusRefresh);
+        if (dashboardOffline) {
+            dashboardHandler.removeCallbacks(dashboardRetry);
+            dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
+        }
     }
 
     @Override
     protected void onPause() {
         statusHandler.removeCallbacks(statusRefresh);
+        dashboardHandler.removeCallbacks(dashboardRetry);
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
         statusHandler.removeCallbacks(statusRefresh);
+        dashboardHandler.removeCallbacks(dashboardRetry);
         unregisterReceiver(stateReceiver);
         media.detach(playerView);
         destroyWebDashboard();
@@ -170,13 +210,20 @@ public final class MainActivity extends Activity {
         dashboard.removeAllViews();
 
         TextClock clock = new TextClock(this);
-        clock.setFormat12Hour("h:mm");
-        clock.setFormat24Hour("HH:mm");
+        clock.setTimeZone(configStore.getEffectiveTimeZoneId());
+        if (configStore.isClock24Hour()) {
+            clock.setFormat12Hour("HH:mm");
+            clock.setFormat24Hour("HH:mm");
+        } else {
+            clock.setFormat12Hour("h:mm");
+            clock.setFormat24Hour("h:mm");
+        }
         clock.setTextColor(Color.WHITE);
         clock.setTextSize(72);
         dashboard.addView(clock);
 
         TextClock date = new TextClock(this);
+        date.setTimeZone(configStore.getEffectiveTimeZoneId());
         date.setFormat12Hour("EEEE, MMMM d");
         date.setFormat24Hour("EEEE, MMMM d");
         date.setTextColor(Color.LTGRAY);
@@ -227,8 +274,37 @@ public final class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        webDashboard.setWebViewClient(new WebViewClient());
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        webDashboard.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (loadedDashboardUrl.equals(url)) {
+                    dashboardOffline = false;
+                    dashboardHandler.removeCallbacks(dashboardRetry);
+                }
+            }
+
+            @Override
+            public void onReceivedError(
+                    WebView view,
+                    WebResourceRequest request,
+                    WebResourceError error) {
+                if (request.isForMainFrame()) {
+                    showOfflineDashboard();
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(
+                    WebView view,
+                    WebResourceRequest request,
+                    WebResourceResponse errorResponse) {
+                if (request.isForMainFrame()
+                        && errorResponse.getStatusCode() >= 400) {
+                    showOfflineDashboard();
+                }
+            }
+        });
         webDashboard.setBackgroundColor(Color.BLACK);
         loadedDashboardUrl = dashboardUrl;
         setDashboardView(webDashboard);
@@ -247,6 +323,8 @@ public final class MainActivity extends Activity {
 
     private void removeDashboardView() {
         nativeStatus = null;
+        dashboardHandler.removeCallbacks(dashboardRetry);
+        dashboardOffline = false;
         if (dashboardView != null) {
             root.removeView(dashboardView);
             dashboardView = null;
@@ -263,8 +341,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void showOfflineDashboard() {
+        if (webDashboard == null || dashboardOffline) {
+            return;
+        }
+        dashboardOffline = true;
+        webDashboard.loadUrl(OFFLINE_DASHBOARD_URL);
+        dashboardHandler.removeCallbacks(dashboardRetry);
+        dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
+    }
+
     private void updateMediaVisibility() {
         playerView.setVisibility(media.isPresentationActive() ? View.VISIBLE : View.GONE);
+    }
+
+    private void updateSleepVisibility() {
+        if (sleepOverlay != null) {
+            sleepOverlay.setVisibility(automation.isSleeping() ? View.VISIBLE : View.GONE);
+            sleepOverlay.bringToFront();
+        }
     }
 
     private String buildStatusText() {

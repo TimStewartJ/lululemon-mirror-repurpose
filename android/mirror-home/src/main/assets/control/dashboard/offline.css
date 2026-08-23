@@ -1,0 +1,10 @@
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0}
+body{display:flex;align-items:center;justify-content:center;text-align:center;color:#f4fbfc;background:#061019;font-family:sans-serif}
+main{padding:8vw}
+.pulse{width:4vw;height:4vw;margin:0 auto 5vh;border:1vw solid rgba(85,230,193,.18);border-top-color:#55e6c1;border-radius:50%;animation:spin 3s linear infinite}
+.eyebrow{color:#55e6c1;font-size:2vw;letter-spacing:.2em;text-transform:uppercase}
+h1{margin:2vh 0;font-size:20vw;font-weight:200;letter-spacing:-.06em}
+#date{font-size:3.2vw;color:#b4c9cf}
+#name{font-size:2.2vw;color:#78939d}
+@keyframes spin{to{transform:rotate(360deg)}}

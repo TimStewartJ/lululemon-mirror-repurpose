@@ -249,7 +249,7 @@ public final class FCastServer {
                         new JSONObject()
                                 .put("displayName", configStore.getDisplayName())
                                 .put("appName", "Mirror Repurpose")
-                                .put("appVersion", "0.3.0")
+                                .put("appVersion", BuildConfig.VERSION_NAME)
                                 .put("playData", JSONObject.NULL));
                 connections.add(this);
                 while (running && !socket.isClosed()) {

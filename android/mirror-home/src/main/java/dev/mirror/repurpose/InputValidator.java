@@ -2,7 +2,6 @@ package dev.mirror.repurpose;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-
 public final class InputValidator {
     private InputValidator() {
     }
@@ -54,5 +53,38 @@ public final class InputValidator {
         } catch (IllegalArgumentException ignored) {
             return false;
         }
+    }
+
+    public static boolean validTimeZone(String value) {
+        if (value == null || value.isEmpty() || value.length() > 64) {
+            return false;
+        }
+        if ("UTC".equals(value) || "GMT".equals(value)) {
+            return true;
+        }
+        int separator = value.indexOf('/');
+        if (separator < 1 || separator == value.length() - 1) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (!(Character.isLetterOrDigit(character)
+                    || character == '/'
+                    || character == '_'
+                    || character == '+'
+                    || character == '-'
+                    || character == '.')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static int parseTimeMinutes(String value) {
+        if (value == null || !value.matches("(?:[01][0-9]|2[0-3]):[0-5][0-9]")) {
+            return -1;
+        }
+        return Integer.parseInt(value.substring(0, 2)) * 60
+                + Integer.parseInt(value.substring(3, 5));
     }
 }
