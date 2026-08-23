@@ -10,7 +10,11 @@ TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
 from janus_wrap import expected_apk_hash, write_guarded
-from mirrorctl import parse_adb_devices
+from mirrorctl import (
+    installed_apk_path,
+    installed_package_version,
+    parse_adb_devices,
+)
 
 
 class MirrorCtlTest(unittest.TestCase):
@@ -27,6 +31,41 @@ pending unauthorized
         self.assertEqual("abc", expected_apk_hash(profile, "known"))
         with self.assertRaises(ValueError):
             expected_apk_hash(profile, "unknown")
+
+    def test_installed_apk_path_prefers_base_apk(self):
+        class FakeDevice:
+            @staticmethod
+            def shell(*_arguments):
+                return "\n".join(
+                    [
+                        "package:/data/app/pkg/split_config.apk",
+                        "package:/data/app/pkg/base.apk",
+                    ]
+                )
+
+        self.assertEqual(
+            "/data/app/pkg/base.apk",
+            installed_apk_path(FakeDevice(), "pkg"),
+        )
+
+    def test_installed_apk_path_returns_none_when_absent(self):
+        class FakeDevice:
+            @staticmethod
+            def shell(*_arguments):
+                return ""
+
+        self.assertIsNone(installed_apk_path(FakeDevice(), "pkg"))
+
+    def test_installed_package_version_parses_dumpsys(self):
+        class FakeDevice:
+            @staticmethod
+            def shell(*_arguments):
+                return "versionCode=9 targetSdk=35\n    versionName=0.9.0\n"
+
+        self.assertEqual(
+            "0.9.0",
+            installed_package_version(FakeDevice(), "pkg"),
+        )
 
     def test_hash_guard_rejects_wrong_source_apk(self):
         with tempfile.TemporaryDirectory() as directory:

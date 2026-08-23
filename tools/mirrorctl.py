@@ -4,16 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
 import pathlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 import zipfile
 
 from janus_wrap import sha256, write_guarded
@@ -246,29 +250,195 @@ def home_apk(variant: str) -> pathlib.Path:
     return apk
 
 
-def install_home(device: Device, variant: str) -> None:
-    apk = home_apk(variant)
-    result = device.command("install", "-r", "-g", str(apk))
-    if "Success" not in result:
-        raise RuntimeError(f"Mirror Home installation failed: {result}")
-    device.shell("am", "start", "-n", "dev.mirror.repurpose/.MainActivity")
+def apk_package_and_version(apk: pathlib.Path) -> tuple[str, str]:
+    badging = run([str(find_build_tool("aapt")), "dump", "badging", str(apk)])
+    match = re.search(
+        r"package: name='([^']+)' versionCode='[^']+' versionName='([^']+)'",
+        badging,
+    )
+    if not match:
+        raise RuntimeError(f"Unable to read package metadata from {apk}")
+    return match.group(1), match.group(2)
 
 
-def installed_certificate_sha256(device: Device, package_name: str) -> str:
-    package_paths = [
+def installed_apk_path(device: Device, package_name: str) -> str | None:
+    paths = [
         line.removeprefix("package:").strip()
         for line in device.shell("pm", "path", package_name).splitlines()
         if line.startswith("package:")
     ]
-    base_paths = [path for path in package_paths if path.endswith("/base.apk")]
-    candidates = base_paths or package_paths
+    base_paths = [path for path in paths if path.endswith("/base.apk")]
+    candidates = base_paths or paths
+    if not candidates:
+        return None
     if len(candidates) != 1:
         raise RuntimeError(
-            f"Expected one installed APK for {package_name}, received {package_paths!r}"
+            f"Expected one installed APK for {package_name}, received {paths!r}"
         )
+    return candidates[0]
+
+
+def free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def installed_package_version(device: Device, package_name: str) -> str | None:
+    output = device.shell("dumpsys", "package", package_name)
+    match = re.search(r"^\s*versionName=(.+?)\s*$", output, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def wait_home_health(
+    device: Device,
+    expected_version: str,
+    *,
+    timeout_seconds: int = 60,
+) -> None:
+    host_port = free_tcp_port()
+    local = f"tcp:{host_port}"
+    device.command("forward", local, "tcp:8787")
+    try:
+        device.shell("am", "start", "-n", "dev.mirror.repurpose/.MainActivity")
+        deadline = time.monotonic() + timeout_seconds
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{host_port}/api/v1/status",
+                    timeout=3,
+                ) as response:
+                    status = json.loads(response.read().decode("utf-8"))
+                reported_version = status.get("appVersion")
+                version_matches = (
+                    reported_version == expected_version
+                    if reported_version is not None
+                    else installed_package_version(
+                        device,
+                        "dev.mirror.repurpose",
+                    ) == expected_version
+                )
+                if status.get("apiVersion") == 1 and version_matches:
+                    activity = device.shell("dumpsys", "activity", "activities")
+                    if "dev.mirror.repurpose/.MainActivity" in activity:
+                        return
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                last_error = error
+            time.sleep(1)
+        detail = f": {last_error}" if last_error else ""
+        raise RuntimeError(f"Mirror Home failed its post-install health check{detail}")
+    finally:
+        try:
+            device.command("forward", "--remove", local)
+        except subprocess.CalledProcessError:
+            pass
+
+
+def install_home(device: Device, profile: dict, variant: str) -> None:
+    apk = home_apk(variant)
+    package_name, version = apk_package_and_version(apk)
+    if package_name != "dev.mirror.repurpose":
+        raise RuntimeError(f"Unexpected Mirror Home package {package_name!r}")
+
+    remote_apk = installed_apk_path(device, package_name)
+    backup_apk: pathlib.Path | None = None
+    previous_version: str | None = None
+    if remote_apk:
+        installed_certificate = installed_certificate_sha256(device, package_name)
+        candidate_certificate = certificate_sha256(apk)
+        if installed_certificate != candidate_certificate:
+            raise RuntimeError(
+                "Candidate signing certificate does not match the installed Mirror Home"
+            )
+        timestamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y%m%dT%H%M%S%fZ"
+        )
+        backup_dir = (
+            REPO
+            / "backups"
+            / profile["id"]
+            / "home-updates"
+            / timestamp
+        )
+        backup_dir.mkdir(parents=True, exist_ok=False)
+        partial_backup = backup_dir / "base.apk.partial"
+        device.command("pull", remote_apk, str(partial_backup))
+        apk_package_and_version(partial_backup)
+        backup_apk = backup_dir / "base.apk"
+        partial_backup.replace(backup_apk)
+        _, previous_version = apk_package_and_version(backup_apk)
+
+    try:
+        result = device.command("install", "-r", "-g", str(apk))
+        if "Success" not in result:
+            raise RuntimeError(f"Mirror Home installation failed: {result}")
+        wait_home_health(device, version)
+    except Exception as install_error:
+        if backup_apk is None or previous_version is None:
+            try:
+                device.command("uninstall", package_name)
+            except subprocess.CalledProcessError:
+                pass
+            raise
+        rollback = device.command("install", "-r", "-d", "-g", str(backup_apk))
+        if "Success" not in rollback:
+            raise RuntimeError(
+                "Mirror Home update failed and automatic rollback also failed: "
+                f"{rollback}"
+            ) from install_error
+        wait_home_health(device, previous_version)
+        raise RuntimeError(
+            "Mirror Home update failed; the previous signed APK was restored"
+        ) from install_error
+    print(f"Mirror Home {version} installed and health-checked successfully")
+
+
+def rollback_home(
+    device: Device,
+    profile: dict,
+    backup_apk: pathlib.Path | None,
+) -> None:
+    if backup_apk is None:
+        backup_root = REPO / "backups" / profile["id"] / "home-updates"
+        candidates = sorted(backup_root.glob("*/base.apk"), reverse=True)
+        if not candidates:
+            raise RuntimeError("No Mirror Home update backup is available")
+        for candidate in candidates:
+            try:
+                package_name, _ = apk_package_and_version(candidate)
+                if package_name == "dev.mirror.repurpose":
+                    backup_apk = candidate
+                    break
+            except (OSError, RuntimeError, subprocess.CalledProcessError):
+                continue
+        if backup_apk is None:
+            raise RuntimeError("No valid Mirror Home update backup is available")
+    backup_apk = backup_apk.resolve()
+    if not backup_apk.is_file():
+        raise RuntimeError(f"Mirror Home backup does not exist: {backup_apk}")
+    package_name, version = apk_package_and_version(backup_apk)
+    if package_name != "dev.mirror.repurpose":
+        raise RuntimeError("Rollback APK is not Mirror Home")
+    if certificate_sha256(backup_apk) != installed_certificate_sha256(
+        device,
+        package_name,
+    ):
+        raise RuntimeError("Rollback APK signing certificate does not match")
+    result = device.command("install", "-r", "-d", "-g", str(backup_apk))
+    if "Success" not in result:
+        raise RuntimeError(f"Mirror Home rollback failed: {result}")
+    wait_home_health(device, version)
+    print(f"Mirror Home rolled back to {version}")
+
+
+def installed_certificate_sha256(device: Device, package_name: str) -> str:
+    installed_path = installed_apk_path(device, package_name)
+    if installed_path is None:
+        raise RuntimeError(f"{package_name} is not installed")
     with tempfile.TemporaryDirectory() as temporary_directory:
         local_apk = pathlib.Path(temporary_directory) / f"{package_name}.apk"
-        device.command("pull", candidates[0], str(local_apk))
+        device.command("pull", installed_path, str(local_apk))
         return certificate_sha256(local_apk)
 
 
@@ -414,8 +584,10 @@ def main() -> None:
     install_home_parser.add_argument(
         "--variant",
         choices=("debug", "release"),
-        default="debug",
+        default="release",
     )
+    rollback_home_parser = subparsers.add_parser("rollback-home")
+    rollback_home_parser.add_argument("--backup", type=pathlib.Path)
     subparsers.add_parser("install-helper")
     restore_parser = subparsers.add_parser("restore-helper")
     restore_parser.add_argument(
@@ -444,7 +616,9 @@ def main() -> None:
     elif args.command == "backup":
         backup(device, profile, REPO / "backups" / profile["id"])
     elif args.command == "install-home":
-        install_home(device, args.variant)
+        install_home(device, profile, args.variant)
+    elif args.command == "rollback-home":
+        rollback_home(device, profile, args.backup)
     elif args.command == "install-helper":
         install_helper(device, args.profile, profile)
     elif args.command == "restore-helper":
