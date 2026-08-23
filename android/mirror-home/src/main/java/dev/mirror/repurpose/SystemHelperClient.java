@@ -20,6 +20,8 @@ public final class SystemHelperClient {
             "co.mirror.datacap.DataCapIntentService");
     private static final int TRANSACTION_GET_CAPABILITIES = 1;
     private static final int TRANSACTION_PREPARE_KIOSK = 2;
+    private static final int TRANSACTION_SET_MIRROR_HOME = 5;
+    private static final int TRANSACTION_RESTORE_STOCK_HOME = 6;
 
     private static volatile SystemHelperClient instance;
 
@@ -119,6 +121,16 @@ public final class SystemHelperClient {
     }
 
     public boolean prepareKiosk() {
+        return transactBoolean(TRANSACTION_PREPARE_KIOSK, "prepare kiosk settings");
+    }
+
+    public boolean setMirrorHome(boolean enabled) {
+        return transactBoolean(
+                enabled ? TRANSACTION_SET_MIRROR_HOME : TRANSACTION_RESTORE_STOCK_HOME,
+                enabled ? "select Mirror Home" : "restore stock HOME");
+    }
+
+    private boolean transactBoolean(int transaction, String operation) {
         IBinder current = binder;
         if (current == null) {
             return false;
@@ -127,13 +139,13 @@ public final class SystemHelperClient {
         Parcel response = Parcel.obtain();
         try {
             request.writeInterfaceToken(DESCRIPTOR);
-            if (!current.transact(TRANSACTION_PREPARE_KIOSK, request, response, 0)) {
+            if (!current.transact(transaction, request, response, 0)) {
                 return false;
             }
             response.readException();
             return response.readInt() != 0;
         } catch (Exception error) {
-            Log.e(TAG, "Unable to prepare kiosk settings", error);
+            Log.e(TAG, "Unable to " + operation, error);
             return false;
         } finally {
             response.recycle();

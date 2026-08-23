@@ -15,7 +15,7 @@ Mirror Home (ordinary APK, default HOME)
   | pairing/authentication
   | MIRROR Binder bridge
   v
-Optional System Helper (UID 1000)
+Optional transient System Helper (UID 1000)
   | allowlisted privileged operations only
   v
 Android framework / MIRROR hardware
@@ -71,9 +71,11 @@ playback API later.
 
 ## Privilege boundary
 
-The optional helper is not part of the media data path. Mirror Home calls a
-small authenticated local interface for operations that ordinary Android APIs
-cannot perform. Removing the helper returns the device to the stock system APK.
+The optional helper is not part of the media data path. During initial
+provisioning, Mirror Home calls a small authenticated local interface for
+operations that ordinary Android APIs cannot perform. Preferred-HOME state and,
+optionally, kiosk settings persist after removing the helper, which returns the
+device to the stock system APK before reboot.
 
 The helper authenticates Binder callers by both the exact HOME package name and
 the SHA-256 digest of the HOME signing certificate supplied at build time. It
@@ -83,3 +85,7 @@ The `android/system-helper` manifest exists only to compile and test the payload
 The installed package retains the stock APK manifest and signature. Tooling
 therefore verifies the exact source-APK hash and its required shared UID,
 Application, receiver, and exported service contract before wrapping.
+
+The helper is intentionally not persistent: this Android 6 image's boot-time
+`dex2oat` crashes while optimizing a Janus polyglot. Installation tooling treats
+it as a live-provisioning transaction and requires rollback before reboot.

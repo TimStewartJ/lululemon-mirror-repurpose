@@ -1,5 +1,7 @@
 package dev.mirror.repurpose;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -16,9 +18,12 @@ import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.ParcelUuid;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import org.json.JSONException;
@@ -35,6 +40,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@SuppressLint("MissingPermission")
 public final class BleProvisioningServer {
     public static final UUID SERVICE_UUID =
             UUID.fromString("7d7a0001-6d69-7272-6f72-726570757270");
@@ -54,6 +60,7 @@ public final class BleProvisioningServer {
     private final PairingManager pairing;
     private final WifiProvisioner wifi;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Map<String, ByteArrayOutputStream> requestBuffers =
             new ConcurrentHashMap<>();
     private final Map<String, Integer> mtuByDevice = new ConcurrentHashMap<>();
@@ -66,6 +73,7 @@ public final class BleProvisioningServer {
     private BluetoothLeAdvertiser advertiser;
     private BluetoothGattCharacteristic responseCharacteristic;
     private AdvertiseCallback advertiseCallback;
+    private boolean stopped;
 
     public BleProvisioningServer(
             Context context,
@@ -77,18 +85,40 @@ public final class BleProvisioningServer {
     }
 
     public void start() {
+        stopped = false;
+        attemptStart();
+    }
+
+    private void attemptStart() {
+        if (stopped || gattServer != null) {
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 31
+                && (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                        != PackageManager.PERMISSION_GRANTED
+                || context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+                        != PackageManager.PERMISSION_GRANTED)) {
+            status = "permission-required";
+            return;
+        }
         BluetoothManager manager =
                 (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
-        if (adapter == null || !adapter.isEnabled() || !adapter.isMultipleAdvertisementSupported()) {
+        if (adapter == null) {
             status = "unsupported";
             Log.w(TAG, "BLE peripheral advertising is unavailable");
+            return;
+        }
+        if (!adapter.isEnabled() || !adapter.isMultipleAdvertisementSupported()) {
+            status = "waiting-for-bluetooth";
+            mainHandler.postDelayed(this::attemptStart, 5000);
             return;
         }
 
         gattServer = manager.openGattServer(context, callback);
         if (gattServer == null) {
-            status = "unavailable";
+            status = "waiting-for-bluetooth";
+            mainHandler.postDelayed(this::attemptStart, 5000);
             return;
         }
 
@@ -116,6 +146,8 @@ public final class BleProvisioningServer {
     }
 
     public void stop() {
+        stopped = true;
+        mainHandler.removeCallbacksAndMessages(null);
         status = "stopped";
         if (advertiser != null && advertiseCallback != null) {
             advertiser.stopAdvertising(advertiseCallback);
@@ -220,12 +252,13 @@ public final class BleProvisioningServer {
                 return;
             }
 
-            ByteArrayOutputStream buffer = requestBuffers.get(device.getAddress());
-            if (buffer == null) {
-                ByteArrayOutputStream replacement = new ByteArrayOutputStream();
-                ByteArrayOutputStream existing =
-                        requestBuffers.putIfAbsent(device.getAddress(), replacement);
-                buffer = existing == null ? replacement : existing;
+            ByteArrayOutputStream buffer;
+            synchronized (requestBuffers) {
+                buffer = requestBuffers.get(device.getAddress());
+                if (buffer == null) {
+                    buffer = new ByteArrayOutputStream();
+                    requestBuffers.put(device.getAddress(), buffer);
+                }
             }
             if (buffer.size() + value.length > MAX_REQUEST_BYTES) {
                 buffer.reset();
@@ -356,6 +389,10 @@ public final class BleProvisioningServer {
                         "ipAddress",
                         ipAddress);
                 response.put("apiPort", ControlServerService.PORT);
+                Intent changed =
+                        new Intent(ControlServerService.ACTION_CONFIGURATION_CHANGED);
+                changed.setPackage(context.getPackageName());
+                context.sendBroadcast(changed);
             } else {
                 pairing.revoke();
                 Intent changed =
@@ -377,7 +414,7 @@ public final class BleProvisioningServer {
     private String waitForIpAddress() {
         WifiManager manager =
                 (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
-        for (int attempt = 0; attempt < 30; attempt++) {
+        for (int attempt = 0; attempt < 120; attempt++) {
             WifiInfo info = manager == null ? null : manager.getConnectionInfo();
             if (info != null && info.getNetworkId() >= 0 && info.getIpAddress() != 0) {
                 return WifiProvisioner.ipAddress(info.getIpAddress());

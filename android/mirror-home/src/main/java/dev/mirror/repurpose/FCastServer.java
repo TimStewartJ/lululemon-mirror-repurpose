@@ -18,6 +18,7 @@ import java.net.SocketException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -52,7 +53,8 @@ public final class FCastServer {
     private final MediaPlaybackManager media;
     private final ConfigStore configStore;
     private final ExecutorService clients = Executors.newCachedThreadPool();
-    private final Set<ClientConnection> connections = ConcurrentHashMap.newKeySet();
+    private final Set<ClientConnection> connections =
+            Collections.newSetFromMap(new ConcurrentHashMap<ClientConnection, Boolean>());
     private final AtomicInteger activeClients = new AtomicInteger();
 
     private volatile boolean running;
@@ -303,6 +305,8 @@ public final class FCastServer {
                                     message.optJSONObject("metadata") == null
                                             ? null
                                             : message.optJSONObject("metadata").optString("title", null),
+                                    ControlServer.parseRequestHeaders(
+                                            message.optJSONObject("headers")),
                                     message.optDouble("time", 0),
                                     message.has("volume") ? message.optDouble("volume", 1) : 1,
                                     message.has("speed") ? message.optDouble("speed", 1) : 1);

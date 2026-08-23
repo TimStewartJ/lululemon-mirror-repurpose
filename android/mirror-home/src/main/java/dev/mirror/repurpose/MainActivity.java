@@ -1,5 +1,6 @@
 package dev.mirror.repurpose;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -21,9 +22,12 @@ import android.widget.LinearLayout;
 import android.widget.TextClock;
 import android.widget.TextView;
 
+import androidx.annotation.OptIn;
+import androidx.media3.common.util.UnstableApi;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
+@OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
@@ -46,6 +50,7 @@ public final class MainActivity extends Activity {
     private String loadedDashboardUrl = "";
 
     @Override
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(
@@ -77,7 +82,11 @@ public final class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ControlServerService.ACTION_CONFIGURATION_CHANGED);
         filter.addAction(MediaPlaybackManager.ACTION_MEDIA_STATE_CHANGED);
-        registerReceiver(stateReceiver, filter);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(stateReceiver, filter);
+        }
         startService(new Intent(this, ControlServerService.class));
 
         renderDashboard();
@@ -145,6 +154,7 @@ public final class MainActivity extends Activity {
         dashboard.addView(status);
     }
 
+    @SuppressLint("SetJavaScriptEnabled")
     private void renderWebDashboard(String dashboardUrl) {
         if (webDashboard != null && dashboardUrl.equals(loadedDashboardUrl)) {
             return;
@@ -157,9 +167,7 @@ public final class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        if (android.os.Build.VERSION.SDK_INT >= 21) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        }
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         webDashboard.setWebViewClient(new WebViewClient());
         webDashboard.setBackgroundColor(Color.BLACK);
         loadedDashboardUrl = dashboardUrl;

@@ -14,7 +14,7 @@ android {
     defaultConfig {
         applicationId "co.mirror.datacap"
         minSdk 23
-        targetSdk 23
+        targetSdk 35
         versionCode 10000329
         versionName "1.0.329"
         buildConfigField(

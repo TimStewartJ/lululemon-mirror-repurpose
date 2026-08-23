@@ -28,6 +28,7 @@ POST /api/v1/media/stop
 GET  /api/v1/media/status
 GET  /api/v1/system
 POST /api/v1/system/prepare-kiosk
+POST /api/v1/system/home
 GET  /api/v1/events          (WebSocket upgrade)
 ```
 

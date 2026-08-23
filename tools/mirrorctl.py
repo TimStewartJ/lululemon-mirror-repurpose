@@ -227,7 +227,7 @@ def install_home(device: Device) -> None:
         / "debug"
         / "mirror-home-debug.apk"
     )
-    result = device.command("install", "-r", str(apk))
+    result = device.command("install", "-r", "-g", str(apk))
     if "Success" not in result:
         raise RuntimeError(f"Mirror Home installation failed: {result}")
     device.shell("am", "start", "-n", "dev.mirror.repurpose/.MainActivity")
@@ -332,19 +332,29 @@ def install_helper(device: Device, profile_path: pathlib.Path, profile: dict) ->
         time.sleep(2)
         if "co.mirror.datacap" not in device.shell("ps"):
             raise RuntimeError("System helper process did not start")
+        print(
+            "System helper installed for this boot only. "
+            "Run restore-helper before rebooting."
+        )
     except Exception:
         restore_helper(device, profile)
         raise
 
 
-def restore_helper(device: Device, profile: dict) -> None:
+def restore_helper(
+    device: Device,
+    profile: dict,
+    *,
+    restore_settings: bool = True,
+) -> None:
     expected = "/system/app/co.mirror.datacap/co.mirror.datacap.apk"
     current_path = device.shell("pm", "path", "co.mirror.datacap")
     if expected in current_path:
-        restore_kiosk_settings(
-            device,
-            REPO / "backups" / profile["id"] / "kiosk-settings.json",
-        )
+        if restore_settings:
+            restore_kiosk_settings(
+                device,
+                REPO / "backups" / profile["id"] / "kiosk-settings.json",
+            )
         return
     device.shell("am", "force-stop", "co.mirror.datacap")
     result = device.shell("pm", "uninstall", "-k", "co.mirror.datacap")
@@ -353,10 +363,11 @@ def restore_helper(device: Device, profile: dict) -> None:
     path = device.shell("pm", "path", "co.mirror.datacap")
     if expected not in path:
         raise RuntimeError(f"Factory APK was not restored; observed {path!r}")
-    restore_kiosk_settings(
-        device,
-        REPO / "backups" / profile["id"] / "kiosk-settings.json",
-    )
+    if restore_settings:
+        restore_kiosk_settings(
+            device,
+            REPO / "backups" / profile["id"] / "kiosk-settings.json",
+        )
 
 
 def main() -> None:
@@ -369,7 +380,12 @@ def main() -> None:
     subparsers.add_parser("build")
     subparsers.add_parser("install-home")
     subparsers.add_parser("install-helper")
-    subparsers.add_parser("restore-helper")
+    restore_parser = subparsers.add_parser("restore-helper")
+    restore_parser.add_argument(
+        "--keep-kiosk-settings",
+        action="store_true",
+        help="Remove the helper update without restoring captured kiosk settings",
+    )
     forward_parser = subparsers.add_parser("forward")
     forward_parser.add_argument("--host-port", type=int, default=18787)
     args = parser.parse_args()
@@ -394,7 +410,11 @@ def main() -> None:
     elif args.command == "install-helper":
         install_helper(device, args.profile, profile)
     elif args.command == "restore-helper":
-        restore_helper(device, profile)
+        restore_helper(
+            device,
+            profile,
+            restore_settings=not args.keep_kiosk_settings,
+        )
     elif args.command == "forward":
         device.command(
             "forward",

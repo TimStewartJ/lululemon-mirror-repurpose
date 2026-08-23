@@ -1,6 +1,9 @@
 package dev.mirror.repurpose;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -8,6 +11,7 @@ import android.os.Build;
 import java.util.List;
 import java.util.Locale;
 
+@SuppressLint("MissingPermission")
 public final class WifiProvisioner {
     public static final class Result {
         public final boolean success;
@@ -20,9 +24,13 @@ public final class WifiProvisioner {
     }
 
     private final WifiManager wifiManager;
+    private final ConfigStore configStore;
+    private final Context context;
 
     public WifiProvisioner(Context context) {
-        wifiManager = (WifiManager) context.getApplicationContext()
+        this.context = context.getApplicationContext();
+        configStore = new ConfigStore(this.context);
+        wifiManager = (WifiManager) this.context
                 .getSystemService(Context.WIFI_SERVICE);
     }
 
@@ -40,6 +48,11 @@ public final class WifiProvisioner {
         }
         if (wifiManager == null) {
             return new Result(false, "Wi-Fi service is unavailable");
+        }
+        if (Build.VERSION.SDK_INT >= 23
+                && context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                        != PackageManager.PERMISSION_GRANTED) {
+            return new Result(false, "Location permission is required for Wi-Fi provisioning");
         }
 
         if (!wifiManager.isWifiEnabled() && !wifiManager.setWifiEnabled(true)) {
@@ -75,11 +88,44 @@ public final class WifiProvisioner {
         wifiManager.disconnect();
         boolean enabled = wifiManager.enableNetwork(networkId, true);
         boolean reconnected = wifiManager.reconnect();
+        if (enabled && reconnected) {
+            configStore.setManagedWifiSsid(ssid);
+        }
         return new Result(
                 enabled && reconnected,
                 enabled && reconnected
                         ? "Wi-Fi connection requested"
                         : "Network saved, but reconnect was rejected");
+    }
+
+    public boolean ensureConnection() {
+        String ssid = configStore.getManagedWifiSsid();
+        if (ssid.isEmpty() || wifiManager == null || Build.VERSION.SDK_INT >= 29) {
+            return false;
+        }
+        if (!wifiManager.isWifiEnabled() && !wifiManager.setWifiEnabled(true)) {
+            return false;
+        }
+        List<WifiConfiguration> configured = wifiManager.getConfiguredNetworks();
+        if (configured == null) {
+            return false;
+        }
+        String quotedSsid = quote(ssid);
+        for (WifiConfiguration network : configured) {
+            if (quotedSsid.equals(network.SSID)) {
+                return wifiManager.enableNetwork(network.networkId, true)
+                        && wifiManager.reconnect();
+            }
+        }
+        return false;
+    }
+
+    public boolean isConnected() {
+        if (wifiManager == null || !wifiManager.isWifiEnabled()) {
+            return false;
+        }
+        android.net.wifi.WifiInfo info = wifiManager.getConnectionInfo();
+        return info != null && info.getNetworkId() >= 0 && info.getIpAddress() != 0;
     }
 
     public static String cleanSsid(String ssid) {

@@ -24,6 +24,7 @@ The optional helper is intentionally capability-based:
 - explicit command allowlist
 - device fingerprint and source-APK hash guards
 - local backup and verified rollback before installation
+- transient installation only; restore the factory APK before reboot
 
 The companion and Mirror authenticate using a user-confirmed pairing code and a
 random token. LAN control is denied until pairing succeeds.

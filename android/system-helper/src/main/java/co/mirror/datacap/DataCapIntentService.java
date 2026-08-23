@@ -2,7 +2,10 @@ package co.mirror.datacap;
 
 import android.app.Service;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.ComponentName;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -12,12 +15,25 @@ import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.lang.reflect.Method;
+
 public final class DataCapIntentService extends Service {
     static final String DESCRIPTOR = "dev.mirror.repurpose.ISystemHelper";
     static final int TRANSACTION_GET_CAPABILITIES = 1;
     static final int TRANSACTION_PREPARE_KIOSK = 2;
     static final int TRANSACTION_SET_STAY_AWAKE = 3;
     static final int TRANSACTION_SET_SCREEN_OFF_TIMEOUT = 4;
+    static final int TRANSACTION_SET_MIRROR_HOME = 5;
+    static final int TRANSACTION_RESTORE_STOCK_HOME = 6;
+
+    private static final ComponentName MIRROR_HOME = new ComponentName(
+            "dev.mirror.repurpose",
+            "dev.mirror.repurpose.MainActivity");
+    private static final ComponentName STOCK_HOME = new ComponentName(
+            "com.mirror.launcher",
+            "com.mirror.launcher.SplashActivity");
 
     private final IBinder helperBinder = new HelperBinder();
     private TrustedCaller trustedCaller;
@@ -80,6 +96,14 @@ public final class DataCapIntentService extends Service {
                         response.writeNoException();
                         response.writeInt(setScreenOffTimeout(request.readLong()) ? 1 : 0);
                         return true;
+                    case TRANSACTION_SET_MIRROR_HOME:
+                        response.writeNoException();
+                        response.writeInt(setPreferredHome(MIRROR_HOME) ? 1 : 0);
+                        return true;
+                    case TRANSACTION_RESTORE_STOCK_HOME:
+                        response.writeNoException();
+                        response.writeInt(setPreferredHome(STOCK_HOME) ? 1 : 0);
+                        return true;
                     default:
                         return super.onTransact(code, request, response, flags);
                 }
@@ -130,5 +154,61 @@ public final class DataCapIntentService extends Service {
 
     private boolean hasPermission(String permission) {
         return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean setPreferredHome(ComponentName target) {
+        PackageManager packageManager = getPackageManager();
+        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+        List<ResolveInfo> candidates =
+                packageManager.queryIntentActivities(homeIntent, PackageManager.MATCH_DEFAULT_ONLY);
+        ArrayList<ComponentName> components = new ArrayList<>();
+        boolean targetFound = false;
+        for (ResolveInfo candidate : candidates) {
+            ComponentName component = new ComponentName(
+                    candidate.activityInfo.packageName,
+                    candidate.activityInfo.name);
+            components.add(component);
+            if (target.equals(component)) {
+                targetFound = true;
+            }
+        }
+        if (!targetFound) {
+            return false;
+        }
+
+        packageManager.clearPackagePreferredActivities(MIRROR_HOME.getPackageName());
+        packageManager.clearPackagePreferredActivities(STOCK_HOME.getPackageName());
+
+        IntentFilter filter = new IntentFilter(Intent.ACTION_MAIN);
+        filter.addCategory(Intent.CATEGORY_HOME);
+        filter.addCategory(Intent.CATEGORY_DEFAULT);
+        ComponentName[] componentSet = components.toArray(new ComponentName[0]);
+        try {
+            Method replacePreferredActivity = packageManager.getClass().getMethod(
+                    "replacePreferredActivity",
+                    IntentFilter.class,
+                    int.class,
+                    ComponentName[].class,
+                    ComponentName.class);
+            replacePreferredActivity.invoke(
+                    packageManager,
+                    filter,
+                    IntentFilter.MATCH_CATEGORY_EMPTY,
+                    componentSet,
+                    target);
+        } catch (ReflectiveOperationException unavailable) {
+            packageManager.addPreferredActivity(
+                    filter,
+                    IntentFilter.MATCH_CATEGORY_EMPTY,
+                    componentSet,
+                    target);
+        }
+
+        ResolveInfo resolved =
+                packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY);
+        return resolved != null
+                && target.getPackageName().equals(resolved.activityInfo.packageName)
+                && target.getClassName().equals(resolved.activityInfo.name);
     }
 }

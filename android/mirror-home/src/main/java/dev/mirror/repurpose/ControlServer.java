@@ -10,6 +10,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
 import fi.iki.elonen.NanoHTTPD;
@@ -104,6 +105,10 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/system/prepare-kiosk".equals(uri)) {
                 return prepareKiosk();
             }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/system/home".equals(uri)) {
+                return setHome(readJson(session));
+            }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/revoke".equals(uri)) {
                 pairing.revoke();
                 return response(Response.Status.OK, new JSONObject().put("revoked", true));
@@ -148,6 +153,7 @@ public final class ControlServer extends NanoHTTPD {
         if (token == null) {
             return error(Response.Status.UNAUTHORIZED, "Invalid or expired pairing code");
         }
+        notifyConfigurationChanged();
         return response(Response.Status.OK, new JSONObject().put("token", token));
     }
 
@@ -215,6 +221,15 @@ public final class ControlServer extends NanoHTTPD {
                 new JSONObject().put("prepared", prepared));
     }
 
+    private Response setHome(JSONObject body) throws JSONException {
+        systemHelper.connect();
+        boolean enabled = body.optBoolean("enabled", true);
+        boolean changed = systemHelper.setMirrorHome(enabled);
+        return response(
+                changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
+                new JSONObject().put("changed", changed).put("enabled", enabled));
+    }
+
     private Response playMedia(JSONObject body) throws JSONException {
         String url = body.optString("url", null);
         if (!InputValidator.validMediaUrl(url)) {
@@ -226,6 +241,7 @@ public final class ControlServer extends NanoHTTPD {
                 url,
                 body.optString("mimeType", null),
                 body.optString("title", null),
+                parseRequestHeaders(body.optJSONObject("headers")),
                 body.optDouble("time", 0),
                 body.has("volume") ? body.optDouble("volume", 1) : 1,
                 body.has("speed") ? body.optDouble("speed", 1) : 1);
@@ -251,6 +267,37 @@ public final class ControlServer extends NanoHTTPD {
         }
         media.setVolume(volume);
         return response(Response.Status.ACCEPTED, new JSONObject().put("volume", volume));
+    }
+
+    static Map<String, String> parseRequestHeaders(JSONObject headers)
+            throws JSONException {
+        Map<String, String> result = new HashMap<>();
+        if (headers == null) {
+            return result;
+        }
+        if (headers.length() > 1) {
+            throw new JSONException("Only the companion media header is supported");
+        }
+        int totalLength = 0;
+        Iterator<String> names = headers.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            String value = headers.getString(name);
+            String lowerName = name.toLowerCase(java.util.Locale.US);
+            if (!"x-companion-token".equals(lowerName)
+            || value.isEmpty()
+            || value.length() > 256
+            || value.contains("\r")
+            || value.contains("\n")) {
+        throw new JSONException("Invalid media request header");
+            }
+            totalLength += name.length() + value.length();
+            if (totalLength > 8192) {
+        throw new JSONException("Media request headers are too large");
+            }
+            result.put(name, value);
+        }
+        return result;
     }
 
     private JSONObject readJson(IHTTPSession session)

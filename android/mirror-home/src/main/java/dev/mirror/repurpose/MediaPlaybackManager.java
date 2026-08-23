@@ -5,22 +5,32 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 
+import androidx.annotation.OptIn;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+@OptIn(markerClass = UnstableApi.class)
 public final class MediaPlaybackManager implements Player.Listener {
     public static final String ACTION_MEDIA_STATE_CHANGED =
             "dev.mirror.repurpose.MEDIA_STATE_CHANGED";
@@ -29,6 +39,7 @@ public final class MediaPlaybackManager implements Player.Listener {
         public final String url;
         public final String mimeType;
         public final String title;
+        public final Map<String, String> headers;
         public final double startSeconds;
         public final double volume;
         public final double speed;
@@ -37,12 +48,16 @@ public final class MediaPlaybackManager implements Player.Listener {
                 String url,
                 String mimeType,
                 String title,
+                Map<String, String> headers,
                 double startSeconds,
                 double volume,
                 double speed) {
             this.url = url;
             this.mimeType = mimeType;
             this.title = title;
+            this.headers = headers == null
+                    ? Collections.emptyMap()
+                    : Collections.unmodifiableMap(new HashMap<>(headers));
             this.startSeconds = startSeconds;
             this.volume = volume;
             this.speed = speed;
@@ -109,7 +124,18 @@ public final class MediaPlaybackManager implements Player.Listener {
                 currentMimeType = request.mimeType;
                 currentTitle = request.title;
                 lastError = null;
-                player.setMediaItem(item.build(), Math.max(0L, secondsToMillis(request.startSeconds)));
+                DefaultHttpDataSource.Factory httpDataSource =
+                        new DefaultHttpDataSource.Factory()
+                                .setAllowCrossProtocolRedirects(false)
+                                .setDefaultRequestProperties(request.headers);
+                DefaultDataSource.Factory dataSource =
+                        new DefaultDataSource.Factory(context, httpDataSource);
+                MediaSource source =
+                        new DefaultMediaSourceFactory(dataSource)
+                                .createMediaSource(item.build());
+                player.setMediaSource(
+                        source,
+                        Math.max(0L, secondsToMillis(request.startSeconds)));
                 player.setVolume(clamp((float) request.volume, 0f, 1f));
                 player.setPlaybackParameters(
                         new PlaybackParameters(clamp((float) request.speed, 0.25f, 4f)));

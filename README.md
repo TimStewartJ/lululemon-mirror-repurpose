@@ -8,9 +8,10 @@ The project intentionally separates:
 
 - **Mirror Home**: a normal Android HOME application for the dashboard, pairing,
   Wi-Fi provisioning, device controls, and media playback.
-- **System Helper**: an optional, narrowly scoped UID-1000 helper installed
-  through a device-specific signature-verification flaw. It is not required for
-  normal dashboard operation.
+- **System Helper**: an optional, narrowly scoped, transient UID-1000 helper
+  installed through a device-specific signature-verification flaw. It applies
+  persistent kiosk/default-HOME settings and must be restored to the factory APK
+  before reboot. It is not required for normal dashboard operation.
 - **Companion**: a local web application for USB setup, LAN administration,
   Bluetooth provisioning, automation, and media streaming.
 
@@ -82,7 +83,7 @@ The eventual one-command workflow is exposed through `tools\mirror.ps1`.
 
 See [Streaming](docs/streaming.md) for sender compatibility and recommended
 media formats and [Provisioning](docs/provisioning.md) for USB, BLE, and LAN
-setup.
+setup. See [Automation](docs/automation.md) for REST examples.
 
 Common development commands:
 
@@ -97,7 +98,18 @@ Common development commands:
 
 `install-helper` refuses unknown firmware and APK hashes, backs up the factory
 APKs, binds the helper to the current Mirror Home signing certificate, verifies
-the stock manifest contract, and checks that the helper process starts.
+the stock manifest contract, and checks that the helper process starts. Run
+`restore-helper` before rebooting: Android 6's boot-time dex optimizer cannot
+safely process the compatibility wrapper.
+
+Use `restore-helper --keep-kiosk-settings` after intentionally applying the
+preferred HOME/kiosk configuration; omit the flag for a full settings rollback.
+
+Run every build, test, lint, and dependency-audit lane with:
+
+```powershell
+python tools/check.py
+```
 
 ## License
 

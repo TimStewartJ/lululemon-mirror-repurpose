@@ -1,6 +1,7 @@
 # Recovery
 
-Read this before installing the optional system helper.
+Read this before installing the optional system helper. The helper is
+**transient**: do not reboot while its `/data/app` update is installed.
 
 ## Normal rollback
 
@@ -21,7 +22,13 @@ package:/system/app/co.mirror.datacap/co.mirror.datacap.apk
 ```
 
 `mirrorctl restore-helper` also restores the kiosk-related settings captured
-before the first helper installation.
+before the first helper installation. Pass `--keep-kiosk-settings` only when
+those changes are intentional; preferred-HOME selection remains independently
+reversible through the companion.
+
+If a reboot occurs before rollback, ADB remains available but boot-time
+`dex2oat` may repeatedly fail while processing the compatibility wrapper. Run
+`restore-helper` as soon as ADB returns, then reboot once more.
 
 If removal leaves the package unavailable, reinstall the locally backed-up
 original APK, reboot, and investigate before continuing.
@@ -31,10 +38,13 @@ original APK, reboot, and investigate before continuing.
 Never remove `com.mirror.launcher`. If Mirror Home fails:
 
 ```powershell
-adb shell pm enable com.mirror.launcher
 adb shell am force-stop dev.mirror.repurpose
 adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
 ```
+
+The companion's **Restore stock HOME** action changes the preferred activity
+back to `com.mirror.launcher/.SplashActivity`. The stock package is never
+disabled or removed.
 
 ## Fastboot
 
