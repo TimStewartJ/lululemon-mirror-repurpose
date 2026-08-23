@@ -42,6 +42,11 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

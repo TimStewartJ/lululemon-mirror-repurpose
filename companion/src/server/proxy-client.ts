@@ -139,7 +139,9 @@ export class DeviceClient implements DeviceClientPort {
   }
 
   getStatus() {
-    return this.request('GET', '/api/v1/status');
+    return this.request('GET', '/api/v1/status', {
+      authenticated: Boolean(this.options.token),
+    });
   }
 
   pair(code: string) {

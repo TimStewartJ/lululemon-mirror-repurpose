@@ -73,6 +73,8 @@ public final class MainActivity extends Activity {
                 updateMediaVisibility();
             } else if (AutomationManager.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 updateSleepVisibility();
+            } else if (WifiDirectOnboarding.ACTION_STATE_CHANGED.equals(intent.getAction())) {
+                renderDashboard();
             }
         }
     };
@@ -136,6 +138,7 @@ public final class MainActivity extends Activity {
         filter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
         filter.addAction(AutomationManager.ACTION_STATE_CHANGED);
+        filter.addAction(WifiDirectOnboarding.ACTION_STATE_CHANGED);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -233,11 +236,10 @@ public final class MainActivity extends Activity {
         String address = currentIpAddress();
         if (!address.isEmpty()) {
             String setupUrl = "http://" + address + ":" + ControlServerService.PORT + "/";
-            ImageView qrCode = new ImageView(this);
-            qrCode.setImageBitmap(QrCodeRenderer.render(setupUrl, 360));
-            qrCode.setContentDescription("Scan to open Mirror Home controls");
-            qrCode.setBackgroundColor(Color.WHITE);
-            qrCode.setPadding(12, 12, 12, 12);
+            ImageView qrCode = createQrCode(
+                    setupUrl,
+                    360,
+                    "Scan to open Mirror Home controls");
             LinearLayout.LayoutParams qrLayout = new LinearLayout.LayoutParams(384, 384);
             qrLayout.setMargins(0, 42, 0, 12);
             qrCode.setLayoutParams(qrLayout);
@@ -249,6 +251,8 @@ public final class MainActivity extends Activity {
             qrHint.setTextSize(18);
             qrHint.setGravity(Gravity.CENTER);
             dashboard.addView(qrHint);
+        } else {
+            addWifiDirectSetup(dashboard);
         }
 
         TextView status = new TextView(this);
@@ -384,6 +388,15 @@ public final class MainActivity extends Activity {
             }
         } else {
             text.append("\nWi-Fi: not connected");
+            WifiDirectOnboarding.Snapshot setup =
+                    WifiDirectOnboarding.getInstance(this).snapshot();
+            if (setup.active && !setup.networkName.isEmpty()) {
+                text.append("\nSetup network: ").append(setup.networkName);
+                text.append("\nSetup page: http://")
+                        .append(setup.address)
+                        .append(":")
+                        .append(ControlServerService.PORT);
+            }
         }
         return text.toString();
     }
@@ -395,5 +408,66 @@ public final class MainActivity extends Activity {
         return info == null || info.getNetworkId() < 0
                 ? ""
                 : WifiProvisioner.ipAddress(info.getIpAddress());
+    }
+
+    private void addWifiDirectSetup(LinearLayout dashboard) {
+        WifiDirectOnboarding.Snapshot setup =
+                WifiDirectOnboarding.getInstance(this).snapshot();
+        if (!setup.active
+                || setup.networkName.isEmpty()
+                || setup.passphrase.isEmpty()) {
+            return;
+        }
+
+        TextView heading = new TextView(this);
+        heading.setText("First-time wireless setup");
+        heading.setTextColor(Color.WHITE);
+        heading.setTextSize(22);
+        heading.setGravity(Gravity.CENTER);
+        heading.setPadding(0, 32, 0, 12);
+        dashboard.addView(heading);
+
+        LinearLayout codes = new LinearLayout(this);
+        codes.setOrientation(LinearLayout.HORIZONTAL);
+        codes.setGravity(Gravity.CENTER);
+        addSetupCode(
+                codes,
+                WifiDirectOnboarding.wifiQrPayload(
+                        setup.networkName,
+                        setup.passphrase),
+                "1. Join Mirror Setup Wi-Fi");
+        addSetupCode(
+                codes,
+                "http://" + setup.address + ":" + ControlServerService.PORT + "/",
+                "2. Open setup");
+        dashboard.addView(codes);
+    }
+
+    private void addSetupCode(LinearLayout row, String value, String label) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER);
+        column.setPadding(16, 0, 16, 0);
+
+        ImageView code = createQrCode(value, 280, label);
+        column.addView(code, new LinearLayout.LayoutParams(304, 304));
+
+        TextView hint = new TextView(this);
+        hint.setText(label);
+        hint.setTextColor(Color.WHITE);
+        hint.setTextSize(16);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, 10, 0, 0);
+        column.addView(hint);
+        row.addView(column);
+    }
+
+    private ImageView createQrCode(String value, int size, String description) {
+        ImageView code = new ImageView(this);
+        code.setImageBitmap(QrCodeRenderer.render(value, size));
+        code.setContentDescription(description);
+        code.setBackgroundColor(Color.WHITE);
+        code.setPadding(12, 12, 12, 12);
+        return code;
     }
 }

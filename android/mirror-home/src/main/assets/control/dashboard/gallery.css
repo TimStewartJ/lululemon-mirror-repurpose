@@ -1,0 +1,13 @@
+*{box-sizing:border-box}
+html,body,#stage{width:100%;height:100%;margin:0;overflow:hidden;background:#020609;color:white;font-family:sans-serif}
+#stage{position:relative}
+.photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.4s ease}
+.photo.visible{opacity:1}
+#empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8vw;text-align:center;background:radial-gradient(circle at 50% 35%,#163345,#020609 68%)}
+#empty.hidden{display:none}
+.eyebrow{color:#55e6c1;font-size:2vw;letter-spacing:.18em;text-transform:uppercase}
+h1{max-width:75%;font-size:6vw;line-height:1.1}
+p{color:#9bb5bf;font-size:2.5vw}
+aside{position:fixed;z-index:3;left:4vw;right:4vw;bottom:4vw;display:flex;justify-content:space-between;align-items:end;text-shadow:0 2px 14px #000}
+#clock{font-size:7vw;font-weight:300}
+#name{font-size:2.4vw}

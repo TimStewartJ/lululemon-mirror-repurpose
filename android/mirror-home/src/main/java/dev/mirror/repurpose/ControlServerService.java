@@ -16,6 +16,8 @@ public final class ControlServerService extends Service {
     private BleProvisioningServer bleServer;
     private ControlServer server;
     private FCastServer fcastServer;
+    private LocalDiscovery localDiscovery;
+    private WifiDirectOnboarding wifiDirectOnboarding;
 
     @Override
     public void onCreate() {
@@ -24,6 +26,8 @@ public final class ControlServerService extends Service {
             server = new ControlServer(this, PORT);
             server.start();
             Log.i(TAG, "Control server listening on port " + PORT);
+            localDiscovery = new LocalDiscovery(this);
+            localDiscovery.start(PORT);
         } catch (IOException error) {
             Log.e(TAG, "Unable to start control server", error);
             stopSelf();
@@ -35,6 +39,8 @@ public final class ControlServerService extends Service {
                 PairingManager.getInstance(this),
                 new WifiProvisioner(this));
         bleServer.start();
+        wifiDirectOnboarding = WifiDirectOnboarding.getInstance(this);
+        wifiDirectOnboarding.startIfNeeded();
 
         try {
             fcastServer = new FCastServer(
@@ -58,6 +64,14 @@ public final class ControlServerService extends Service {
         if (server != null) {
             server.stop();
             server = null;
+        }
+        if (localDiscovery != null) {
+            localDiscovery.stop();
+            localDiscovery = null;
+        }
+        if (wifiDirectOnboarding != null) {
+            wifiDirectOnboarding.stop();
+            wifiDirectOnboarding = null;
         }
         if (fcastServer != null) {
             fcastServer.stop();

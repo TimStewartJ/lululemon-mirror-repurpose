@@ -24,6 +24,7 @@ public final class MirrorHomeApplication extends Application {
         MediaPlaybackManager.getInstance(this);
         AutomationManager.getInstance(this);
         startService(new Intent(this, ControlServerService.class));
+        WatchdogReceiver.schedule(this);
     }
 
     private void ensureWifiConnection() {

@@ -45,6 +45,7 @@ public final class AutomationManager implements SensorEventListener {
     private float lastLux = Float.NaN;
     private long lastAmbientUpdate;
     private int lastAmbientBrightness = -1;
+    private boolean brightnessApplied;
 
     private AutomationManager(Context context) {
         this.context = context.getApplicationContext();
@@ -54,7 +55,7 @@ public final class AutomationManager implements SensorEventListener {
         lightSensor = sensorManager == null
                 ? null
                 : sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
-        updateAmbientRegistration();
+        handler.post(this::updateAmbientRegistration);
         handler.post(evaluator);
     }
 
@@ -120,7 +121,7 @@ public final class AutomationManager implements SensorEventListener {
                 ambientMaximum);
         manualState = null;
         manualOverrideUntil = 0;
-        updateAmbientRegistration();
+        handler.post(this::updateAmbientRegistration);
         handler.post(this::evaluate);
         return true;
     }
@@ -194,16 +195,23 @@ public final class AutomationManager implements SensorEventListener {
 
     private synchronized void applyState(boolean shouldSleep, boolean force) {
         if (!force && sleeping != null && sleeping == shouldSleep) {
-            return;
+            if (brightnessApplied) {
+                return;
+            }
         }
         if (shouldSleep) {
             MediaPlaybackManager.getInstance(context).stop();
-            mirror.setBrightness(1);
+            brightnessApplied = mirror.setBrightness(1);
         } else if (!configStore.isAmbientEnabled() || lightSensor == null) {
-            mirror.setBrightness(configStore.getWakeBrightness());
+            brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
+        } else {
+            brightnessApplied = true;
         }
+        boolean changed = sleeping == null || sleeping != shouldSleep;
         sleeping = shouldSleep;
-        broadcast();
+        if (changed) {
+            broadcast();
+        }
     }
 
     private void updateAmbientRegistration() {

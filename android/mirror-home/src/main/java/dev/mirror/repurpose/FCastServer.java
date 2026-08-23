@@ -297,6 +297,9 @@ public final class FCastServer {
                     : new JSONObject(new String(body, StandardCharsets.UTF_8));
             switch (opcode) {
                 case OPCODE_PLAY:
+                    if (AutomationManager.getInstance(context).isSleeping()) {
+                        throw new ProtocolException("Mirror is sleeping");
+                    }
                     String url = message.optString("url", null);
                     MediaPlaybackManager.PlayRequest request =
                             new MediaPlaybackManager.PlayRequest(

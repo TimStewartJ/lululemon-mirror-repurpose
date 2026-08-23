@@ -9,6 +9,7 @@ public final class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             context.startService(new Intent(context, ControlServerService.class));
+            WatchdogReceiver.schedule(context);
         }
     }
 }

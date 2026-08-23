@@ -3,6 +3,18 @@
 
   var TOKEN_KEY = 'mirror-home-token';
   var CLIENT_ID_KEY = 'mirror-home-client-id';
+  var handoff = window.location.hash.indexOf('#handoff=') === 0
+    ? window.location.hash.substring('#handoff='.length).split('&')
+    : [];
+  if (handoff.length) {
+    window.localStorage.setItem(TOKEN_KEY, decodeURIComponent(handoff[0]));
+    handoff.slice(1).forEach(function (part) {
+      if (part.indexOf('clientId=') === 0) {
+        window.localStorage.setItem(CLIENT_ID_KEY, decodeURIComponent(part.substring(9)));
+      }
+    });
+    window.history.replaceState(null, document.title, window.location.pathname);
+  }
   var token = window.localStorage.getItem(TOKEN_KEY);
 
   function byId(id) {
@@ -61,9 +73,18 @@
   }
 
   function refreshStatus() {
-    return request('/api/v1/status', {}, false).then(function (status) {
+    var authenticated = Boolean(token);
+    return request(
+      authenticated ? '/api/v1/status' : '/api/v1/bootstrap',
+      {},
+      !authenticated ? false : true
+    ).then(function (status) {
       setConnection(true);
       byId('mirror-name').textContent = status.displayName || 'Mirror Home';
+      if (!authenticated) {
+        showPairedState(false);
+        return status;
+      }
       byId('display-name').value = status.displayName || 'Mirror';
       byId('wifi-summary').textContent = status.wifi && status.wifi.connected
         ? status.wifi.ssid || 'Connected'
@@ -77,6 +98,7 @@
       byId('ble-summary').textContent = status.bleProvisioning || 'Unavailable';
       byId('binder-status').textContent = status.mirrorBinderConnected ? 'Connected' : 'Reconnecting';
       byId('helper-status').textContent = status.systemHelperConnected ? 'Temporary helper active' : 'Factory service';
+      byId('app-version').textContent = status.appVersion || 'Unknown';
       if (typeof status.brightness === 'number') {
         byId('brightness').value = String(status.brightness);
         byId('brightness-output').textContent = String(status.brightness);
@@ -100,7 +122,14 @@
     return request('/api/v1/dashboard').then(function (dashboard) {
       var url = dashboard.url || '';
       var localAurora = window.location.origin + '/dashboard/aurora.html';
-      var mode = !url ? 'native' : (url === localAurora || url === 'http://127.0.0.1:8787/dashboard/aurora.html' ? 'aurora' : 'custom');
+      var localGallery = window.location.origin + '/dashboard/gallery.html';
+      var mode = !url
+        ? 'native'
+        : (url === localAurora || url === 'http://127.0.0.1:8787/dashboard/aurora.html'
+          ? 'aurora'
+          : (url === localGallery || url === 'http://127.0.0.1:8787/dashboard/gallery.html'
+            ? 'gallery'
+            : 'custom'));
       byId('dashboard-mode').value = mode;
       byId('dashboard-url').value = mode === 'custom' ? url : '';
       updateDashboardFields();
@@ -174,6 +203,39 @@
     });
   }
 
+  function refreshPhotos() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/photos').then(function (result) {
+      var list = byId('photo-list');
+      list.textContent = '';
+      (result.photos || []).forEach(function (photo) {
+        var item = document.createElement('li');
+        var label = document.createElement('span');
+        label.textContent = photo.name;
+        var remove = document.createElement('button');
+        remove.className = 'secondary';
+        remove.textContent = 'Delete';
+        remove.addEventListener('click', function () {
+          request('/api/v1/photos/' + encodeURIComponent(photo.name), { method: 'DELETE' })
+            .then(refreshPhotos)
+            .catch(function (error) { setMessage('photo-message', error.message, true); });
+        });
+        item.appendChild(label);
+        item.appendChild(remove);
+        list.appendChild(item);
+      });
+    });
+  }
+
+  function refreshOnboarding() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/onboarding').then(function (onboarding) {
+      byId('onboarding-message').textContent = onboarding.active
+        ? 'Recovery setup network is ' + onboarding.state + '.'
+        : 'Recovery setup network is off.';
+    });
+  }
+
   function refreshAll() {
     return refreshStatus()
       .then(function () {
@@ -181,7 +243,9 @@
           refreshDashboard(),
           refreshClients(),
           refreshPreferences(),
-          refreshAutomation()
+          refreshAutomation(),
+          refreshOnboarding(),
+          refreshPhotos()
         ]);
       })
       .catch(function (error) {
@@ -242,7 +306,9 @@
       ? ''
       : (mode === 'aurora'
         ? 'http://127.0.0.1:8787/dashboard/aurora.html'
-        : byId('dashboard-url').value.trim());
+        : (mode === 'gallery'
+          ? 'http://127.0.0.1:8787/dashboard/gallery.html'
+          : byId('dashboard-url').value.trim()));
     request('/api/v1/dashboard', json('PUT', { url: url }))
       .then(function () { setMessage('dashboard-message', 'Dashboard applied.'); })
       .catch(function (error) { setMessage('dashboard-message', error.message, true); });
@@ -256,6 +322,31 @@
         return refreshStatus();
       })
       .catch(function (error) { setMessage('display-message', error.message, true); });
+  });
+
+  byId('photo-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var file = byId('photo-file').files[0];
+    if (!file) return;
+    setMessage('photo-message', 'Uploading…');
+    fetch('/api/v1/photos/' + encodeURIComponent(file.name), {
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': file.type || 'image/jpeg'
+      },
+      body: file
+    }).then(function (response) {
+      return response.text().then(function (text) {
+        var body = text ? JSON.parse(text) : {};
+        if (!response.ok) throw new Error(body.error || 'Upload failed (' + response.status + ')');
+        return body;
+      });
+    }).then(function () {
+      byId('photo-file').value = '';
+      setMessage('photo-message', 'Photo stored locally.');
+      return refreshPhotos();
+    }).catch(function (error) { setMessage('photo-message', error.message, true); });
   });
 
   byId('brightness').addEventListener('input', function () {
@@ -322,10 +413,32 @@
     })).then(function (result) {
       byId('wifi-passphrase').value = '';
       setMessage('wifi-message', result.message || 'Connection requested.');
+      if (result.ipAddress && result.ipAddress !== window.location.hostname) {
+        var clientId = window.localStorage.getItem(CLIENT_ID_KEY) || '';
+        window.location.href = 'http://' + result.ipAddress + ':' + (result.apiPort || 8787)
+          + '/#handoff=' + encodeURIComponent(token)
+          + '&clientId=' + encodeURIComponent(clientId);
+        return;
+      }
       window.setTimeout(refreshStatus, 4000);
     }).catch(function (error) {
       byId('wifi-passphrase').value = '';
       setMessage('wifi-message', error.message, true);
+    });
+
+    byId('start-setup-network').addEventListener('click', function () {
+      request('/api/v1/onboarding/start', json('POST', {}))
+        .then(function () {
+          setMessage('onboarding-message', 'Starting the recovery setup network…');
+          window.setTimeout(refreshOnboarding, 3000);
+        })
+        .catch(function (error) { setMessage('onboarding-message', error.message, true); });
+    });
+
+    byId('stop-setup-network').addEventListener('click', function () {
+      request('/api/v1/onboarding/stop', json('POST', {}))
+        .then(function () { return refreshOnboarding(); })
+        .catch(function (error) { setMessage('onboarding-message', error.message, true); });
     });
   });
 

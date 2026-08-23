@@ -146,6 +146,20 @@ public final class WifiProvisioner {
         return info != null && info.getNetworkId() >= 0 && info.getIpAddress() != 0;
     }
 
+    public String awaitIpAddress(long timeoutMilliseconds) {
+        long deadline = SystemClock.elapsedRealtime() + timeoutMilliseconds;
+        do {
+            if (wifiManager != null) {
+                WifiInfo info = wifiManager.getConnectionInfo();
+                if (info != null && info.getNetworkId() >= 0 && info.getIpAddress() != 0) {
+                    return ipAddress(info.getIpAddress());
+                }
+            }
+            SystemClock.sleep(250L);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        return "";
+    }
+
     private boolean enableWifi() {
         if (wifiManager.isWifiEnabled()) {
             return true;

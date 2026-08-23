@@ -83,6 +83,7 @@
             <div><dt>Brightness</dt><dd id="brightness-status">—</dd></div>
             <div><dt>Mirror services</dt><dd id="binder-status">—</dd></div>
             <div><dt>System helper</dt><dd id="helper-status">Not installed</dd></div>
+            <div><dt>Mirror Home</dt><dd id="app-version">—</dd></div>
           </dl>
         </article>
       </section>
@@ -97,6 +98,7 @@
               <select id="dashboard-mode">
                 <option value="native">Native clock and setup</option>
                 <option value="aurora">Aurora clock</option>
+                <option value="gallery">Local photo gallery</option>
                 <option value="custom">Custom or Home Assistant URL</option>
               </select>
             </label>
@@ -107,6 +109,17 @@
             <button type="submit">Apply dashboard</button>
           </form>
           <p id="dashboard-message" class="message" role="status"></p>
+        </article>
+
+        <article class="card">
+          <p class="eyebrow">Private and device-local</p>
+          <h2>Photo gallery</h2>
+          <form id="photo-form" class="inline-form">
+            <label><span>JPEG, PNG, WebP, or GIF · 20 MB maximum</span><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required></label>
+            <button type="submit">Add photo</button>
+          </form>
+          <ul id="photo-list" class="client-list"></ul>
+          <p id="photo-message" class="message" role="status"></p>
         </article>
 
         <article class="card">
@@ -187,6 +200,11 @@
             <label class="check"><input id="wifi-hidden" type="checkbox"><span>Hidden network</span></label>
             <button type="submit">Connect</button>
           </form>
+          <div class="button-row">
+            <button id="start-setup-network" class="secondary">Start recovery setup network</button>
+            <button id="stop-setup-network" class="secondary">Stop setup network</button>
+          </div>
+          <p id="onboarding-message" class="message" role="status"></p>
           <p id="wifi-message" class="message" role="status"></p>
         </article>
       </section>

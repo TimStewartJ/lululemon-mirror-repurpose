@@ -382,6 +382,9 @@ public final class BleProvisioningServer {
                     ssid,
                     passphrase,
                     request.optBoolean("hidden", false));
+            if (wifiResult.success) {
+                WifiDirectOnboarding.getInstance(context).onProvisioned();
+            }
             String ipAddress = wifiResult.success ? waitForIpAddress() : "";
             boolean connected = wifiResult.success && !ipAddress.isEmpty();
             response.put("ok", connected);

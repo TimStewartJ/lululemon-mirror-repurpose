@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.SystemClock;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -29,8 +30,10 @@ public final class ControlServer extends NanoHTTPD {
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
     private final PairingManager pairing;
+    private final PhotoLibrary photos;
     private final SystemHelperClient systemHelper;
     private final WifiProvisioner wifi;
+    private final WifiDirectOnboarding wifiDirect;
 
     public ControlServer(Context context, int port) {
         super(port);
@@ -40,8 +43,10 @@ public final class ControlServer extends NanoHTTPD {
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
         pairing = PairingManager.getInstance(context);
+        photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
         wifi = new WifiProvisioner(context);
+        wifiDirect = WifiDirectOnboarding.getInstance(context);
     }
 
     @Override
@@ -52,13 +57,30 @@ public final class ControlServer extends NanoHTTPD {
 
         String uri = session.getUri();
         try {
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/photos/slideshow".equals(uri)
+                    && isLoopback(session)) {
+                return response(
+                        Response.Status.OK,
+                        new JSONObject().put("photos", photos.list()));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && uri.startsWith("/photos/")
+                    && isLoopback(session)) {
+                return servePhoto(uri.substring("/photos/".length()));
+            }
             if (Method.GET.equals(session.getMethod())) {
                 Response asset = controlAsset(uri);
                 if (asset != null) {
                     return asset;
                 }
             }
-            if (Method.GET.equals(session.getMethod()) && "/api/v1/status".equals(uri)) {
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/bootstrap".equals(uri)) {
+                return response(Response.Status.OK, bootstrap());
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/status".equals(uri)
+                    && (isLoopback(session) || authorized(session))) {
                 return response(Response.Status.OK, status());
             }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair".equals(uri)) {
@@ -100,6 +122,34 @@ public final class ControlServer extends NanoHTTPD {
             if (Method.POST.equals(session.getMethod())
                     && "/api/v1/wifi/configure".equals(uri)) {
                 return configureWifi(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/onboarding".equals(uri)) {
+                return response(Response.Status.OK, onboardingStatus());
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/onboarding/start".equals(uri)) {
+                wifiDirect.start();
+                return response(Response.Status.ACCEPTED, onboardingStatus());
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/onboarding/stop".equals(uri)) {
+                wifiDirect.stop();
+                return response(Response.Status.OK, onboardingStatus());
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/photos".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        new JSONObject().put("photos", photos.list()));
+            }
+            if (Method.PUT.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
+                return uploadPhoto(session, uri.substring("/api/v1/photos/".length()));
+            }
+            if (Method.DELETE.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
+                boolean deleted = photos.delete(uri.substring("/api/v1/photos/".length()));
+                return response(
+                        deleted ? Response.Status.OK : Response.Status.NOT_FOUND,
+                        new JSONObject().put("deleted", deleted));
             }
             if (Method.POST.equals(session.getMethod())
                     && "/api/v1/control/brightness".equals(uri)) {
@@ -186,6 +236,8 @@ public final class ControlServer extends NanoHTTPD {
 
         JSONObject result = new JSONObject();
         result.put("apiVersion", 1);
+        result.put("appVersion", BuildConfig.VERSION_NAME);
+        result.put("deviceUptimeSeconds", SystemClock.elapsedRealtime() / 1000L);
         result.put("paired", pairing.isPaired());
         result.put("displayName", configStore.getDisplayName());
         result.put("timeZone", configStore.getTimeZoneId());
@@ -200,6 +252,14 @@ public final class ControlServer extends NanoHTTPD {
         result.put("bleProvisioning", BleProvisioningServer.lastKnownStatus());
         result.put("automation", automation.snapshot());
         return result;
+    }
+
+    private JSONObject bootstrap() throws JSONException {
+        return new JSONObject()
+                .put("apiVersion", 1)
+                .put("appVersion", BuildConfig.VERSION_NAME)
+                .put("displayName", configStore.getDisplayName())
+                .put("paired", pairing.isPaired());
     }
 
     private Response pair(JSONObject body) throws JSONException {
@@ -272,11 +332,76 @@ public final class ControlServer extends NanoHTTPD {
         String passphrase = body.optString("passphrase", null);
         boolean hidden = body.optBoolean("hidden", false);
         WifiProvisioner.Result result = wifi.configure(ssid, passphrase, hidden);
+        String ipAddress = result.success ? wifi.awaitIpAddress(15_000L) : "";
+        if (result.success) {
+            wifiDirect.onProvisioned();
+        }
         return response(
                 result.success ? Response.Status.ACCEPTED : Response.Status.BAD_REQUEST,
                 new JSONObject()
                         .put("accepted", result.success)
-                        .put("message", result.message));
+                        .put("message", result.message)
+                        .put(
+                                "ipAddress",
+                                ipAddress.isEmpty() ? JSONObject.NULL : ipAddress)
+                        .put("apiPort", ControlServerService.PORT));
+    }
+
+    private JSONObject onboardingStatus() throws JSONException {
+        WifiDirectOnboarding.Snapshot snapshot = wifiDirect.snapshot();
+        return new JSONObject()
+                .put("state", snapshot.state)
+                .put("active", snapshot.active)
+                .put("clientConnected", snapshot.clientConnected);
+    }
+
+    private Response uploadPhoto(IHTTPSession session, String encodedName)
+            throws IOException, ResponseException, JSONException {
+        long contentLength;
+        try {
+            contentLength = Long.parseLong(session.getHeaders().get("content-length"));
+        } catch (Exception error) {
+            return error(Response.Status.LENGTH_REQUIRED, "Content-Length is required");
+        }
+        if (contentLength < 1 || contentLength > PhotoLibrary.MAX_PHOTO_BYTES) {
+            return error(Response.Status.BAD_REQUEST, "Photo exceeds the 20 MB limit");
+        }
+        String contentType = session.getHeaders().get("content-type");
+        if (contentType == null || !contentType.toLowerCase(java.util.Locale.US).startsWith("image/")) {
+            return error(Response.Status.UNSUPPORTED_MEDIA_TYPE, "An image Content-Type is required");
+        }
+        Map<String, String> files = new HashMap<>();
+        session.parseBody(files);
+        String temporaryPath = files.get("content");
+        if (temporaryPath == null) {
+            return error(Response.Status.BAD_REQUEST, "Photo body is missing");
+        }
+        String storedName = photos.store(encodedName, new File(temporaryPath), contentLength);
+        return response(
+                Response.Status.CREATED,
+                new JSONObject().put("name", storedName));
+    }
+
+    private Response servePhoto(String encodedName) throws IOException {
+        File photo = photos.resolve(encodedName);
+        if (photo == null || !photo.isFile()) {
+            return error(Response.Status.NOT_FOUND, "Photo not found");
+        }
+        Response result = newFixedLengthResponse(
+                Response.Status.OK,
+                PhotoLibrary.mimeType(photo.getName()),
+                new FileInputStream(photo),
+                photo.length());
+        result.addHeader("Cache-Control", "private, max-age=3600");
+        result.addHeader("X-Content-Type-Options", "nosniff");
+        return result;
+    }
+
+    private static boolean isLoopback(IHTTPSession session) {
+        String address = session.getRemoteIpAddress();
+        return "127.0.0.1".equals(address)
+                || "0:0:0:0:0:0:0:1".equals(address)
+                || "::1".equals(address);
     }
 
     private Response updateBrightness(JSONObject body) throws JSONException {
@@ -331,6 +456,9 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private Response playMedia(JSONObject body) throws JSONException {
+        if (automation.isSleeping()) {
+            return error(Response.Status.CONFLICT, "Mirror is sleeping");
+        }
         String url = body.optString("url", null);
         if (!InputValidator.validMediaUrl(url)) {
             return error(
@@ -514,6 +642,19 @@ public final class ControlServer extends NanoHTTPD {
                 assetName = "control/dashboard/offline.js";
                 mimeType = "application/javascript; charset=utf-8";
                 break;
+            case "/dashboard/gallery.html":
+                assetName = "control/dashboard/gallery.html";
+                mimeType = "text/html; charset=utf-8";
+                document = true;
+                break;
+            case "/dashboard/gallery.css":
+                assetName = "control/dashboard/gallery.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/dashboard/gallery.js":
+                assetName = "control/dashboard/gallery.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
             default:
                 return null;
         }
@@ -533,7 +674,7 @@ public final class ControlServer extends NanoHTTPD {
                 mimeType,
                 new ByteArrayInputStream(contents),
                 contents.length);
-        result.addHeader("Cache-Control", document ? "no-store" : "public, max-age=3600");
+        result.addHeader("Cache-Control", document ? "no-store" : "no-cache");
         result.addHeader(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; style-src 'self'; "
