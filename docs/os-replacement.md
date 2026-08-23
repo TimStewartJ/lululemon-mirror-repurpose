@@ -30,6 +30,69 @@ Mainline background:
 Do not flash generic DragonBoard/MSM8916 images. Root alone is insufficient if
 the bootloader still refuses the replacement boot image.
 
+## Non-writing boot-trust probes
+
+The following probes were executed on 2026-08-23. No partition read, program,
+patch, erase, or flash command was sent.
+
+### EDL Firehose signature test
+
+Sahara reported:
+
+```text
+HWID:    007060e100000000
+PK hash: 35ac01e7ee8478261aea5134e07e45cb6c5621d42716c15bb10dee0c53d65759
+```
+
+The only public bkerler loader with the exact HWID was:
+
+```text
+007060e100000000_cc3153a802939b90_fhprg_peek.bin
+SHA-256: cb4aa64c1e34c1d914b5aec3b403826beb74880c8ff85b0d79094fcd9ed0c4df
+```
+
+The filename's second field is the loader public-key hash prefix. It does not
+match this device's fused `35ac01e7ee847826` prefix. A forced
+`nop --skipstorageinit` test confirmed the behavior: PBL requested the ELF
+segments, stopped responding immediately after the signed header, and never
+entered Firehose. The `nop` and storage initialization were never reached.
+The device remained in `05c6:9008` until main power was disconnected.
+
+### Fastboot RAM-boot test
+
+The official msm8916-mainline lk2nd 23.1 image was downloaded from its GitHub
+release and verified:
+
+```text
+lk2nd-msm8916.img
+SHA-256: 8f5f788b45b96447517ff121f20841e6bfc95a5d7c4b48fdedb855d90f593144
+```
+
+Only the non-writing command was used:
+
+```text
+fastboot boot lk2nd-msm8916.img
+```
+
+LK accepted the USB upload but rejected execution:
+
+```text
+FAILED (remote: 'bootimage: incomplete or not signed')
+```
+
+`fastboot reboot` returned cleanly to Mirror Home 1.0. These results prove that
+both available entry points enforce the OEM trust chain. Repeating generic
+loader or unsigned boot-image tests cannot create a boot path.
+
+### Official BSP availability
+
+Penguin/Inforce confirms that IFC6309 Android 7.1.1 V3.0 exists, but directs
+users to its authenticated TechWeb portal. The portal currently returns HTTP
+503, public archives contain no firmware package or release-note capture, and
+no reputable public mirror exposes the BSP. The next meaningful probe requires
+an official package or programmer with the device's `35ac01e7ee847826` key
+prefix.
+
 ## Phase 0: preserve recovery
 
 Complete before the first write:
