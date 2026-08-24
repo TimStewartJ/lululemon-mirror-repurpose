@@ -22,6 +22,11 @@ public final class ControlServerService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (BuildConfig.OTA_HEALTH_FAILURE_TEST) {
+            Log.e(TAG, "OTA health-failure test build is intentionally not starting services");
+            stopSelf();
+            return;
+        }
         try {
             server = new ControlServer(this, PORT);
             server.start();

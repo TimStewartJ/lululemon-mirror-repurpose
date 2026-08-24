@@ -74,3 +74,30 @@ Mirror Home implements FCast protocol v3 on TCP port `46899`:
 Packets larger than 32 KB and more than eight simultaneous clients are rejected.
 Idle clients expire, malformed commands receive a playback error without
 tearing down an otherwise healthy connection.
+
+## OTA supervisor
+
+The separate device-owner supervisor listens on TCP `8791`:
+
+```text
+GET  /api/v1/bootstrap             loopback only
+POST /api/v1/provision             loopback + bootstrap secret
+POST /api/v1/provision/confirm     loopback + HMAC
+POST /api/v1/provision/recover     loopback + bootstrap secret
+GET  /api/v1/status                HMAC
+PUT  /api/v1/update                HMAC + signed APK body
+POST /api/v1/rollback              HMAC
+POST /api/v1/deprovision           loopback + HMAC + explicit confirmation
+```
+
+The HMAC canonical value is five newline-delimited fields:
+
+```text
+METHOD
+/path
+monotonic-counter
+random-nonce
+lowercase-body-sha256
+```
+
+See [LAN OTA updates](ota-updates.md) for lifecycle and recovery behavior.

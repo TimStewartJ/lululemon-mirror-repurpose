@@ -17,31 +17,29 @@ if (!configuredReleaseSigningKeys.isEmpty()
             "keystore.properties must define ${releaseSigningKeys.join(', ')}")
 }
 def hasReleaseSigning = configuredReleaseSigningKeys.size() == releaseSigningKeys.size()
-def configuredVersionCode = providers.gradleProperty("mirrorHomeVersionCode")
-def configuredVersionName = providers.gradleProperty("mirrorHomeVersionName")
-def otaHealthFailureTest = providers
-        .gradleProperty("mirrorOtaHealthFailureTest")
-        .orElse("false")
+def bootstrapTokenSha256 = providers
+        .gradleProperty("mirrorOtaBootstrapTokenSha256")
+        .orElse("")
         .get()
 
 android {
-    namespace "dev.mirror.repurpose"
+    namespace "dev.mirror.repurpose.updater"
     compileSdk 35
 
     defaultConfig {
-        applicationId "dev.mirror.repurpose"
+        applicationId "dev.mirror.repurpose.updater"
         minSdk 23
         targetSdk 35
-        versionCode configuredVersionCode.isPresent()
-                ? configuredVersionCode.get().toInteger()
-                : 22
-        versionName configuredVersionName.isPresent()
-                ? configuredVersionName.get()
-                : "1.4.0"
+        versionCode 2
+        versionName "1.0.1"
         buildConfigField(
-                "boolean",
-                "OTA_HEALTH_FAILURE_TEST",
-                otaHealthFailureTest.equalsIgnoreCase("true") ? "true" : "false")
+                "String",
+                "SUPPORTED_FINGERPRINT",
+                "\"mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys\"")
+        buildConfigField(
+                "String",
+                "BOOTSTRAP_TOKEN_SHA256",
+                "\"${bootstrapTokenSha256.toLowerCase()}\"")
     }
 
     buildFeatures {
@@ -80,16 +78,7 @@ android {
 }
 
 dependencies {
-    def media3Version = "1.9.0"
-
-    implementation "androidx.media3:media3-exoplayer:${media3Version}"
-    implementation "androidx.media3:media3-exoplayer-dash:${media3Version}"
-    implementation "androidx.media3:media3-exoplayer-hls:${media3Version}"
-    implementation "androidx.media3:media3-exoplayer-rtsp:${media3Version}"
-    implementation "androidx.media3:media3-ui:${media3Version}"
-    compileOnly "androidx.annotation:annotation:1.6.0"
     implementation "org.nanohttpd:nanohttpd:2.3.1"
-    implementation "com.google.zxing:core:3.5.3"
 
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"

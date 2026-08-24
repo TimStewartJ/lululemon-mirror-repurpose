@@ -68,6 +68,28 @@ Manual rollback uses the latest backup unless an explicit APK is supplied:
 The application also schedules a 15-minute watchdog that restarts its control
 service and reconnects the stock Binder after process loss.
 
+## OTA recovery
+
+The device-owner OTA supervisor on TCP `8791` keeps the last healthy Home APK
+in its private storage. Check and restore it without ADB:
+
+```powershell
+.\tools\ota.ps1 status
+.\tools\ota.ps1 rollback
+```
+
+An unhealthy candidate is rolled back automatically after the 60-second
+loopback health deadline. `otactl push` returns nonzero when this occurs.
+
+If the active OTA token is lost, use the independently backed-up bootstrap secret
+and a local ADB connection:
+
+```powershell
+.\tools\ota.ps1 --host MIRROR_IP recover-token --serial DEVICE_SERIAL
+```
+
+See [LAN OTA updates](ota-updates.md) before changing device-owner state.
+
 ## Fastboot
 
 The IFC6309 LK bootloader is secure and locked:

@@ -12,6 +12,9 @@ The project intentionally separates:
   installed through a device-specific signature-verification flaw. It applies
   persistent kiosk/default-HOME settings and must be restored to the factory APK
   before reboot. It is not required for normal dashboard operation.
+- **OTA Supervisor**: a boot-persistent Android device-owner app that accepts
+  only authenticated, release-signed Mirror Home APKs, health-checks them, and
+  restores the local known-good release after failure.
 - **Device-hosted controls**: a responsive local web application served by
   Mirror Home itself for phone/desktop pairing, dashboards, schedules, photos,
   Wi-Fi, media, and client revocation.
@@ -56,7 +59,7 @@ phone/desktop control UI, displays QR onboarding, creates a Wi-Fi Direct setup
 network when no managed Wi-Fi exists, supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
-sensing, and watchdog recovery. Media3
+sensing, signed LAN OTA updates with automatic rollback, and watchdog recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
 The desktop companion remains available but is no longer required for daily
 operation.
@@ -91,7 +94,7 @@ Start with the [User guide](docs/user-guide.md). See
 [Streaming](docs/streaming.md) for sender compatibility and recommended
 media formats and [Provisioning](docs/provisioning.md) for USB, BLE, and LAN
 setup. See [Automation](docs/automation.md) for REST examples,
-[Casting roadmap](docs/casting-roadmap.md), and
+[LAN OTA updates](docs/ota-updates.md), [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 
 Common development commands:
@@ -104,6 +107,8 @@ Common development commands:
 .\tools\mirror.ps1 install-helper
 .\tools\mirror.ps1 forward
 .\tools\mirror.ps1 restore-helper
+.\tools\ota.ps1 status
+.\tools\ota.ps1 push .\android\mirror-home\build\outputs\apk\release\mirror-home-release.apk
 ```
 
 `install-helper` refuses unknown firmware and APK hashes, backs up the factory

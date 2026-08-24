@@ -17,6 +17,9 @@ public final class MirrorHomeApplication extends Application {
     public void onCreate() {
         super.onCreate();
         System.setProperty("java.io.tmpdir", getCacheDir().getAbsolutePath());
+        if (BuildConfig.OTA_HEALTH_FAILURE_TEST) {
+            return;
+        }
         wifiProvisioner = new WifiProvisioner(this);
         ensureWifiConnection();
         MirrorBinderClient.getInstance(this).connect();

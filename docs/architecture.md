@@ -19,6 +19,14 @@ Optional transient System Helper (UID 1000)
   | allowlisted privileged operations only
   v
 Android framework / MIRROR hardware
+
+Trusted development computer
+  | HMAC-authenticated signed APK upload
+  v
+OTA Supervisor (persistent device owner)
+  | PackageInstaller + health check + known-good rollback
+  v
+Mirror Home
 ```
 
 ## Mirror Home
@@ -64,6 +72,18 @@ The companion is a local Node.js service and static browser UI:
 
 The companion does not persist Wi-Fi passphrases and is not required for daily
 control.
+
+## OTA supervisor
+
+The OTA supervisor is deliberately separate from Mirror Home. It exposes only a
+signed-update protocol on TCP `8791`, has no shell capability, and accepts only
+newer Home APKs matching its own signing certificate and the exact device
+fingerprint. It remains alive across Home replacement and reboot, allowing it to
+health-check the loopback Home API and perform an in-place rollback.
+
+Requests use HMAC-SHA256 with monotonic replay counters. The active token and
+independent bootstrap secret remain in ignored local files. See
+[LAN OTA updates](ota-updates.md).
 
 BLE characteristics require an encrypted bond. The on-screen pairing code then
 authorizes token issuance and Wi-Fi enrollment at the application layer.

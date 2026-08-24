@@ -103,6 +103,21 @@ Direct-UI playback starts muted by default.
 
 See [Streaming](streaming.md) and [Casting roadmap](casting-roadmap.md).
 
+## Software updates
+
+Mirror Home can be updated from a trusted computer over the LAN after one-time
+OTA supervisor provisioning:
+
+```powershell
+.\tools\ota.ps1 status
+.\tools\ota.ps1 push PATH_TO_SIGNED_MIRROR_HOME_APK
+```
+
+Only a newer release signed by the configured Mirror release certificate is
+accepted. The supervisor saves the current APK, installs the candidate, and
+restores the saved release automatically if the Home API does not become
+healthy. See [LAN OTA updates](ota-updates.md).
+
 ## Recovery
 
 If normal Wi-Fi is unavailable, use the **Start recovery setup network** action

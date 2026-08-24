@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.4.0 - 2026-08-24
+
+- Add a separate boot-persistent Android device-owner OTA supervisor.
+- Add HMAC-authenticated LAN update tooling with independent one-time bootstrap
+  credentials, monotonic replay protection, and strict upload limits.
+- Require the exact device fingerprint, Home package, release certificate,
+  increasing version code, and streamed APK SHA-256 before installation.
+- Add local known-good APK backup, silent PackageInstaller updates, loopback
+  health checks, automatic data-preserving downgrade, and manual rollback.
+- Add token recovery and explicit device-owner deprovisioning through
+  ADB-forwarded loopback recovery.
+- Add deterministic failure-injection builds and hardware-validate install,
+  reboot persistence, health failure, automatic rollback, manual rollback, and
+  repeat OTA upgrade.
+
 ## 1.2.3 - 2026-08-24
 
 - Reconcile camera monitoring immediately when permission is granted externally

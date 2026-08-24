@@ -22,6 +22,7 @@ For a focused loop:
 
 ```powershell
 .\gradlew.bat :android:mirror-home:testDebugUnitTest :android:mirror-home:assembleDebug
+.\gradlew.bat :android:ota-updater:testDebugUnitTest :android:ota-updater:lintDebug
 npm --prefix companion test
 npm --prefix companion run typecheck
 ```
@@ -33,6 +34,10 @@ Hardware-affecting changes should also document:
 3. the command or UI path exercised,
 4. the observed result, and
 5. the verified rollback.
+
+Mirror Home release version codes must increase for OTA. Test-only
+`mirrorOtaHealthFailureTest` artifacts must use a unique version code, remain
+outside source control, and be followed by a verified automatic rollback.
 
 ## Commit scope
 

@@ -1,9 +1,12 @@
+import hashlib
+import hmac
 import json
 import pathlib
 import subprocess
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 
 import sys
 
@@ -18,6 +21,14 @@ from mirrorctl import (
     installed_apk_path,
     installed_package_version,
     parse_adb_devices,
+)
+from otactl import (
+    EMPTY_SHA256,
+    OtaClient,
+    OtaClientError,
+    canonical_request,
+    provision,
+    signed_headers,
 )
 
 
@@ -144,6 +155,85 @@ pending unauthorized
                 "no rollback was attempted",
             ):
                 install_apk_verified(FakeDevice(), "pkg", expected, "-r")
+
+    def test_ota_hmac_matches_android_vector(self):
+        canonical = canonical_request(
+            "GET",
+            "/api/v1/status",
+            "1787600000",
+            "00112233445566778899aabbccddeeff",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        signature = hmac.new(
+            b"test-token-0123456789",
+            canonical.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(
+            "b9a4973b26871e37e55088196c48d4c80c618f7b1e235ba4812aba0696e121e9",
+            signature,
+        )
+
+    @mock.patch("otactl.time.time_ns", return_value=1787600000000000000)
+    @mock.patch("otactl.secrets.randbits", side_effect=[1, 2])
+    def test_ota_headers_are_unique_on_coarse_windows_clock(
+        self,
+        _randbits,
+        _time_ns,
+    ):
+        first = signed_headers("token", "GET", "/api/v1/status", EMPTY_SHA256)
+        second = signed_headers("token", "GET", "/api/v1/status", EMPTY_SHA256)
+        self.assertNotEqual(first["X-Ota-Counter"], second["X-Ota-Counter"])
+
+    def test_ota_push_fails_when_supervisor_rolls_back(self):
+        client = OtaClient("127.0.0.1", "token")
+        with mock.patch.object(
+            client,
+            "request",
+            return_value={"transactionId": "transaction"},
+        ), mock.patch.object(
+            client,
+            "wait",
+            return_value={
+                "state": "rolled_back",
+                "message": "health check failed",
+            },
+        ):
+            with self.assertRaisesRegex(OtaClientError, "rolled_back"):
+                client.push(pathlib.Path(__file__))
+
+    def test_ota_provision_sends_bootstrap_secret_not_status_object(self):
+        fake_device = mock.Mock()
+        fake_device.property.return_value = "fingerprint"
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "otactl.Device",
+            return_value=fake_device,
+        ), mock.patch(
+            "otactl.free_tcp_port",
+            return_value=43123,
+        ), mock.patch(
+            "otactl.bootstrap_token",
+            return_value="bootstrap-secret",
+        ), mock.patch(
+            "otactl.raw_request",
+            side_effect=[
+                {"deviceOwner": True},
+                {"token": "t" * 43, "port": 8791},
+                {"provisioned": True},
+            ],
+        ) as raw:
+            result = provision(
+                "serial",
+                pathlib.Path(directory) / "token.json",
+                pathlib.Path(directory) / "bootstrap.txt",
+                "10.0.0.196",
+            )
+
+        self.assertTrue(result["provisioned"])
+        self.assertEqual(
+            "bootstrap-secret",
+            raw.call_args_list[1].kwargs["headers"]["X-Ota-Bootstrap-Token"],
+        )
 
     def test_verified_install_stops_when_success_marker_and_state_are_unknown(self):
         with tempfile.TemporaryDirectory() as directory:

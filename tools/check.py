@@ -52,9 +52,14 @@ def main() -> None:
             ":android:mirror-home:assembleDebug",
             ":android:mirror-home:assembleRelease",
             ":android:mirror-home:lintDebug",
+            ":android:ota-updater:testDebugUnitTest",
+            ":android:ota-updater:assembleDebug",
+            ":android:ota-updater:assembleRelease",
+            ":android:ota-updater:lintDebug",
             ":android:system-helper:assembleDebug",
             ":android:system-helper:lintDebug",
             f"-PmirrorHomeCertificateSha256={DUMMY_CERTIFICATE}",
+            f"-PmirrorOtaBootstrapTokenSha256={DUMMY_CERTIFICATE}",
             "--no-daemon",
         ]
     )

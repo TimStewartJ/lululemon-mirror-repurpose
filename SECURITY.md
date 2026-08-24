@@ -9,6 +9,7 @@ Never commit:
 - Wi-Fi SSIDs or passphrases
 - ADB private keys
 - pairing tokens
+- OTA active and bootstrap tokens
 - Android release keystores and their passwords
 - device certificates or private keys
 - proprietary APKs, firmware, or partition dumps
@@ -33,6 +34,20 @@ after a user-confirmed pairing code. Only SHA-256 token hashes are persisted,
 and clients can be revoked independently. LAN control is denied until pairing
 succeeds.
 
+## OTA supervisor
+
+The device-owner OTA supervisor exposes no shell and accepts only the exact
+Mirror Home package signed by its own release certificate. Upload requests are
+HMAC-SHA256 authenticated over method, path, content hash, monotonic counter,
+and nonce. Replayed and unauthenticated requests are rejected before request
+bodies are parsed.
+
+Initial token issuance requires an independent random bootstrap capability whose
+SHA-256 hash is injected at build time. Recovery token rotation additionally
+requires an ADB-forwarded loopback request. The supervisor preserves a private,
+re-validated known-good APK and does not overwrite it while recovering from an
+unhealthy installed candidate.
+
 The device API does not enable cross-origin browser access. The companion
 proxies browser requests over the same origin. NanoHTTPD temporary storage is
 redirected into the application's private cache, request bodies are bounded,
@@ -47,7 +62,7 @@ trusted LAN. Bearer tokens never appear in query strings; first-run origin
 handoff uses a URL fragment, which is not transmitted to the server and is
 removed immediately.
 
-Do not expose ports `8787` or `46899` to the public Internet or an untrusted
+Do not expose ports `8787`, `8791`, or `46899` to the public Internet or an untrusted
 wireless network. FCast v3 is plaintext and has no standard sender
 authentication. The owner-controlled OS plan moves controls and FCast v4 to
 TLS-capable current components.
