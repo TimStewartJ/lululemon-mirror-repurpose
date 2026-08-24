@@ -18,8 +18,19 @@
   }
   var token = window.localStorage.getItem(TOKEN_KEY);
   var dashboardLayout = null;
+  var weatherSnapshot = null;
   var selectedWidgetId = 'clock';
   var layoutPhotoObjectUrl = null;
+  var layoutHistory = [];
+  var layoutFuture = [];
+  var layoutBaseline = '';
+  var layoutGestureActive = false;
+  var weatherPollTimer = null;
+  var layoutSettings = {
+    snap: window.localStorage.getItem('mirror-layout-snap') !== 'false',
+    grid: Number(window.localStorage.getItem('mirror-layout-grid') || 20),
+    safeZone: window.localStorage.getItem('mirror-layout-safe-zone') !== 'false'
+  };
   var widgetLabels = {
     clock: 'Clock',
     date: 'Date',
@@ -32,6 +43,8 @@
     ble: 'Bluetooth',
     uptime: 'Uptime',
     motion: 'Motion presence',
+    weather: 'Current weather',
+    forecast: 'Hourly forecast',
     pairing: 'Pairing code',
     note: 'Custom note'
   };
@@ -81,6 +94,111 @@
     return { method: method, body: JSON.stringify(body || {}) };
   }
 
+  function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function layoutText() {
+    return dashboardLayout ? JSON.stringify(dashboardLayout) : '';
+  }
+
+  function resetLayoutHistory() {
+    layoutHistory = [];
+    layoutFuture = [];
+    layoutBaseline = layoutText();
+    updateHistoryButtons();
+  }
+
+  function commitLayoutChange() {
+    var current = layoutText();
+    if (!current || current === layoutBaseline) return;
+    layoutHistory.push(layoutBaseline);
+    if (layoutHistory.length > 80) layoutHistory.shift();
+    layoutFuture = [];
+    layoutBaseline = current;
+    updateHistoryButtons();
+  }
+
+  function updateHistoryButtons() {
+    byId('layout-undo').disabled = layoutHistory.length === 0;
+    byId('layout-redo').disabled = layoutFuture.length === 0;
+  }
+
+  function applyLayoutSnapshot(serialized) {
+    dashboardLayout = JSON.parse(serialized);
+    layoutBaseline = serialized;
+    if (!selectedWidget()) {
+      selectedWidgetId = dashboardLayout.widgets.length
+        ? dashboardLayout.widgets[0].id
+        : '';
+    }
+    rebuildWidgetSelector();
+    renderLayoutEditor();
+    updateHistoryButtons();
+  }
+
+  function gridSize() {
+    var value = Number(layoutSettings.grid);
+    return [5, 10, 20, 25, 50].indexOf(value) >= 0 ? value : 20;
+  }
+
+  function snapValue(value) {
+    return layoutSettings.snap
+      ? Math.round(value / gridSize()) * gridSize()
+      : Math.round(value);
+  }
+
+  function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(maximum, value));
+  }
+
+  function sortedWidgets() {
+    if (!dashboardLayout) return [];
+    return dashboardLayout.widgets.slice().sort(function (left, right) {
+      var layer = Number(left.layer || 0) - Number(right.layer || 0);
+      return layer || left.id.localeCompare(right.id);
+    });
+  }
+
+  function widgetLabel(widget) {
+    var base = widgetLabels[widget.type] || widget.type;
+    return widget.id === widget.type ? base : base + ' (' + widget.id + ')';
+  }
+
+  function uniqueWidgetId(type) {
+    var used = {};
+    dashboardLayout.widgets.forEach(function (widget) { used[widget.id] = true; });
+    for (var number = 2; number < 1000; number++) {
+      var candidate = (type + '-' + number).substring(0, 40);
+      if (!used[candidate]) return candidate;
+    }
+    return type + '-copy';
+  }
+
+  function formatTemperature(value) {
+    return typeof value === 'number' ? Math.round(value) + '\u00b0' : '--';
+  }
+
+  function weatherPreviewText(type) {
+    var data = weatherSnapshot && weatherSnapshot.data;
+    if (!data || !data.current) {
+      return type === 'forecast'
+        ? '9 AM  64\u00b0   12 PM  69\u00b0'
+        : '68\u00b0  PARTLY CLOUDY';
+    }
+    if (type === 'weather') {
+      var today = data.daily && data.daily[0];
+      return formatTemperature(data.current.temperature) + '  ' +
+        String(data.current.condition || '').toUpperCase() +
+        (today ? '  ' + formatTemperature(today.high) + ' / ' +
+          formatTemperature(today.low) : '');
+    }
+    return (data.hourly || []).slice(0, 3).map(function (hour) {
+      return new Date(hour.time).toLocaleTimeString([], { hour: 'numeric' }) +
+        '  ' + formatTemperature(hour.temperature);
+    }).join('   ') || 'Forecast waiting';
+  }
+
   function showPairedState(isPaired) {
     byId('pairing-card').classList.toggle('hidden', isPaired);
     byId('app-shell').classList.toggle('hidden', !isPaired);
@@ -122,6 +240,15 @@
         byId('brightness').value = String(status.brightness);
         byId('brightness-output').textContent = String(status.brightness);
         byId('brightness-status').textContent = String(status.brightness) + ' / 255';
+      }
+      if (status.weather) {
+        weatherSnapshot = status.weather;
+        renderWeatherStatus(status.weather);
+        if (dashboardLayout
+            && !layoutGestureActive
+            && byId('display').classList.contains('active')) {
+          renderLayoutEditor();
+        }
       }
       if (status.automation) renderMotionStatus(status.automation);
       showPairedState(Boolean(token));
@@ -176,6 +303,8 @@
       ble: 'BLUETOOTH  READY',
       uptime: 'UPTIME  3H 18M',
       motion: 'PRESENCE  WATCHING',
+      weather: weatherPreviewText('weather'),
+      forecast: weatherPreviewText('forecast'),
       pairing: 'PAIR  123456',
       note: widget.text || 'Make space for what matters.'
     };
@@ -231,8 +360,20 @@
     byId('layout-widget-y').value = String(widget.y);
     byId('layout-widget-width').value = String(widget.w);
     byId('layout-widget-height').value = String(widget.h);
+    byId('layout-widget-locked').checked = Boolean(widget.locked);
+    byId('layout-widget-layer').value = String(widget.layer || 0);
     byId('layout-note-row').classList.toggle('hidden', widget.type !== 'note');
     byId('layout-note-text').value = widget.text || '';
+    [
+      'layout-widget-x',
+      'layout-widget-y',
+      'layout-widget-width',
+      'layout-widget-height'
+    ].forEach(function (id) {
+      byId(id).disabled = Boolean(widget.locked);
+    });
+    byId('layout-delete-widget').disabled =
+      dashboardLayout.widgets.length <= 1 || widget.id === widget.type;
   }
 
   function renderLayoutEditor() {
@@ -241,22 +382,34 @@
     Array.from(preview.querySelectorAll('.layout-widget')).forEach(function (element) {
       element.remove();
     });
+    Array.from(preview.querySelectorAll('.layout-guide')).forEach(function (element) {
+      element.remove();
+    });
     updateLayoutPreviewBackground();
-    dashboardLayout.widgets.forEach(function (widget) {
+    var safeZone = preview.querySelector('.layout-safe-zone');
+    if (!safeZone) {
+      safeZone = document.createElement('div');
+      safeZone.className = 'layout-safe-zone';
+      preview.appendChild(safeZone);
+    }
+    safeZone.classList.toggle('hidden', !layoutSettings.safeZone);
+    sortedWidgets().forEach(function (widget) {
       var element = document.createElement('div');
       element.className = 'layout-widget layout-widget-' + widget.type +
         ' align-' + widget.align +
         (widget.id === selectedWidgetId ? ' selected' : '') +
-        (!widget.visible ? ' is-hidden' : '');
+        (!widget.visible ? ' is-hidden' : '') +
+        (widget.locked ? ' is-locked' : '');
       element.dataset.widgetId = widget.id;
       element.tabIndex = 0;
       element.setAttribute('role', 'button');
-      element.setAttribute('aria-label', (widgetLabels[widget.id] || widget.id) + ' widget');
+      element.setAttribute('aria-label', widgetLabel(widget) + ' widget');
       element.style.left = (widget.x / 10) + '%';
       element.style.top = (widget.y / 10) + '%';
       element.style.width = (widget.w / 10) + '%';
       element.style.height = (widget.h / 10) + '%';
       element.style.opacity = String(widget.opacity / 100);
+      element.style.zIndex = String(2 + Number(widget.layer || 0));
       element.style.color = ['clock', 'date', 'name', 'note'].indexOf(widget.type) >= 0
         ? dashboardLayout.textColor
         : dashboardLayout.accentColor;
@@ -280,21 +433,31 @@
       dashboardLayout.background.mode !== 'photo'
     );
     updateWidgetControls();
+    byId('layout-snap-enabled').checked = layoutSettings.snap;
+    byId('layout-grid-size').value = String(gridSize());
+    byId('layout-safe-zone').checked = layoutSettings.safeZone;
+  }
+
+  function rebuildWidgetSelector() {
+    if (!dashboardLayout) return;
+    var selector = byId('layout-widget-select');
+    selector.textContent = '';
+    sortedWidgets().forEach(function (widget) {
+      var option = document.createElement('option');
+      option.value = widget.id;
+      option.textContent = widgetLabel(widget);
+      selector.appendChild(option);
+    });
+    selector.value = selectedWidgetId;
   }
 
   function refreshDashboardLayout() {
     if (!token) return Promise.resolve();
     return request('/api/v1/dashboard/layout').then(function (layout) {
       dashboardLayout = layout;
-      if (!selectedWidget()) selectedWidgetId = 'clock';
-      var selector = byId('layout-widget-select');
-      selector.textContent = '';
-      dashboardLayout.widgets.forEach(function (widget) {
-        var option = document.createElement('option');
-        option.value = widget.id;
-        option.textContent = widgetLabels[widget.id] || widget.id;
-        selector.appendChild(option);
-      });
+      if (!selectedWidget()) selectedWidgetId = dashboardLayout.widgets[0].id;
+      rebuildWidgetSelector();
+      resetLayoutHistory();
       renderLayoutEditor();
     });
   }
@@ -414,6 +577,69 @@
     element.classList.toggle('error', isError);
   }
 
+  function renderWeatherStatus(weather) {
+    var text = 'Weather is not configured.';
+    var isError = false;
+    if (weather && weather.config && weather.config.enabled) {
+      var data = weather.data;
+      if (data && data.current) {
+        var today = data.daily && data.daily[0];
+        text = formatTemperature(data.current.temperature) + ' ' +
+          data.current.condition;
+        if (today) {
+          text += ' · High ' + formatTemperature(today.high) +
+            ' · Low ' + formatTemperature(today.low) +
+            ' · Rain ' + today.precipitationProbability + '%';
+        }
+        if (weather.stale) text += ' · Cached forecast is stale';
+        if (weather.updatedAt) text += ' · Updated ' + formatDate(weather.updatedAt);
+      } else if (weather.refreshing || weather.state === 'waiting') {
+        text = 'Waiting for the first forecast.';
+      } else {
+        text = weather.error || 'Weather data is unavailable.';
+        isError = true;
+      }
+    }
+    setMessage('weather-message', text, isError);
+  }
+
+  function refreshWeather() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/weather').then(function (weather) {
+      weatherSnapshot = weather;
+      var config = weather.config || {};
+      byId('weather-enabled').checked = Boolean(config.enabled);
+      byId('weather-location-name').value = config.locationName || '';
+      byId('weather-latitude').value =
+        typeof config.latitude === 'number' ? String(config.latitude) : '';
+      byId('weather-longitude').value =
+        typeof config.longitude === 'number' ? String(config.longitude) : '';
+      byId('weather-units').value = config.units || 'us';
+      renderWeatherStatus(weather);
+      if (!layoutGestureActive) renderLayoutEditor();
+      return weather;
+    });
+  }
+
+  function pollWeatherUntilSettled(remainingAttempts) {
+    if (weatherPollTimer) {
+      window.clearTimeout(weatherPollTimer);
+      weatherPollTimer = null;
+    }
+    return refreshWeather().then(function (weather) {
+      var waiting = weather.refreshing
+        || (!weather.data && weather.state !== 'error' && weather.state !== 'unconfigured');
+      if (waiting && remainingAttempts > 0) {
+        weatherPollTimer = window.setTimeout(function () {
+          pollWeatherUntilSettled(remainingAttempts - 1).catch(function (error) {
+            setMessage('weather-message', error.message, true);
+          });
+        }, 2000);
+      }
+      return weather;
+    });
+  }
+
   function refreshPhotos() {
     if (!token) return Promise.resolve();
     return request('/api/v1/photos').then(function (result) {
@@ -468,6 +694,7 @@
           refreshClients(),
           refreshPreferences(),
           refreshAutomation(),
+          refreshWeather(),
           refreshOnboarding(),
           refreshPhotos()
         ]);
@@ -538,7 +765,7 @@
       .catch(function (error) { setMessage('dashboard-message', error.message, true); });
   });
 
-  function updateLayoutBackground() {
+  function updateLayoutBackground(event) {
     if (!dashboardLayout) return;
     dashboardLayout.background.mode = byId('layout-background-mode').value;
     dashboardLayout.background.primary = byId('layout-primary-color').value;
@@ -549,6 +776,7 @@
     dashboardLayout.accentColor = byId('layout-accent-color').value;
     byId('layout-dim-output').textContent = dashboardLayout.background.dim + '%';
     renderLayoutEditor();
+    if (event && event.type === 'change') commitLayoutChange();
   }
 
   [
@@ -574,6 +802,15 @@
     if (!widget) return;
     widget.visible = byId('layout-widget-visible').checked;
     renderLayoutEditor();
+    commitLayoutChange();
+  });
+
+  byId('layout-widget-locked').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.locked = byId('layout-widget-locked').checked;
+    renderLayoutEditor();
+    commitLayoutChange();
   });
 
   byId('layout-widget-align').addEventListener('change', function () {
@@ -581,6 +818,7 @@
     if (!widget) return;
     widget.align = byId('layout-widget-align').value;
     renderLayoutEditor();
+    commitLayoutChange();
   });
 
   byId('layout-widget-opacity').addEventListener('input', function () {
@@ -590,6 +828,7 @@
     byId('layout-opacity-output').textContent = widget.opacity + '%';
     renderLayoutEditor();
   });
+  byId('layout-widget-opacity').addEventListener('change', commitLayoutChange);
 
   byId('layout-note-text').addEventListener('input', function () {
     var widget = selectedWidget();
@@ -597,6 +836,7 @@
     widget.text = byId('layout-note-text').value;
     renderLayoutEditor();
   });
+  byId('layout-note-text').addEventListener('change', commitLayoutChange);
 
   function updateWidgetGeometry() {
     var widget = selectedWidget();
@@ -612,6 +852,7 @@
     widget.w = width;
     widget.h = height;
     renderLayoutEditor();
+    commitLayoutChange();
   }
 
   [
@@ -623,12 +864,159 @@
     byId(id).addEventListener('change', updateWidgetGeometry);
   });
 
+  byId('layout-widget-layer').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.layer = clamp(Number(byId('layout-widget-layer').value), 0, 99);
+    renderLayoutEditor();
+    rebuildWidgetSelector();
+    commitLayoutChange();
+  });
+
+  function changeWidgetLayer(delta) {
+    var widget = selectedWidget();
+    if (!widget) return;
+    widget.layer = clamp(Number(widget.layer || 0) + delta, 0, 99);
+    rebuildWidgetSelector();
+    renderLayoutEditor();
+    commitLayoutChange();
+  }
+
+  byId('layout-send-backward').addEventListener('click', function () {
+    changeWidgetLayer(-1);
+  });
+  byId('layout-bring-forward').addEventListener('click', function () {
+    changeWidgetLayer(1);
+  });
+
+  byId('layout-duplicate-widget').addEventListener('click', function () {
+    var widget = selectedWidget();
+    if (!widget || dashboardLayout.widgets.length >= 40) {
+      setMessage('layout-message', 'The dashboard supports at most 40 widgets.', true);
+      return;
+    }
+    var duplicate = cloneValue(widget);
+    duplicate.id = uniqueWidgetId(widget.type);
+    duplicate.locked = false;
+    duplicate.layer = clamp(Number(widget.layer || 0) + 1, 0, 99);
+    duplicate.x = clamp(snapValue(widget.x + gridSize()), 0, 1000 - widget.w);
+    duplicate.y = clamp(snapValue(widget.y + gridSize()), 0, 1000 - widget.h);
+    dashboardLayout.widgets.push(duplicate);
+    selectedWidgetId = duplicate.id;
+    rebuildWidgetSelector();
+    renderLayoutEditor();
+    commitLayoutChange();
+    setMessage('layout-message', widgetLabel(duplicate) + ' created.');
+  });
+
+  byId('layout-delete-widget').addEventListener('click', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.id === widget.type || dashboardLayout.widgets.length <= 1) return;
+    var index = dashboardLayout.widgets.indexOf(widget);
+    dashboardLayout.widgets.splice(index, 1);
+    selectedWidgetId = dashboardLayout.widgets[Math.max(0, index - 1)].id;
+    rebuildWidgetSelector();
+    renderLayoutEditor();
+    commitLayoutChange();
+    setMessage('layout-message', 'Duplicate widget deleted.');
+  });
+
+  byId('layout-undo').addEventListener('click', function () {
+    if (!layoutHistory.length) return;
+    layoutFuture.push(layoutText());
+    applyLayoutSnapshot(layoutHistory.pop());
+    setMessage('layout-message', 'Last editor change undone.');
+  });
+
+  byId('layout-redo').addEventListener('click', function () {
+    if (!layoutFuture.length) return;
+    layoutHistory.push(layoutText());
+    applyLayoutSnapshot(layoutFuture.pop());
+    setMessage('layout-message', 'Editor change restored.');
+  });
+
+  byId('layout-snap-enabled').addEventListener('change', function () {
+    layoutSettings.snap = byId('layout-snap-enabled').checked;
+    window.localStorage.setItem('mirror-layout-snap', String(layoutSettings.snap));
+  });
+  byId('layout-grid-size').addEventListener('change', function () {
+    layoutSettings.grid = Number(byId('layout-grid-size').value);
+    window.localStorage.setItem('mirror-layout-grid', String(gridSize()));
+  });
+  byId('layout-safe-zone').addEventListener('change', function () {
+    layoutSettings.safeZone = byId('layout-safe-zone').checked;
+    window.localStorage.setItem(
+      'mirror-layout-safe-zone',
+      String(layoutSettings.safeZone)
+    );
+    renderLayoutEditor();
+  });
+
+  byId('layout-export').addEventListener('click', function () {
+    if (!dashboardLayout) return;
+    var blob = new Blob(
+      [JSON.stringify(dashboardLayout, null, 2) + '\n'],
+      { type: 'application/json' }
+    );
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = 'mirror-dashboard-layout.json';
+    link.click();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  });
+
+  byId('layout-import').addEventListener('click', function () {
+    byId('layout-import-file').click();
+  });
+  byId('layout-import-file').addEventListener('change', function () {
+    var file = byId('layout-import-file').files[0];
+    if (!file) return;
+    if (file.size > 60 * 1024) {
+      setMessage('layout-message', 'Layout file exceeds 60 KB.', true);
+      byId('layout-import-file').value = '';
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var imported = JSON.parse(String(reader.result || ''));
+        request(
+          '/api/v1/dashboard/layout/validate',
+          json('POST', imported)
+        ).then(function (normalized) {
+          layoutHistory.push(layoutText());
+          layoutFuture = [];
+          dashboardLayout = normalized;
+          selectedWidgetId = normalized.widgets[0].id;
+          layoutBaseline = layoutText();
+          rebuildWidgetSelector();
+          renderLayoutEditor();
+          updateHistoryButtons();
+          setMessage('layout-message', 'Layout imported. Save to apply it.');
+        }).catch(function (error) {
+          setMessage('layout-message', error.message || 'Invalid layout file.', true);
+        });
+      } catch (error) {
+        setMessage('layout-message', 'Invalid layout JSON.', true);
+      }
+      byId('layout-import-file').value = '';
+    };
+    reader.onerror = function () {
+      setMessage('layout-message', 'Unable to read the layout file.', true);
+      byId('layout-import-file').value = '';
+    };
+    reader.readAsText(file);
+  });
+
   byId('save-dashboard-layout').addEventListener('click', function () {
     if (!dashboardLayout) return;
     setMessage('layout-message', 'Saving…');
     request('/api/v1/dashboard/layout', json('PUT', dashboardLayout))
       .then(function (saved) {
         dashboardLayout = saved;
+        rebuildWidgetSelector();
+        resetLayoutHistory();
         return request('/api/v1/dashboard', json('PUT', { url: '' }));
       })
       .then(function () {
@@ -646,6 +1034,8 @@
       .then(function (layout) {
         dashboardLayout = layout;
         selectedWidgetId = 'clock';
+        rebuildWidgetSelector();
+        resetLayoutHistory();
         return request('/api/v1/dashboard', json('PUT', { url: '' }));
       })
       .then(function () {
@@ -661,8 +1051,74 @@
     var preview = byId('layout-preview');
     var gesture = null;
 
-    function clamp(value, minimum, maximum) {
-      return Math.max(minimum, Math.min(maximum, value));
+    function removeGuides() {
+      Array.from(preview.querySelectorAll('.layout-guide')).forEach(function (guide) {
+        guide.remove();
+      });
+    }
+
+    function showGuide(axis, value) {
+      var guide = document.createElement('div');
+      guide.className = 'layout-guide ' + axis;
+      if (axis === 'vertical') guide.style.left = (value / 10) + '%';
+      else guide.style.top = (value / 10) + '%';
+      preview.appendChild(guide);
+    }
+
+    function nearestAlignment(anchors, targets) {
+      var best = null;
+      anchors.forEach(function (anchor) {
+        targets.forEach(function (target) {
+          var delta = target - anchor;
+          if (Math.abs(delta) <= 8 && (!best || Math.abs(delta) < Math.abs(best.delta))) {
+            best = { delta: delta, target: target };
+          }
+        });
+      });
+      return best;
+    }
+
+    function alignmentTargets(widget) {
+      var vertical = [0, 500, 1000];
+      var horizontal = [0, 500, 1000];
+      dashboardLayout.widgets.forEach(function (other) {
+        if (other.id === widget.id || !other.visible) return;
+        vertical.push(other.x, other.x + other.w / 2, other.x + other.w);
+        horizontal.push(other.y, other.y + other.h / 2, other.y + other.h);
+      });
+      return { vertical: vertical, horizontal: horizontal };
+    }
+
+    function alignGeometry(widget, geometry, resize) {
+      removeGuides();
+      var targets = alignmentTargets(widget);
+      var vertical = nearestAlignment(
+        resize
+          ? [geometry.x + geometry.w]
+          : [geometry.x, geometry.x + geometry.w / 2, geometry.x + geometry.w],
+        targets.vertical
+      );
+      var horizontal = nearestAlignment(
+        resize
+          ? [geometry.y + geometry.h]
+          : [geometry.y, geometry.y + geometry.h / 2, geometry.y + geometry.h],
+        targets.horizontal
+      );
+      if (vertical) {
+        if (resize) geometry.w += vertical.delta;
+        else geometry.x += vertical.delta;
+        showGuide('vertical', vertical.target);
+      }
+      if (horizontal) {
+        if (resize) geometry.h += horizontal.delta;
+        else geometry.y += horizontal.delta;
+        showGuide('horizontal', horizontal.target);
+      }
+      geometry.w = clamp(geometry.w, 24, 1000 - geometry.x);
+      geometry.h = clamp(geometry.h, 24, 1000 - geometry.y);
+      geometry.x = clamp(geometry.x, 0, 1000 - geometry.w);
+      geometry.y = clamp(geometry.y, 0, 1000 - geometry.h);
+      return geometry;
     }
 
     preview.addEventListener('pointerdown', function (event) {
@@ -674,7 +1130,12 @@
       });
       updateWidgetControls();
       var widget = selectedWidget();
+      if (!widget || widget.locked) {
+        renderLayoutEditor();
+        return;
+      }
       var bounds = preview.getBoundingClientRect();
+      layoutGestureActive = true;
       gesture = {
         pointerId: event.pointerId,
         element: element,
@@ -698,13 +1159,24 @@
       if (!widget) return;
       var deltaX = Math.round((event.clientX - gesture.startX) / gesture.canvasWidth * 1000);
       var deltaY = Math.round((event.clientY - gesture.startY) / gesture.canvasHeight * 1000);
+      var geometry = {
+        x: gesture.x,
+        y: gesture.y,
+        w: gesture.w,
+        h: gesture.h
+      };
       if (gesture.resize) {
-        widget.w = clamp(gesture.w + deltaX, 24, 1000 - widget.x);
-        widget.h = clamp(gesture.h + deltaY, 24, 1000 - widget.y);
+        geometry.w = clamp(snapValue(gesture.w + deltaX), 24, 1000 - widget.x);
+        geometry.h = clamp(snapValue(gesture.h + deltaY), 24, 1000 - widget.y);
       } else {
-        widget.x = clamp(gesture.x + deltaX, 0, 1000 - widget.w);
-        widget.y = clamp(gesture.y + deltaY, 0, 1000 - widget.h);
+        geometry.x = clamp(snapValue(gesture.x + deltaX), 0, 1000 - widget.w);
+        geometry.y = clamp(snapValue(gesture.y + deltaY), 0, 1000 - widget.h);
       }
+      geometry = alignGeometry(widget, geometry, gesture.resize);
+      widget.x = Math.round(geometry.x);
+      widget.y = Math.round(geometry.y);
+      widget.w = Math.round(geometry.w);
+      widget.h = Math.round(geometry.h);
       gesture.element.style.left = (widget.x / 10) + '%';
       gesture.element.style.top = (widget.y / 10) + '%';
       gesture.element.style.width = (widget.w / 10) + '%';
@@ -718,11 +1190,38 @@
         preview.releasePointerCapture(event.pointerId);
       }
       gesture = null;
+      layoutGestureActive = false;
+      removeGuides();
       renderLayoutEditor();
+      commitLayoutChange();
     }
 
     preview.addEventListener('pointerup', endGesture);
     preview.addEventListener('pointercancel', endGesture);
+
+    preview.addEventListener('keydown', function (event) {
+      var element = event.target.closest('.layout-widget');
+      if (!element || ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
+        .indexOf(event.key) < 0) return;
+      selectedWidgetId = element.dataset.widgetId;
+      var widget = selectedWidget();
+      if (!widget || widget.locked) return;
+      var step = gridSize();
+      var horizontal = event.key === 'ArrowLeft' ? -step
+        : (event.key === 'ArrowRight' ? step : 0);
+      var vertical = event.key === 'ArrowUp' ? -step
+        : (event.key === 'ArrowDown' ? step : 0);
+      if (event.shiftKey) {
+        widget.w = clamp(snapValue(widget.w + horizontal), 24, 1000 - widget.x);
+        widget.h = clamp(snapValue(widget.h + vertical), 24, 1000 - widget.y);
+      } else {
+        widget.x = clamp(snapValue(widget.x + horizontal), 0, 1000 - widget.w);
+        widget.y = clamp(snapValue(widget.y + vertical), 0, 1000 - widget.h);
+      }
+      renderLayoutEditor();
+      commitLayoutChange();
+      event.preventDefault();
+    });
   }());
 
   byId('name-form').addEventListener('submit', function (event) {
@@ -783,6 +1282,182 @@
       setMessage('clock-message', 'Clock settings saved.');
       return refreshStatus();
     }).catch(function (error) { setMessage('clock-message', error.message, true); });
+  });
+
+  function enableWeatherWidgetIfNeeded() {
+    if (!dashboardLayout || !byId('weather-enabled').checked) {
+      return Promise.resolve();
+    }
+    var weatherWidget = dashboardLayout.widgets.find(function (widget) {
+      return widget.type === 'weather';
+    });
+    if (!weatherWidget || weatherWidget.visible) {
+      return Promise.resolve();
+    }
+    var overlapsVisibleWidget = dashboardLayout.widgets.some(function (other) {
+      if (other.id === weatherWidget.id || !other.visible) return false;
+      return weatherWidget.x < other.x + other.w
+        && weatherWidget.x + weatherWidget.w > other.x
+        && weatherWidget.y < other.y + other.h
+        && weatherWidget.y + weatherWidget.h > other.y;
+    });
+    if (overlapsVisibleWidget) {
+      weatherWidget.x = 605;
+      weatherWidget.y = 120;
+      weatherWidget.w = 340;
+      weatherWidget.h = 145;
+    }
+    weatherWidget.visible = true;
+    commitLayoutChange();
+    renderLayoutEditor();
+    return request('/api/v1/dashboard/layout', json('PUT', dashboardLayout))
+      .then(function (normalized) {
+        dashboardLayout = normalized;
+        rebuildWidgetSelector();
+        resetLayoutHistory();
+        renderLayoutEditor();
+      });
+  }
+
+  byId('weather-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var enabled = byId('weather-enabled').checked;
+    var body = {
+      enabled: enabled,
+      locationName: byId('weather-location-name').value.trim(),
+      units: byId('weather-units').value
+    };
+    if (enabled) {
+      var latitudeValue = byId('weather-latitude').value.trim();
+      var longitudeValue = byId('weather-longitude').value.trim();
+      if (!latitudeValue || !longitudeValue) {
+        setMessage(
+          'weather-message',
+          'Choose a search result or enter both latitude and longitude.',
+          true
+        );
+        return;
+      }
+      body.latitude = Number(latitudeValue);
+      body.longitude = Number(longitudeValue);
+    }
+    setMessage('weather-message', 'Saving weather settings…');
+    request('/api/v1/weather', json('PUT', body))
+      .then(function (weather) {
+        weatherSnapshot = weather;
+        return enableWeatherWidgetIfNeeded();
+      })
+      .then(function () {
+        setMessage('weather-message', 'Weather saved. Fetching the forecast…');
+        return request('/api/v1/weather/refresh', json('POST', {}));
+      })
+      .then(function () {
+        weatherPollTimer = window.setTimeout(function () {
+          pollWeatherUntilSettled(12).catch(function (error) {
+            setMessage('weather-message', error.message, true);
+          });
+        }, 1000);
+      })
+      .catch(function (error) {
+        setMessage('weather-message', error.message, true);
+      });
+  });
+
+  byId('weather-use-location').addEventListener('click', function () {
+    if (!window.isSecureContext || !navigator.geolocation) {
+      setMessage(
+        'weather-message',
+        'Browser location requires HTTPS or localhost. Use city search instead.',
+        true
+      );
+      return;
+    }
+    setMessage('weather-message', 'Requesting this browser’s location…');
+    navigator.geolocation.getCurrentPosition(function (position) {
+      byId('weather-latitude').value = position.coords.latitude.toFixed(5);
+      byId('weather-longitude').value = position.coords.longitude.toFixed(5);
+      if (!byId('weather-location-name').value.trim()) {
+        byId('weather-location-name').value = 'Home';
+      }
+      byId('weather-enabled').checked = true;
+      setMessage('weather-message', 'Location filled in. Save weather to apply it.');
+    }, function (error) {
+      setMessage(
+        'weather-message',
+        error.message || 'Unable to read this browser’s location.',
+        true
+      );
+    }, {
+      enableHighAccuracy: false,
+      timeout: 15000,
+      maximumAge: 10 * 60 * 1000
+    });
+  });
+
+  byId('weather-search').addEventListener('click', function () {
+    var query = byId('weather-place-search').value.trim();
+    if (query.length < 2) {
+    setMessage('weather-message', 'Enter at least two characters to search.', true);
+    return;
+    }
+    setMessage('weather-message', 'Searching locations…');
+    request('/api/v1/weather/locations?q=' + encodeURIComponent(query))
+    .then(function (result) {
+      var selector = byId('weather-search-results');
+      selector.textContent = '';
+      (result.results || []).forEach(function (location, index) {
+        var option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = location.label;
+        option.dataset.latitude = String(location.latitude);
+        option.dataset.longitude = String(location.longitude);
+        option.dataset.label = location.label;
+        selector.appendChild(option);
+      });
+      byId('weather-search-results-row').classList.toggle(
+        'hidden',
+        !selector.options.length
+      );
+      if (!selector.options.length) {
+        setMessage('weather-message', 'No matching locations were found.', true);
+        return;
+      }
+      selector.dispatchEvent(new Event('change'));
+      setMessage('weather-message', 'Location selected. Save weather to apply it.');
+    })
+    .catch(function (error) {
+      setMessage('weather-message', error.message, true);
+    });
+  });
+
+  byId('weather-search-results').addEventListener('change', function () {
+    var option = byId('weather-search-results').selectedOptions[0];
+    if (!option) return;
+    byId('weather-latitude').value = Number(option.dataset.latitude).toFixed(5);
+    byId('weather-longitude').value = Number(option.dataset.longitude).toFixed(5);
+    byId('weather-location-name').value = option.dataset.label;
+    byId('weather-enabled').checked = true;
+  });
+
+  if (!window.isSecureContext || !navigator.geolocation) {
+    byId('weather-use-location').disabled = true;
+    byId('weather-use-location').title =
+    'Browser location requires HTTPS or localhost; use city search instead.';
+  }
+
+  byId('weather-refresh').addEventListener('click', function () {
+    setMessage('weather-message', 'Refreshing the forecast…');
+    request('/api/v1/weather/refresh', json('POST', {}))
+      .then(function () {
+        weatherPollTimer = window.setTimeout(function () {
+          pollWeatherUntilSettled(12).catch(function (error) {
+            setMessage('weather-message', error.message, true);
+          });
+        }, 1000);
+      })
+      .catch(function (error) {
+        setMessage('weather-message', error.message, true);
+      });
   });
 
   byId('automation-form').addEventListener('submit', function (event) {

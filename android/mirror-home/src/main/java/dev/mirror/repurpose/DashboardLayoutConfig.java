@@ -8,8 +8,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 public final class DashboardLayoutConfig {
+    private static final int CURRENT_VERSION = 2;
     private static final int GRID_SIZE = 1000;
     private static final int MIN_WIDGET_SIZE = 24;
+    private static final int MAX_WIDGETS = 40;
     private static final String[] WIDGET_TYPES = {
             "clock",
             "date",
@@ -22,6 +24,8 @@ public final class DashboardLayoutConfig {
             "ble",
             "uptime",
             "motion",
+            "weather",
+            "forecast",
             "pairing",
             "note"
     };
@@ -35,7 +39,7 @@ public final class DashboardLayoutConfig {
     public static DashboardLayoutConfig defaults() {
         try {
             JSONObject root = new JSONObject();
-            root.put("version", 1);
+            root.put("version", CURRENT_VERSION);
             root.put(
                     "background",
                     new JSONObject()
@@ -48,19 +52,22 @@ public final class DashboardLayoutConfig {
             root.put("accentColor", "#8ab8c2");
 
             JSONArray widgets = new JSONArray();
-            widgets.put(widget("clock", 55, 58, 455, 132, true, 88, "start", ""));
-            widgets.put(widget("date", 60, 188, 390, 48, true, 64, "start", ""));
-            widgets.put(widget("name", 745, 65, 200, 42, true, 58, "end", ""));
-            widgets.put(widget("wifi", 55, 905, 170, 36, true, 54, "start", ""));
-            widgets.put(widget("media", 240, 905, 170, 36, true, 54, "start", ""));
-            widgets.put(widget("schedule", 425, 905, 200, 36, true, 54, "start", ""));
-            widgets.put(widget("brightness", 640, 905, 145, 36, true, 54, "start", ""));
-            widgets.put(widget("fcast", 800, 905, 145, 36, true, 54, "end", ""));
-            widgets.put(widget("ble", 55, 950, 180, 30, false, 46, "start", ""));
-            widgets.put(widget("uptime", 250, 950, 180, 30, false, 46, "start", ""));
-            widgets.put(widget("motion", 445, 950, 220, 30, false, 46, "start", ""));
-            widgets.put(widget("pairing", 690, 950, 255, 30, true, 42, "end", ""));
+            widgets.put(widget("clock", "clock", 55, 58, 455, 132, true, 88, "start", "", 10));
+            widgets.put(widget("date", "date", 60, 188, 390, 48, true, 64, "start", "", 11));
+            widgets.put(widget("name", "name", 745, 65, 200, 42, false, 58, "end", "", 12));
+            widgets.put(widget("weather", "weather", 605, 58, 340, 145, true, 72, "end", "", 13));
+            widgets.put(widget("forecast", "forecast", 540, 205, 405, 100, false, 58, "end", "", 14));
+            widgets.put(widget("wifi", "wifi", 55, 905, 170, 36, false, 54, "start", "", 20));
+            widgets.put(widget("media", "media", 240, 905, 170, 36, false, 54, "start", "", 21));
+            widgets.put(widget("schedule", "schedule", 425, 905, 200, 36, false, 54, "start", "", 22));
+            widgets.put(widget("brightness", "brightness", 640, 905, 145, 36, false, 54, "start", "", 23));
+            widgets.put(widget("fcast", "fcast", 800, 905, 145, 36, false, 54, "end", "", 24));
+            widgets.put(widget("ble", "ble", 55, 950, 180, 30, false, 46, "start", "", 25));
+            widgets.put(widget("uptime", "uptime", 250, 950, 180, 30, false, 46, "start", "", 26));
+            widgets.put(widget("motion", "motion", 445, 950, 220, 30, false, 46, "start", "", 27));
+            widgets.put(widget("pairing", "pairing", 690, 950, 255, 30, false, 42, "end", "", 28));
             widgets.put(widget(
+                    "note",
                     "note",
                     55,
                     360,
@@ -69,7 +76,8 @@ public final class DashboardLayoutConfig {
                     false,
                     52,
                     "start",
-                    "Make space for what matters."));
+                    "Make space for what matters.",
+                    15));
             root.put("widgets", widgets);
             return new DashboardLayoutConfig(root);
         } catch (JSONException impossible) {
@@ -82,14 +90,15 @@ public final class DashboardLayoutConfig {
     }
 
     public static DashboardLayoutConfig parse(JSONObject source) throws JSONException {
-        if (source.optInt("version", 1) != 1) {
+        int version = source.optInt("version", 1);
+        if (version != 1 && version != CURRENT_VERSION) {
             throw new JSONException("Unsupported dashboard layout version");
         }
         DashboardLayoutConfig defaults = defaults();
         JSONObject defaultRoot = defaults.toJson();
 
         JSONObject result = new JSONObject();
-        result.put("version", 1);
+        result.put("version", CURRENT_VERSION);
         result.put(
                 "background",
                 normalizeBackground(
@@ -104,28 +113,10 @@ public final class DashboardLayoutConfig {
                         "accentColor",
                         defaultRoot.getString("accentColor"))));
 
-        Map<String, JSONObject> supplied = new HashMap<>();
         JSONArray sourceWidgets = source.optJSONArray("widgets");
-        if (sourceWidgets != null) {
-            for (int index = 0; index < sourceWidgets.length(); index++) {
-                JSONObject widget = sourceWidgets.optJSONObject(index);
-                if (widget == null) {
-                    throw new JSONException("Dashboard widgets must be objects");
-                }
-                String id = widget.optString("id", "");
-                if (!isAllowedWidget(id) || supplied.put(id, widget) != null) {
-                    throw new JSONException("Unknown or duplicate dashboard widget: " + id);
-                }
-            }
-        }
-
-        JSONArray normalized = new JSONArray();
-        JSONArray defaultWidgets = defaultRoot.getJSONArray("widgets");
-        for (int index = 0; index < defaultWidgets.length(); index++) {
-            JSONObject fallback = defaultWidgets.getJSONObject(index);
-            String id = fallback.getString("id");
-            normalized.put(normalizeWidget(supplied.get(id), fallback));
-        }
+        JSONArray normalized = version == 1
+                ? migrateVersionOne(sourceWidgets, defaultRoot.getJSONArray("widgets"))
+                : normalizeVersionTwo(sourceWidgets, defaultRoot.getJSONArray("widgets"));
         result.put("widgets", normalized);
         return new DashboardLayoutConfig(result);
     }
@@ -173,10 +164,109 @@ public final class DashboardLayoutConfig {
                 .put("dim", dim);
     }
 
-    private static JSONObject normalizeWidget(JSONObject source, JSONObject fallback)
+    private static JSONArray migrateVersionOne(
+            JSONArray sourceWidgets,
+            JSONArray defaultWidgets) throws JSONException {
+        Map<String, JSONObject> supplied = new HashMap<>();
+        if (sourceWidgets != null) {
+            if (sourceWidgets.length() > MAX_WIDGETS) {
+                throw new JSONException("Dashboard has too many widgets");
+            }
+            for (int index = 0; index < sourceWidgets.length(); index++) {
+                JSONObject widget = sourceWidgets.optJSONObject(index);
+                if (widget == null) {
+                    throw new JSONException("Dashboard widgets must be objects");
+                }
+                String id = widget.optString("id", "");
+                if (!isAllowedWidgetType(id) || supplied.put(id, widget) != null) {
+                    throw new JSONException("Unknown or duplicate dashboard widget: " + id);
+                }
+            }
+        }
+
+        JSONArray normalized = new JSONArray();
+        for (int index = 0; index < defaultWidgets.length(); index++) {
+            JSONObject fallback = defaultWidgets.getJSONObject(index);
+            String id = fallback.getString("id");
+            JSONObject suppliedWidget = supplied.get(id);
+            JSONObject migrated = normalizeWidget(
+                    suppliedWidget,
+                    fallback,
+                    id,
+                    fallback.getString("type"));
+            if (suppliedWidget == null
+                    && ("weather".equals(id) || "forecast".equals(id))) {
+                migrated.put("visible", false);
+            }
+            normalized.put(migrated);
+        }
+        return normalized;
+    }
+
+    private static JSONArray normalizeVersionTwo(
+            JSONArray sourceWidgets,
+            JSONArray defaultWidgets) throws JSONException {
+        if (sourceWidgets == null
+                || sourceWidgets.length() < 1
+                || sourceWidgets.length() > MAX_WIDGETS) {
+            throw new JSONException("Dashboard must contain 1-" + MAX_WIDGETS + " widgets");
+        }
+        Map<String, JSONObject> fallbacks = new HashMap<>();
+        Map<String, JSONObject> canonical = new HashMap<>();
+        for (int index = 0; index < defaultWidgets.length(); index++) {
+            JSONObject fallback = defaultWidgets.getJSONObject(index);
+            fallbacks.put(fallback.getString("type"), fallback);
+            canonical.put(fallback.getString("id"), fallback);
+        }
+        Map<String, Boolean> ids = new HashMap<>();
+        JSONArray normalized = new JSONArray();
+        for (int index = 0; index < sourceWidgets.length(); index++) {
+            JSONObject source = sourceWidgets.optJSONObject(index);
+            if (source == null) {
+                throw new JSONException("Dashboard widgets must be objects");
+            }
+            String id = source.optString("id", "");
+            String type = source.optString("type", "");
+            if (!validWidgetId(id) || ids.put(id, true) != null) {
+                throw new JSONException("Invalid or duplicate dashboard widget id: " + id);
+            }
+            JSONObject fallback = fallbacks.get(type);
+            if (fallback == null || !isAllowedWidgetType(type)) {
+                throw new JSONException("Unknown dashboard widget type: " + type);
+            }
+            JSONObject canonicalWidget = canonical.get(id);
+            if (canonicalWidget != null
+                    && !canonicalWidget.getString("type").equals(type)) {
+                throw new JSONException("Canonical dashboard widget type cannot change: " + id);
+            }
+            normalized.put(normalizeWidget(source, fallback, id, type));
+        }
+        for (int index = 0; index < defaultWidgets.length(); index++) {
+            JSONObject fallback = defaultWidgets.getJSONObject(index);
+            String id = fallback.getString("id");
+            if (!ids.containsKey(id)) {
+                JSONObject restored = normalizeWidget(
+                        null,
+                        fallback,
+                        id,
+                        fallback.getString("type"));
+                restored.put("visible", false);
+                normalized.put(restored);
+            }
+        }
+        if (normalized.length() > MAX_WIDGETS) {
+            throw new JSONException("Dashboard has too many widgets after restoring defaults");
+        }
+        return normalized;
+    }
+
+    private static JSONObject normalizeWidget(
+            JSONObject source,
+            JSONObject fallback,
+            String id,
+            String type)
             throws JSONException {
         JSONObject value = source == null ? fallback : source;
-        String id = fallback.getString("id");
         int x = bounded(value.optInt("x", fallback.getInt("x")), 0, GRID_SIZE, "x");
         int y = bounded(value.optInt("y", fallback.getInt("y")), 0, GRID_SIZE, "y");
         int width = bounded(
@@ -205,9 +295,14 @@ public final class DashboardLayoutConfig {
         if (text.length() > 120 || containsControlCharacter(text)) {
             throw new JSONException("Dashboard note is invalid");
         }
+        int layer = bounded(
+                value.optInt("layer", fallback.optInt("layer", 10)),
+                0,
+                99,
+                "layer");
         return new JSONObject()
                 .put("id", id)
-                .put("type", id)
+                .put("type", type)
                 .put("x", x)
                 .put("y", y)
                 .put("w", width)
@@ -215,11 +310,14 @@ public final class DashboardLayoutConfig {
                 .put("visible", value.optBoolean("visible", fallback.getBoolean("visible")))
                 .put("opacity", opacity)
                 .put("align", align)
-                .put("text", text);
+                .put("text", text)
+                .put("locked", value.optBoolean("locked", fallback.optBoolean("locked", false)))
+                .put("layer", layer);
     }
 
     private static JSONObject widget(
             String id,
+            String type,
             int x,
             int y,
             int width,
@@ -227,10 +325,11 @@ public final class DashboardLayoutConfig {
             boolean visible,
             int opacity,
             String align,
-            String text) throws JSONException {
+            String text,
+            int layer) throws JSONException {
         return new JSONObject()
                 .put("id", id)
-                .put("type", id)
+                .put("type", type)
                 .put("x", x)
                 .put("y", y)
                 .put("w", width)
@@ -238,7 +337,9 @@ public final class DashboardLayoutConfig {
                 .put("visible", visible)
                 .put("opacity", opacity)
                 .put("align", align)
-                .put("text", text);
+                .put("text", text)
+                .put("locked", false)
+                .put("layer", layer);
     }
 
     private static int bounded(int value, int minimum, int maximum, String field)
@@ -256,13 +357,17 @@ public final class DashboardLayoutConfig {
         return value.toLowerCase(java.util.Locale.US);
     }
 
-    private static boolean isAllowedWidget(String id) {
+    private static boolean isAllowedWidgetType(String id) {
         for (String candidate : WIDGET_TYPES) {
             if (candidate.equals(id)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean validWidgetId(String id) {
+        return id != null && id.matches("[a-z][a-z0-9-]{0,39}");
     }
 
     private static boolean containsControlCharacter(String value) {

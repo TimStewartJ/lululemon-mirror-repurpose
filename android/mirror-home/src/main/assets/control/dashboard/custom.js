@@ -66,6 +66,41 @@
     return 'Sleep '+runtime.automation.sleepTime;
   }
 
+  function temperature(value){
+    return typeof value==='number'?Math.round(value)+'&deg;':'--';
+  }
+
+  function weatherValue(){
+    var weather=runtime&&runtime.weather?runtime.weather:{};
+    var data=weather.data;
+    if(!data||!data.current)return '';
+    var today=data.daily&&data.daily[0];
+    return '<span class="weather-temperature">'+temperature(data.current.temperature)+'</span>'+
+      '<span class="weather-detail">'+escapeHtml(data.current.condition||'')+
+      (today?' &middot; '+temperature(today.high)+' / '+temperature(today.low):'')+
+      (weather.stale?' &middot; stale':'')+'</span>';
+  }
+
+  function forecastValue(){
+    var weather=runtime&&runtime.weather?runtime.weather:{};
+    var hours=weather.data&&weather.data.hourly?weather.data.hourly.slice(0,4):[];
+    if(!hours.length)return '';
+    return hours.map(function(hour){
+      var offset=runtime?Number(runtime.utcOffsetMinutes||0):0;
+      var date=new Date(Number(hour.time)+offset*60000);
+      var options={hour:'numeric',timeZone:'UTC'};
+      var label;
+      try{
+        label=date.toLocaleTimeString([],options);
+      }catch(error){
+        delete options.timeZone;
+        label=date.toLocaleTimeString([],options);
+      }
+      return '<span class="forecast-hour"><span>'+escapeHtml(label)+'</span><strong>'+
+        temperature(hour.temperature)+'</strong><small>'+Number(hour.precipitationProbability||0)+'%</small></span>';
+    }).join('');
+  }
+
   function widgetContent(widget){
     var media=runtime&&runtime.media?runtime.media:{};
     var wifi=runtime&&runtime.wifi?runtime.wifi:{};
@@ -95,6 +130,8 @@
           :'Unavailable');
         return '<span class="widget-label">Presence</span><span class="widget-value">'+
           presence+'</span>';
+      case 'weather': return weatherValue();
+      case 'forecast': return forecastValue();
       case 'pairing': return '<span class="widget-label">Pair</span><span class="widget-value">'+
         escapeHtml(runtime&&runtime.pairingCode?runtime.pairingCode:'—')+'</span>';
       case 'note': return escapeHtml(widget.text||'');
@@ -109,6 +146,8 @@
     if(widget.type==='date')return Math.max(13,Math.min(height*.48,width*.09));
     if(widget.type==='name')return Math.max(13,Math.min(height*.46,width*.1));
     if(widget.type==='note')return Math.max(14,Math.min(height*.35,width*.075));
+    if(widget.type==='weather')return Math.max(14,Math.min(height*.34,width*.095));
+    if(widget.type==='forecast')return Math.max(11,Math.min(height*.26,width*.065));
     return Math.max(11,Math.min(height*.42,width*.09));
   }
 
@@ -132,8 +171,12 @@
     if(!layout||!runtime)return;
     applyBackground();
     widgetsRoot.innerHTML='';
-    layout.widgets.forEach(function(widget){
+    layout.widgets.slice().sort(function(left,right){
+      return Number(left.layer||0)-Number(right.layer||0);
+    }).forEach(function(widget){
       if(!widget.visible)return;
+      if((widget.type==='weather'||widget.type==='forecast')&&
+          !(runtime.weather&&runtime.weather.data))return;
       var element=document.createElement('div');
       element.className='mirror-widget widget-'+widget.type+' align-'+widget.align+
         (['clock','date','name','note'].indexOf(widget.type)<0?' widget-metric':'');
@@ -142,6 +185,7 @@
       element.style.width=(widget.w/10)+'%';
       element.style.height=(widget.h/10)+'%';
       element.style.opacity=String(widget.opacity/100);
+      element.style.zIndex=String(2+Number(widget.layer||0));
       element.style.color=widget.type==='clock'||widget.type==='date'||widget.type==='name'
         ?layout.textColor:layout.accentColor;
       element.style.fontSize=fontSize(widget)+'px';

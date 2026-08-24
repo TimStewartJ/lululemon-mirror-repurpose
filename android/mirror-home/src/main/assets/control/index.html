@@ -111,6 +111,41 @@
           <p id="dashboard-message" class="message" role="status"></p>
         </article>
 
+        <article class="card">
+          <p class="eyebrow">Local forecast</p>
+          <h2>Weather</h2>
+          <form id="weather-form" class="form-grid">
+            <label class="check"><input id="weather-enabled" type="checkbox"><span>Show weather on the built-in dashboard</span></label>
+            <div class="inline-form weather-search">
+              <label><span>Find a city or postal code</span><input id="weather-place-search" autocomplete="off" placeholder="City or postal code"></label>
+              <button id="weather-search" type="button" class="secondary">Search</button>
+            </div>
+            <label id="weather-search-results-row" class="hidden">
+              <span>Search result</span>
+              <select id="weather-search-results"></select>
+            </label>
+            <label><span>Location label</span><input id="weather-location-name" maxlength="80" placeholder="Home"></label>
+            <div class="coordinate-row">
+              <label><span>Latitude</span><input id="weather-latitude" type="number" min="-90" max="90" step="0.00001"></label>
+              <label><span>Longitude</span><input id="weather-longitude" type="number" min="-180" max="180" step="0.00001"></label>
+            </div>
+            <label>
+              <span>Units</span>
+              <select id="weather-units">
+                <option value="us">US (°F, mph, inches)</option>
+                <option value="metric">Metric (°C, km/h, mm)</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit">Save weather</button>
+              <button id="weather-use-location" type="button" class="secondary">Use this browser's location</button>
+              <button id="weather-refresh" type="button" class="secondary">Refresh now</button>
+            </div>
+          </form>
+          <p class="privacy-note">Coordinates are stored privately on the Mirror and sent over HTTPS to Open-Meteo to request the forecast. Forecast results are cached locally for outages.</p>
+          <p id="weather-message" class="message" role="status"></p>
+        </article>
+
         <article class="card layout-editor-card">
           <div class="section-heading">
             <div>
@@ -119,9 +154,28 @@
               <p>Drag widgets to move them. Use the corner handle to resize. Hidden widgets remain selectable from the menu.</p>
             </div>
             <div class="button-row compact">
+              <button id="layout-undo" type="button" class="secondary" disabled>Undo</button>
+              <button id="layout-redo" type="button" class="secondary" disabled>Redo</button>
               <button id="save-dashboard-layout" type="button">Save &amp; use</button>
               <button id="reset-dashboard-layout" type="button" class="secondary">Reset subtle layout</button>
             </div>
+          </div>
+          <div class="editor-toolbar">
+            <label class="check"><input id="layout-snap-enabled" type="checkbox" checked><span>Snap</span></label>
+            <label>
+              <span>Grid</span>
+              <select id="layout-grid-size">
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+            <label class="check"><input id="layout-safe-zone" type="checkbox" checked><span>Reflection safe zone</span></label>
+            <button id="layout-export" type="button" class="secondary">Export JSON</button>
+            <button id="layout-import" type="button" class="secondary">Import JSON</button>
+            <input id="layout-import-file" class="hidden" type="file" accept="application/json,.json">
           </div>
           <div class="layout-editor">
             <div class="layout-preview-wrap">
@@ -158,6 +212,7 @@
                 <select id="layout-widget-select"></select>
               </label>
               <label class="check"><input id="layout-widget-visible" type="checkbox"><span>Visible</span></label>
+              <label class="check"><input id="layout-widget-locked" type="checkbox"><span>Lock position and size</span></label>
               <label>
                 <span>Alignment</span>
                 <select id="layout-widget-align">
@@ -176,12 +231,23 @@
                 <label><span>Width</span><input id="layout-widget-width" type="number" min="24" max="1000"></label>
                 <label><span>Height</span><input id="layout-widget-height" type="number" min="24" max="1000"></label>
               </div>
+              <label>
+                <span>Layer</span>
+                <input id="layout-widget-layer" type="number" min="0" max="99">
+              </label>
+              <div class="button-row compact widget-actions">
+                <button id="layout-send-backward" type="button" class="secondary">Backward</button>
+                <button id="layout-bring-forward" type="button" class="secondary">Forward</button>
+                <button id="layout-duplicate-widget" type="button" class="secondary">Duplicate</button>
+                <button id="layout-delete-widget" type="button" class="danger">Delete</button>
+              </div>
               <label id="layout-note-row">
                 <span>Custom note</span>
                 <textarea id="layout-note-text" maxlength="120" rows="3"></textarea>
               </label>
             </div>
           </div>
+          <p class="privacy-note">Arrow keys move the selected widget by one grid step; Shift + arrow resizes it. Alignment guides appear near edges and centers.</p>
           <p id="layout-message" class="message" role="status"></p>
         </article>
 

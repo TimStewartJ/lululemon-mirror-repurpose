@@ -32,6 +32,7 @@ public final class ControlServer extends NanoHTTPD {
     private final PairingManager pairing;
     private final PhotoLibrary photos;
     private final SystemHelperClient systemHelper;
+    private final WeatherProvider weather;
     private final WifiProvisioner wifi;
     private final WifiDirectOnboarding wifiDirect;
 
@@ -45,6 +46,7 @@ public final class ControlServer extends NanoHTTPD {
         pairing = PairingManager.getInstance(context);
         photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
+        weather = WeatherProvider.getInstance(context);
         wifi = new WifiProvisioner(context);
         wifiDirect = WifiDirectOnboarding.getInstance(context);
     }
@@ -120,6 +122,12 @@ public final class ControlServer extends NanoHTTPD {
                 return updateDashboardLayout(readJson(session));
             }
             if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/dashboard/layout/validate".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        DashboardLayoutConfig.parse(readJson(session)).toJson());
+            }
+            if (Method.POST.equals(session.getMethod())
                     && "/api/v1/dashboard/layout/reset".equals(uri)) {
                 configStore.resetDashboardLayout();
                 notifyConfigurationChanged();
@@ -148,6 +156,25 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/automation/wake".equals(uri)) {
                 automation.setManualSleeping(false);
                 return response(Response.Status.OK, automation.snapshot());
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/weather".equals(uri)) {
+                return response(Response.Status.OK, weather.snapshot(true));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/weather/locations".equals(uri)) {
+                java.util.List<String> values = session.getParameters().get("q");
+                String query = values == null || values.isEmpty() ? "" : values.get(0);
+                return response(Response.Status.OK, weather.searchLocations(query));
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/weather".equals(uri)) {
+                weather.update(readJson(session));
+                notifyConfigurationChanged();
+                return response(Response.Status.OK, weather.snapshot(true));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/weather/refresh".equals(uri)) {
+                weather.refreshNow();
+                return response(Response.Status.ACCEPTED, weather.snapshot(true));
             }
             if (Method.POST.equals(session.getMethod())
                     && "/api/v1/wifi/configure".equals(uri)) {
@@ -284,6 +311,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("media", media.snapshot());
         result.put("bleProvisioning", BleProvisioningServer.lastKnownStatus());
         result.put("automation", automation.snapshot());
+        result.put("weather", weather.snapshot(false));
         return result;
     }
 

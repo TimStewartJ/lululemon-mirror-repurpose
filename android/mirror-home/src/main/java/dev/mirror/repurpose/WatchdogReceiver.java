@@ -16,6 +16,7 @@ public final class WatchdogReceiver extends BroadcastReceiver {
         context.startService(new Intent(context, ControlServerService.class));
         MirrorBinderClient.getInstance(context).connect();
         AutomationManager.getInstance(context).refresh();
+        WeatherProvider.getInstance(context).refreshIfDue();
     }
 
     public static void schedule(Context context) {

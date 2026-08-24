@@ -17,3 +17,11 @@ body{background:#020607;color:#e7eff1;font-family:"Helvetica Neue",Arial,sans-se
 .widget-note{font-weight:300;line-height:1.25;white-space:normal}
 .widget-label{opacity:.62;font-size:.48em;letter-spacing:.16em;margin-bottom:.3em}
 .widget-value{line-height:1.1}
+.widget-weather{justify-content:flex-start;gap:.18em;white-space:normal}
+.weather-temperature{display:block;font-size:2.35em;font-weight:200;line-height:.9}
+.weather-detail{display:block;font-size:.72em;font-weight:450;letter-spacing:.04em;line-height:1.25}
+.widget-forecast{flex-direction:row;justify-content:space-between;gap:.5em}
+.forecast-hour{display:flex;flex:1;flex-direction:column;gap:.12em}
+.forecast-hour span{font-size:.75em;opacity:.68}
+.forecast-hour strong{font-size:1.25em;font-weight:350}
+.forecast-hour small{font-size:.65em;opacity:.55}

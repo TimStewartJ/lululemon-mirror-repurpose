@@ -37,6 +37,20 @@ The **Display** tab provides:
 - **Local photo gallery**: private images stored inside Mirror Home.
 - **Custom or Home Assistant URL**: any HTTP(S) page reachable by the Mirror.
 
+The built-in dashboard can show current weather, today’s high/low and rain
+chance, plus an optional hourly strip. Search for a city/postal code or enter
+coordinates manually. The coordinates are stored privately and sent over HTTPS
+to Open-Meteo to request forecasts every 30 minutes. Forecast results are cached
+privately on the Mirror; cached values remain available during an Internet
+outage and are labeled stale after 90 minutes. Browser-based location detection
+is available only from a secure HTTPS or localhost control origin; normal LAN
+HTTP users should use city search.
+
+The visual editor supports a configurable snap grid, edge/center guides,
+reflection safe-zone, undo/redo, widget locks, layers, keyboard movement,
+duplicate instances, and validated JSON import/export. Canonical widgets remain
+available and can be hidden; duplicated instances can be deleted.
+
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
 

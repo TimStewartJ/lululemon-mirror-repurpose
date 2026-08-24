@@ -24,6 +24,11 @@ public final class ConfigStore {
     private static final String KEY_MOTION_TIMEOUT_SECONDS = "automation_motion_timeout_seconds";
     private static final String KEY_MOTION_SENSITIVITY = "automation_motion_sensitivity";
     private static final String KEY_DASHBOARD_LAYOUT = "dashboard_layout_v1";
+    private static final String KEY_WEATHER_ENABLED = "weather_enabled";
+    private static final String KEY_WEATHER_LATITUDE = "weather_latitude";
+    private static final String KEY_WEATHER_LONGITUDE = "weather_longitude";
+    private static final String KEY_WEATHER_LOCATION_NAME = "weather_location_name";
+    private static final String KEY_WEATHER_UNITS = "weather_units";
 
     private final SharedPreferences preferences;
 
@@ -58,6 +63,33 @@ public final class ConfigStore {
 
     public void resetDashboardLayout() {
         preferences.edit().remove(KEY_DASHBOARD_LAYOUT).apply();
+    }
+
+    public WeatherConfig getWeatherConfig() {
+        boolean enabled = preferences.getBoolean(KEY_WEATHER_ENABLED, false);
+        if (!enabled) {
+            return WeatherConfig.disabled();
+        }
+        try {
+            return new WeatherConfig(
+                    true,
+                    Double.parseDouble(preferences.getString(KEY_WEATHER_LATITUDE, "0")),
+                    Double.parseDouble(preferences.getString(KEY_WEATHER_LONGITUDE, "0")),
+                    preferences.getString(KEY_WEATHER_LOCATION_NAME, ""),
+                    preferences.getString(KEY_WEATHER_UNITS, WeatherConfig.UNITS_US));
+        } catch (NumberFormatException error) {
+            return WeatherConfig.disabled();
+        }
+    }
+
+    public void setWeatherConfig(WeatherConfig config) {
+        preferences.edit()
+                .putBoolean(KEY_WEATHER_ENABLED, config.enabled)
+                .putString(KEY_WEATHER_LATITUDE, Double.toString(config.latitude))
+                .putString(KEY_WEATHER_LONGITUDE, Double.toString(config.longitude))
+                .putString(KEY_WEATHER_LOCATION_NAME, config.locationName)
+                .putString(KEY_WEATHER_UNITS, config.units)
+                .apply();
     }
 
     public String getDisplayName() {

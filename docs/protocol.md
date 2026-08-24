@@ -27,8 +27,13 @@ PUT  /api/v1/dashboard
 GET  /api/v1/dashboard/layout
 PUT  /api/v1/dashboard/layout
 POST /api/v1/dashboard/layout/reset
+POST /api/v1/dashboard/layout/validate
 GET  /api/v1/preferences
 PUT  /api/v1/preferences
+GET  /api/v1/weather
+PUT  /api/v1/weather
+POST /api/v1/weather/refresh
+GET  /api/v1/weather/locations?q=...
 GET  /api/v1/automation
 PUT  /api/v1/automation
 POST /api/v1/automation/sleep

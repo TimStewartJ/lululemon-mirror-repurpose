@@ -26,6 +26,7 @@ public final class MirrorHomeApplication extends Application {
         SystemHelperClient.getInstance(this).connect();
         MediaPlaybackManager.getInstance(this);
         AutomationManager.getInstance(this);
+        WeatherProvider.getInstance(this);
         startService(new Intent(this, ControlServerService.class));
         WatchdogReceiver.schedule(this);
     }

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 1.5.2 - 2026-08-24
+
+- Reject incomplete enabled weather coordinates before an empty field can
+  coerce to the valid `0,0` location.
+- Poll long-running weather refreshes to completion in the control UI, with the
+  recurring status refresh as a backstop.
+
+## 1.5.1 - 2026-08-24
+
+- Add Android 6 TLS 1.2 support with a tracked public ISRG Root X1 trust anchor.
+- Fix weather rendering scope, immediate city-search wiring, secure-context
+  geolocation guidance, and rapid location-change refresh ordering.
+- Preserve every canonical widget during v2 import and reject canonical type
+  changes.
+
+## 1.5.0 - 2026-08-24
+
+- Add device-local Open-Meteo weather configuration, city search, current and
+  hourly forecast widgets, bounded HTTPS fetching, atomic caching, stale status,
+  retry scheduling, and offline fallback.
+- Upgrade dashboard layouts to schema v2 with automatic v1 migration, duplicate
+  widget instances, stable IDs, locks, and explicit layers.
+- Add editor snap grids, edge/center alignment guides, reflection safe-zone,
+  undo/redo, keyboard movement and resizing, layer controls, duplicate/delete,
+  and validated JSON import/export.
+- Replace the reset layout with a reflection-first weather-and-clock default;
+  migrated layouts keep new weather widgets hidden until weather is enabled.
+
 ## 1.4.0 - 2026-08-24
 
 - Add a separate boot-persistent Android device-owner OTA supervisor.
