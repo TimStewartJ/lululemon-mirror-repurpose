@@ -184,6 +184,25 @@ button.danger { color: #351017; background: var(--danger); }
 .check { display: flex; align-items: center; gap: .55rem; }
 .check input { width: 1.2rem; min-height: 1.2rem; }
 .check span { margin: 0; }
+.form-section {
+  display: grid;
+  gap: .9rem;
+  margin: .25rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.form-section legend {
+  padding: 0 .4rem;
+  color: var(--text);
+  font-weight: 750;
+}
+.privacy-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.5;
+}
 .button-row { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
 .button-row.compact { margin-top: 0; justify-content: flex-end; }
 

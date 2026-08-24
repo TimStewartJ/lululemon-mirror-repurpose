@@ -226,14 +226,28 @@
       <section id="automation" class="panel">
         <article class="card">
           <p class="eyebrow">Daily rhythm</p>
-          <h2>Sleep, wake, and brightness</h2>
+          <h2>Sleep, wake, brightness, and presence</h2>
           <form id="automation-form" class="form-grid">
             <label class="check"><input id="automation-enabled" type="checkbox"><span>Enable schedule</span></label>
             <label><span>Wake time</span><input id="wake-time" type="time" required></label>
             <label><span>Sleep time</span><input id="sleep-time" type="time" required></label>
             <label><span>Wake brightness</span><input id="wake-brightness" type="range" min="1" max="255" value="180"></label>
             <label class="check"><input id="ambient-enabled" type="checkbox"><span>Adjust to ambient light when a sensor is available</span></label>
-            <button type="submit">Save schedule</button>
+            <fieldset class="form-section">
+              <legend>Presence sensing</legend>
+              <label class="check"><input id="motion-enabled" type="checkbox"><span>Wake on movement and sleep after inactivity</span></label>
+              <label>
+                <span>Inactivity timeout (minutes)</span>
+                <input id="motion-timeout-minutes" type="number" min="0.5" max="60" step="0.5" value="5">
+              </label>
+              <label>
+                <span>Motion sensitivity: <output id="motion-sensitivity-output">6</output> / 10</span>
+                <input id="motion-sensitivity" type="range" min="1" max="10" value="6">
+              </label>
+              <p class="privacy-note">Frames are compared locally at low resolution and immediately discarded. No recording, face recognition, or upload is performed.</p>
+              <p id="motion-status" class="message">Motion sensing is off.</p>
+            </fieldset>
+            <button type="submit">Save automation</button>
           </form>
           <div class="button-row">
             <button id="wake-now" class="secondary">Wake now</button>

@@ -278,7 +278,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("clock24Hour", configStore.isClock24Hour());
         result.put("mirrorBinderConnected", mirror.isConnected());
         result.put("systemHelperConnected", systemHelper.isConnected());
-        Integer brightness = mirror.getBrightness();
+        Integer brightness = automation.isSleeping() ? 0 : mirror.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
         result.put("media", media.snapshot());

@@ -53,5 +53,20 @@ Configure a schedule:
 curl -X PUT http://MIRROR_IP:8787/api/v1/automation \
   -H "Authorization: Bearer MIRROR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"enabled":true,"wakeTime":"07:00","sleepTime":"23:00","wakeBrightness":180,"ambientEnabled":false,"ambientMinimum":20,"ambientMaximum":220}'
+  -d '{"enabled":true,"wakeTime":"07:00","sleepTime":"23:00","wakeBrightness":180,"ambientEnabled":false,"ambientMinimum":20,"ambientMaximum":220,"motionEnabled":true,"motionTimeoutSeconds":300,"motionSensitivity":6}'
 ```
+
+`motionTimeoutSeconds` accepts 30 through 3600 seconds and
+`motionSensitivity` accepts 1 through 10. Higher sensitivity reacts to smaller
+changes. The schedule is a quiet-hours boundary: motion can wake the display
+inside the wake window, or at any time when the schedule is disabled. Camera
+failure is fail-open, so it does not leave the mirror unexpectedly black.
+
+Sleep keeps Android and the camera monitor running but sets the physical panel
+backlight to zero. This is distinct from suspending the Android device and is
+what allows motion to restore the configured wake brightness immediately.
+
+`GET /api/v1/automation` reports camera availability, permission, monitoring
+state, low-resolution preview dimensions, current change score, and the last
+motion time. It never exposes image data. Frames are processed only in memory
+and immediately discarded; there is no recording, face recognition, or upload.

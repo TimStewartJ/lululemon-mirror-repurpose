@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 1.2.3 - 2026-08-24
+
+- Reconcile camera monitoring immediately when permission is granted externally
+  through Android Settings.
+
+## 1.2.2 - 2026-08-24
+
+- Start the inactivity countdown only after camera frames are healthy, including
+  after delayed acquisition or automatic camera recovery.
+
+## 1.2.1 - 2026-08-24
+
+- Turn the physical panel backlight completely off during sleep while keeping
+  Android, camera monitoring, and network controls active.
+- Detect stalled preview frames and camera-service errors, fail open, and retry
+  camera acquisition automatically.
+- Verify installed APK bytes when legacy ADB omits its success marker, avoiding
+  false update and rollback failures.
+- Stop without further package changes when an ADB failure leaves the installed
+  APK state unverifiable.
+
+## 1.2.0 - 2026-08-23
+
+- Add private, low-resolution on-device camera motion sensing without recording,
+  face recognition, or image upload.
+- Add schedule-aware motion wake and configurable inactivity sleep with
+  fail-open camera handling, manual-override precedence, and media protection.
+- Add camera capability/live-state controls and an optional presence dashboard
+  widget.
+
 ## 1.1.4 - 2026-08-23
 
 - Use true black as the built-in dashboard default and reset background.

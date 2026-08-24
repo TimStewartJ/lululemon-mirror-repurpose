@@ -74,11 +74,26 @@ The **Schedule** tab can:
 - set local sleep and wake times,
 - set wake brightness,
 - sleep or wake immediately with a four-hour manual override,
-- use an ambient-light sensor when one exists.
+- use an ambient-light sensor when one exists,
+- wake when the camera sees movement and sleep after a configurable period
+  without movement.
 
-The IFC6309 MIRROR reports no ambient-light sensor, so this unit uses its time
-schedule. Sleep stops media, shows a black overlay, and sets brightness to the
-minimum. Wake restores the selected brightness.
+The schedule acts as quiet hours for motion sensing: movement wakes the display
+only inside the configured wake window. With the schedule disabled, motion
+sensing operates all day. Manual sleep/wake overrides remain authoritative for
+four hours, and active media playback is never stopped merely because the room
+is still.
+
+The IFC6309 MIRROR reports no ambient-light sensor, but its built-in camera can
+run a 160x120 local motion monitor. It compares luminance changes, immediately
+discards every frame, and performs no recording, face recognition, or network
+upload. If camera permission or the camera itself is unavailable, presence
+automation fails open and leaves the display awake inside its schedule.
+
+Sleep stops media when entered by schedule or manual action, shows a black
+overlay, and turns the physical panel backlight completely off while Android,
+the camera monitor, and network controls remain active. Wake restores the
+selected brightness.
 
 ## Media
 

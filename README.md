@@ -55,7 +55,8 @@ Mirror Home is a device-validated standalone appliance. It serves its own
 phone/desktop control UI, displays QR onboarding, creates a Wi-Fi Direct setup
 network when no managed Wi-Fi exists, supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
-fallback, timezone-aware sleep/wake schedules, and watchdog recovery. Media3
+fallback, timezone-aware sleep/wake schedules, private on-device motion presence
+sensing, and watchdog recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
 The desktop companion remains available but is no longer required for daily
 operation.

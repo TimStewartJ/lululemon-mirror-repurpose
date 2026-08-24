@@ -32,6 +32,10 @@ KIOSK_SETTINGS = (
 )
 
 
+class DeviceStateUnknownError(RuntimeError):
+    pass
+
+
 def executable(name: str) -> pathlib.Path:
     found = shutil.which(name)
     if found:
@@ -290,6 +294,50 @@ def installed_package_version(device: Device, package_name: str) -> str | None:
     return match.group(1) if match else None
 
 
+def installed_apk_matches(
+    device: Device,
+    package_name: str,
+    expected_apk: pathlib.Path,
+) -> bool:
+    remote_apk = installed_apk_path(device, package_name)
+    if remote_apk is None:
+        return False
+    with tempfile.TemporaryDirectory() as directory:
+        installed_apk = pathlib.Path(directory) / "installed.apk"
+        device.command("pull", remote_apk, str(installed_apk))
+        return sha256(installed_apk) == sha256(expected_apk)
+
+
+def install_apk_verified(
+    device: Device,
+    package_name: str,
+    apk: pathlib.Path,
+    *install_options: str,
+) -> None:
+    try:
+        result = device.command("install", *install_options, str(apk))
+    except subprocess.CalledProcessError as install_error:
+        try:
+            if installed_apk_matches(device, package_name, apk):
+                return
+        except (OSError, subprocess.CalledProcessError) as verification_error:
+            raise DeviceStateUnknownError(
+                "ADB failed during installation and the installed APK could not be "
+                "verified; no rollback was attempted"
+            ) from verification_error
+        raise
+    if "Success" not in result:
+        try:
+            matches = installed_apk_matches(device, package_name, apk)
+        except (OSError, subprocess.CalledProcessError) as verification_error:
+            raise DeviceStateUnknownError(
+                "ADB did not confirm installation and the installed APK could not "
+                "be verified; no rollback was attempted"
+            ) from verification_error
+        if not matches:
+            raise RuntimeError(f"APK installation failed: {result}")
+
+
 def wait_home_health(
     device: Device,
     expected_version: str,
@@ -370,10 +418,10 @@ def install_home(device: Device, profile: dict, variant: str) -> None:
         _, previous_version = apk_package_and_version(backup_apk)
 
     try:
-        result = device.command("install", "-r", "-g", str(apk))
-        if "Success" not in result:
-            raise RuntimeError(f"Mirror Home installation failed: {result}")
+        install_apk_verified(device, package_name, apk, "-r", "-g")
         wait_home_health(device, version)
+    except DeviceStateUnknownError:
+        raise
     except Exception as install_error:
         if backup_apk is None or previous_version is None:
             try:
@@ -381,12 +429,24 @@ def install_home(device: Device, profile: dict, variant: str) -> None:
             except subprocess.CalledProcessError:
                 pass
             raise
-        rollback = device.command("install", "-r", "-d", "-g", str(backup_apk))
-        if "Success" not in rollback:
+        try:
+            install_apk_verified(
+                device,
+                package_name,
+                backup_apk,
+                "-r",
+                "-d",
+                "-g",
+            )
+        except DeviceStateUnknownError as rollback_error:
             raise RuntimeError(
-                "Mirror Home update failed and automatic rollback also failed: "
-                f"{rollback}"
-            ) from install_error
+                "Mirror Home update failed and rollback state could not be verified; "
+                "no further changes were attempted"
+            ) from rollback_error
+        except Exception as rollback_error:
+            raise RuntimeError(
+                "Mirror Home update failed and automatic rollback also failed"
+            ) from rollback_error
         wait_home_health(device, previous_version)
         raise RuntimeError(
             "Mirror Home update failed; the previous signed APK was restored"

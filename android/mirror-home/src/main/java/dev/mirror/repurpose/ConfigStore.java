@@ -20,6 +20,9 @@ public final class ConfigStore {
     private static final String KEY_AMBIENT_ENABLED = "automation_ambient_enabled";
     private static final String KEY_AMBIENT_MIN = "automation_ambient_min";
     private static final String KEY_AMBIENT_MAX = "automation_ambient_max";
+    private static final String KEY_MOTION_ENABLED = "automation_motion_enabled";
+    private static final String KEY_MOTION_TIMEOUT_SECONDS = "automation_motion_timeout_seconds";
+    private static final String KEY_MOTION_SENSITIVITY = "automation_motion_sensitivity";
     private static final String KEY_DASHBOARD_LAYOUT = "dashboard_layout_v1";
 
     private final SharedPreferences preferences;
@@ -136,6 +139,18 @@ public final class ConfigStore {
         return preferences.getInt(KEY_AMBIENT_MAX, 220);
     }
 
+    public boolean isMotionEnabled() {
+        return preferences.getBoolean(KEY_MOTION_ENABLED, false);
+    }
+
+    public int getMotionTimeoutSeconds() {
+        return preferences.getInt(KEY_MOTION_TIMEOUT_SECONDS, 5 * 60);
+    }
+
+    public int getMotionSensitivity() {
+        return preferences.getInt(KEY_MOTION_SENSITIVITY, 6);
+    }
+
     public void setAutomation(
             boolean enabled,
             int wakeMinutes,
@@ -143,7 +158,10 @@ public final class ConfigStore {
             int wakeBrightness,
             boolean ambientEnabled,
             int ambientMinimum,
-            int ambientMaximum) {
+            int ambientMaximum,
+            boolean motionEnabled,
+            int motionTimeoutSeconds,
+            int motionSensitivity) {
         preferences.edit()
                 .putBoolean(KEY_AUTOMATION_ENABLED, enabled)
                 .putInt(KEY_WAKE_MINUTES, wakeMinutes)
@@ -152,6 +170,9 @@ public final class ConfigStore {
                 .putBoolean(KEY_AMBIENT_ENABLED, ambientEnabled)
                 .putInt(KEY_AMBIENT_MIN, ambientMinimum)
                 .putInt(KEY_AMBIENT_MAX, ambientMaximum)
+                .putBoolean(KEY_MOTION_ENABLED, motionEnabled)
+                .putInt(KEY_MOTION_TIMEOUT_SECONDS, motionTimeoutSeconds)
+                .putInt(KEY_MOTION_SENSITIVITY, motionSensitivity)
                 .apply();
     }
 }

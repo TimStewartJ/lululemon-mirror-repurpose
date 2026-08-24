@@ -91,8 +91,11 @@ public final class MirrorBinderClient {
     }
 
     public boolean setBrightness(int brightness) {
+        if (brightness < 1 || brightness > 255) {
+            return false;
+        }
         IBinder current = binder;
-        if (current == null || brightness < 1 || brightness > 255) {
+        if (current == null) {
             return false;
         }
         try {

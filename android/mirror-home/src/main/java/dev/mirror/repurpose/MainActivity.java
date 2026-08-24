@@ -1,11 +1,13 @@
 package dev.mirror.repurpose;
 
 import android.annotation.SuppressLint;
+import android.Manifest;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -35,6 +37,7 @@ import androidx.media3.ui.PlayerView;
 
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
+    private static final int CAMERA_PERMISSION_REQUEST = 40;
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
     private static final long DASHBOARD_RETRY_INTERVAL_MS = 60_000L;
     private static final String OFFLINE_DASHBOARD_URL =
@@ -75,6 +78,7 @@ public final class MainActivity extends Activity {
                 updateMediaVisibility();
             } else if (AutomationManager.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 updateSleepVisibility();
+                requestCameraPermissionIfNeeded();
             } else if (WifiDirectOnboarding.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 renderDashboard();
             }
@@ -93,6 +97,7 @@ public final class MainActivity extends Activity {
     private TextView nativeStatus;
     private String loadedDashboardUrl = "";
     private boolean dashboardOffline;
+    private boolean cameraPermissionRequested;
 
     @Override
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -151,6 +156,7 @@ public final class MainActivity extends Activity {
         renderDashboard();
         updateMediaVisibility();
         updateSleepVisibility();
+        requestCameraPermissionIfNeeded();
     }
 
     @Override
@@ -164,6 +170,19 @@ public final class MainActivity extends Activity {
         if (dashboardOffline) {
             dashboardHandler.removeCallbacks(dashboardRetry);
             dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
+        }
+        updateSleepVisibility();
+        requestCameraPermissionIfNeeded();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            automation.refreshMotionDetection();
         }
     }
 
@@ -368,6 +387,33 @@ public final class MainActivity extends Activity {
             sleepOverlay.setVisibility(automation.isSleeping() ? View.VISIBLE : View.GONE);
             sleepOverlay.bringToFront();
         }
+        WindowManager.LayoutParams attributes = getWindow().getAttributes();
+        float brightness = automation.isSleeping()
+                ? 0f
+                : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+        if (Float.compare(attributes.screenBrightness, brightness) != 0) {
+            attributes.screenBrightness = brightness;
+            getWindow().setAttributes(attributes);
+        }
+    }
+
+    private void requestCameraPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT < 23
+                || !configStore.isMotionEnabled()) {
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            automation.refreshMotionDetection();
+            return;
+        }
+        if (cameraPermissionRequested) {
+            return;
+        }
+        cameraPermissionRequested = true;
+        requestPermissions(
+                new String[]{Manifest.permission.CAMERA},
+                CAMERA_PERMISSION_REQUEST);
     }
 
     private String buildStatusText() {

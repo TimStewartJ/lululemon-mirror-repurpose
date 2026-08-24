@@ -8,6 +8,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -20,9 +21,11 @@ public final class AutomationManager implements SensorEventListener {
     public static final String ACTION_STATE_CHANGED =
             "dev.mirror.repurpose.AUTOMATION_STATE_CHANGED";
 
-    private static final long EVALUATION_INTERVAL_MS = 30_000L;
+    private static final long EVALUATION_INTERVAL_MS = 5_000L;
     private static final long AMBIENT_UPDATE_INTERVAL_MS = 5_000L;
     private static final long MANUAL_OVERRIDE_MS = 4 * 60 * 60 * 1000L;
+    private static final int MIN_MOTION_TIMEOUT_SECONDS = 30;
+    private static final int MAX_MOTION_TIMEOUT_SECONDS = 60 * 60;
     private static volatile AutomationManager instance;
 
     private final Context context;
@@ -30,6 +33,7 @@ public final class AutomationManager implements SensorEventListener {
     private final MirrorBinderClient mirror;
     private final SensorManager sensorManager;
     private final Sensor lightSensor;
+    private final MotionDetectionManager motion;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable evaluator = new Runnable() {
         @Override
@@ -41,11 +45,13 @@ public final class AutomationManager implements SensorEventListener {
 
     private Boolean sleeping;
     private Boolean manualState;
-    private long manualOverrideUntil;
+    private long manualOverrideUntilElapsed;
+    private String sleepReason = "none";
     private float lastLux = Float.NaN;
     private long lastAmbientUpdate;
     private int lastAmbientBrightness = -1;
     private boolean brightnessApplied;
+    private long lastMotionElapsed;
 
     private AutomationManager(Context context) {
         this.context = context.getApplicationContext();
@@ -55,7 +61,19 @@ public final class AutomationManager implements SensorEventListener {
         lightSensor = sensorManager == null
                 ? null
                 : sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        motion = new MotionDetectionManager(this.context, new MotionDetectionManager.Listener() {
+            @Override
+            public void onMotionDetected(long elapsedRealtime) {
+                handleMotionDetected(elapsedRealtime);
+            }
+
+            @Override
+            public void onMotionStateChanged() {
+                handleMotionStateChanged();
+            }
+        });
         handler.post(this::updateAmbientRegistration);
+        handler.post(motion::refresh);
         handler.post(evaluator);
     }
 
@@ -85,13 +103,18 @@ public final class AutomationManager implements SensorEventListener {
                 .put("sleepTime", formatMinutes(configStore.getSleepMinutes()))
                 .put("wakeBrightness", configStore.getWakeBrightness())
                 .put("sleeping", isSleeping())
+                .put("sleepReason", sleepReason)
                 .put("manualOverride", manualState != null
-                        && System.currentTimeMillis() < manualOverrideUntil)
+                        && SystemClock.elapsedRealtime() < manualOverrideUntilElapsed)
                 .put("ambientLightAvailable", hasAmbientLightSensor())
                 .put("ambientEnabled", configStore.isAmbientEnabled())
                 .put("ambientMinimum", configStore.getAmbientMinimum())
                 .put("ambientMaximum", configStore.getAmbientMaximum())
-                .put("ambientLux", Float.isNaN(lastLux) ? JSONObject.NULL : lastLux);
+                .put("ambientLux", Float.isNaN(lastLux) ? JSONObject.NULL : lastLux)
+                .put("motionEnabled", configStore.isMotionEnabled())
+                .put("motionTimeoutSeconds", configStore.getMotionTimeoutSeconds())
+                .put("motionSensitivity", configStore.getMotionSensitivity())
+                .put("motion", motion.snapshot());
     }
 
     public synchronized boolean update(JSONObject body) {
@@ -101,6 +124,15 @@ public final class AutomationManager implements SensorEventListener {
         int ambientMinimum = body.optInt("ambientMinimum", 20);
         int ambientMaximum = body.optInt("ambientMaximum", 220);
         boolean ambientEnabled = body.optBoolean("ambientEnabled", false);
+        boolean motionEnabled = body.has("motionEnabled")
+                ? body.optBoolean("motionEnabled", false)
+                : configStore.isMotionEnabled();
+        int motionTimeoutSeconds = body.has("motionTimeoutSeconds")
+                ? body.optInt("motionTimeoutSeconds", -1)
+                : configStore.getMotionTimeoutSeconds();
+        int motionSensitivity = body.has("motionSensitivity")
+                ? body.optInt("motionSensitivity", -1)
+                : configStore.getMotionSensitivity();
         if (wakeMinutes < 0
                 || sleepMinutes < 0
                 || wakeBrightness < 1
@@ -108,7 +140,11 @@ public final class AutomationManager implements SensorEventListener {
                 || ambientMinimum < 1
                 || ambientMaximum > 255
                 || ambientMinimum > ambientMaximum
-                || (ambientEnabled && lightSensor == null)) {
+                || (ambientEnabled && lightSensor == null)
+                || motionTimeoutSeconds < MIN_MOTION_TIMEOUT_SECONDS
+                || motionTimeoutSeconds > MAX_MOTION_TIMEOUT_SECONDS
+                || motionSensitivity < MotionFrameAnalyzer.MIN_SENSITIVITY
+                || motionSensitivity > MotionFrameAnalyzer.MAX_SENSITIVITY) {
             return false;
         }
         configStore.setAutomation(
@@ -118,21 +154,33 @@ public final class AutomationManager implements SensorEventListener {
                 wakeBrightness,
                 ambientEnabled,
                 ambientMinimum,
-                ambientMaximum);
+                ambientMaximum,
+                motionEnabled,
+                motionTimeoutSeconds,
+                motionSensitivity);
         manualState = null;
-        manualOverrideUntil = 0;
+        manualOverrideUntilElapsed = 0;
+        lastMotionElapsed = motionEnabled ? SystemClock.elapsedRealtime() : 0;
         handler.post(this::updateAmbientRegistration);
+        handler.post(motion::refresh);
         handler.post(this::evaluate);
+        broadcast();
         return true;
     }
 
     public synchronized void setManualSleeping(boolean shouldSleep) {
         manualState = shouldSleep;
-        manualOverrideUntil = System.currentTimeMillis() + MANUAL_OVERRIDE_MS;
-        applyState(shouldSleep, true);
+        manualOverrideUntilElapsed = SystemClock.elapsedRealtime() + MANUAL_OVERRIDE_MS;
+        applyState(shouldSleep, shouldSleep ? "manual" : "none", true);
     }
 
     public void refresh() {
+        motion.refresh();
+        handler.post(this::evaluate);
+    }
+
+    public void refreshMotionDetection() {
+        motion.refresh();
         handler.post(this::evaluate);
     }
 
@@ -165,51 +213,51 @@ public final class AutomationManager implements SensorEventListener {
     }
 
     private synchronized void evaluate() {
-        long now = System.currentTimeMillis();
-        if (manualState != null && now < manualOverrideUntil) {
-            applyState(manualState, false);
+        long nowElapsed = SystemClock.elapsedRealtime();
+        if (manualState != null && nowElapsed < manualOverrideUntilElapsed) {
+            applyState(manualState, manualState ? "manual" : "none", false);
             return;
         }
         manualState = null;
-        if (!configStore.isAutomationEnabled()) {
-            if (Boolean.TRUE.equals(sleeping)) {
-                applyState(false, true);
-            } else if (sleeping == null) {
-                sleeping = false;
-                broadcast();
-            }
-            return;
-        }
-
-        Calendar calendar = Calendar.getInstance(
-                TimeZone.getTimeZone(configStore.getEffectiveTimeZoneId()));
-        int currentMinutes = calendar.get(Calendar.HOUR_OF_DAY) * 60
-                + calendar.get(Calendar.MINUTE);
-        int wake = configStore.getWakeMinutes();
-        int sleep = configStore.getSleepMinutes();
-        boolean awake = wake < sleep
-                ? currentMinutes >= wake && currentMinutes < sleep
-                : currentMinutes >= wake || currentMinutes < sleep;
-        applyState(!awake, sleeping == null);
+        boolean scheduleAllowsWake = isInsideWakeSchedule();
+        long inactiveFor = lastMotionElapsed == 0
+                ? Long.MAX_VALUE
+                : Math.max(0L, nowElapsed - lastMotionElapsed);
+        boolean shouldSleep = DisplayAutomationPolicy.shouldSleep(
+                scheduleAllowsWake,
+                configStore.isMotionEnabled(),
+                motion.isMonitoring(),
+                MediaPlaybackManager.getInstance(context).isPresentationActive(),
+                inactiveFor,
+                configStore.getMotionTimeoutSeconds() * 1000L);
+        String reason = !scheduleAllowsWake
+                ? "schedule"
+                : (shouldSleep ? "inactivity" : "none");
+        applyState(shouldSleep, reason, sleeping == null);
     }
 
-    private synchronized void applyState(boolean shouldSleep, boolean force) {
-        if (!force && sleeping != null && sleeping == shouldSleep) {
-            if (brightnessApplied) {
-                return;
-            }
+    private synchronized void applyState(
+            boolean shouldSleep,
+            String reason,
+            boolean force) {
+        boolean stateChanged = sleeping == null || sleeping != shouldSleep;
+        String nextReason = shouldSleep ? reason : "none";
+        boolean reasonChanged = !sleepReason.equals(nextReason);
+        if (!force && !stateChanged && !reasonChanged && brightnessApplied) {
+            return;
         }
         if (shouldSleep) {
             MediaPlaybackManager.getInstance(context).stop();
+            // The vendor Binder clamps to 1; MainActivity applies the true zero override.
             brightnessApplied = mirror.setBrightness(1);
         } else if (!configStore.isAmbientEnabled() || lightSensor == null) {
             brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
         } else {
             brightnessApplied = true;
         }
-        boolean changed = sleeping == null || sleeping != shouldSleep;
         sleeping = shouldSleep;
-        if (changed) {
+        sleepReason = nextReason;
+        if (stateChanged || reasonChanged) {
             broadcast();
         }
     }
@@ -222,6 +270,35 @@ public final class AutomationManager implements SensorEventListener {
         if (configStore.isAmbientEnabled()) {
             sensorManager.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_NORMAL);
         }
+    }
+
+    private synchronized void handleMotionDetected(long elapsedRealtime) {
+        lastMotionElapsed = elapsedRealtime;
+        evaluate();
+    }
+
+    private synchronized void handleMotionStateChanged() {
+        if (motion.isMonitoring()) {
+            // A recovered or delayed camera always gets a full inactivity window.
+            lastMotionElapsed = SystemClock.elapsedRealtime();
+        }
+        evaluate();
+        broadcast();
+    }
+
+    private boolean isInsideWakeSchedule() {
+        if (!configStore.isAutomationEnabled()) {
+            return true;
+        }
+        Calendar calendar = Calendar.getInstance(
+                TimeZone.getTimeZone(configStore.getEffectiveTimeZoneId()));
+        int currentMinutes = calendar.get(Calendar.HOUR_OF_DAY) * 60
+                + calendar.get(Calendar.MINUTE);
+        int wake = configStore.getWakeMinutes();
+        int sleep = configStore.getSleepMinutes();
+        return wake < sleep
+                ? currentMinutes >= wake && currentMinutes < sleep
+                : currentMinutes >= wake || currentMinutes < sleep;
     }
 
     private void broadcast() {

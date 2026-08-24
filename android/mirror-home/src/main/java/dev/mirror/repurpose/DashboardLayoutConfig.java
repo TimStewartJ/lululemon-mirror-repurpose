@@ -21,6 +21,7 @@ public final class DashboardLayoutConfig {
             "fcast",
             "ble",
             "uptime",
+            "motion",
             "pairing",
             "note"
     };
@@ -57,6 +58,7 @@ public final class DashboardLayoutConfig {
             widgets.put(widget("fcast", 800, 905, 145, 36, true, 54, "end", ""));
             widgets.put(widget("ble", 55, 950, 180, 30, false, 46, "start", ""));
             widgets.put(widget("uptime", 250, 950, 180, 30, false, 46, "start", ""));
+            widgets.put(widget("motion", 445, 950, 220, 30, false, 46, "start", ""));
             widgets.put(widget("pairing", 690, 950, 255, 30, true, 42, "end", ""));
             widgets.put(widget(
                     "note",

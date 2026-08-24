@@ -59,7 +59,9 @@
 
   function scheduleValue(){
     if(!runtime||!runtime.automation)return 'Schedule off';
-    if(runtime.automation.sleeping)return 'Sleeping';
+    if(runtime.automation.sleeping){
+      return runtime.automation.sleepReason==='inactivity'?'Waiting for motion':'Sleeping';
+    }
     if(!runtime.automation.enabled)return 'Schedule off';
     return 'Sleep '+runtime.automation.sleepTime;
   }
@@ -84,6 +86,15 @@
         escapeHtml(runtime&&runtime.bleProvisioning?runtime.bleProvisioning:'Unavailable')+'</span>';
       case 'uptime': return '<span class="widget-label">Uptime</span><span class="widget-value">'+
         formatUptime(runtime&&runtime.deviceUptimeSeconds)+'</span>';
+      case 'motion':
+        var automation=runtime&&runtime.automation?runtime.automation:{};
+        var motion=automation.motion||{};
+        var presence=!automation.motionEnabled?'Off':(motion.monitoring
+          ?(typeof motion.lastMotionAgeSeconds==='number'&&motion.lastMotionAgeSeconds<30
+            ?'Movement':'Watching')
+          :'Unavailable');
+        return '<span class="widget-label">Presence</span><span class="widget-value">'+
+          presence+'</span>';
       case 'pairing': return '<span class="widget-label">Pair</span><span class="widget-value">'+
         escapeHtml(runtime&&runtime.pairingCode?runtime.pairingCode:'—')+'</span>';
       case 'note': return escapeHtml(widget.text||'');

@@ -13,6 +13,7 @@
         window.localStorage.setItem(CLIENT_ID_KEY, decodeURIComponent(part.substring(9)));
       }
     });
+
     window.history.replaceState(null, document.title, window.location.pathname);
   }
   var token = window.localStorage.getItem(TOKEN_KEY);
@@ -30,6 +31,7 @@
     fcast: 'FCast',
     ble: 'Bluetooth',
     uptime: 'Uptime',
+    motion: 'Motion presence',
     pairing: 'Pairing code',
     note: 'Custom note'
   };
@@ -121,6 +123,7 @@
         byId('brightness-output').textContent = String(status.brightness);
         byId('brightness-status').textContent = String(status.brightness) + ' / 255';
       }
+      if (status.automation) renderMotionStatus(status.automation);
       showPairedState(Boolean(token));
       return status;
     }).catch(function (error) {
@@ -172,6 +175,7 @@
       fcast: 'FCAST  READY',
       ble: 'BLUETOOTH  READY',
       uptime: 'UPTIME  3H 18M',
+      motion: 'PRESENCE  WATCHING',
       pairing: 'PAIR  123456',
       note: widget.text || 'Make space for what matters.'
     };
@@ -356,10 +360,58 @@
       byId('wake-brightness').value = String(automation.wakeBrightness || 180);
       byId('ambient-enabled').checked = Boolean(automation.ambientEnabled);
       byId('ambient-enabled').disabled = !automation.ambientLightAvailable;
+      byId('motion-enabled').checked = Boolean(automation.motionEnabled);
+      byId('motion-timeout-minutes').value =
+        String(Number(automation.motionTimeoutSeconds || 300) / 60);
+      byId('motion-sensitivity').value = String(automation.motionSensitivity || 6);
+      byId('motion-sensitivity-output').textContent =
+        String(automation.motionSensitivity || 6);
       byId('automation-capability').textContent = automation.ambientLightAvailable
         ? 'Ambient light sensor available.'
         : 'No ambient-light sensor was detected; time-based brightness remains available.';
+      renderMotionStatus(automation);
     });
+  }
+
+  function renderMotionStatus(automation) {
+    var element = byId('motion-status');
+    var motion = automation.motion || {};
+    var text = 'Motion sensing is off.';
+    var isError = false;
+    if (automation.motionEnabled) {
+      if (!motion.available) {
+        text = 'No compatible camera was detected. The mirror will remain awake inside its schedule.';
+        isError = true;
+      } else if (!motion.permissionGranted) {
+        text = 'Camera permission is waiting for approval on the Mirror. Until then, inactivity will not put the display to sleep.';
+      } else if (motion.monitoring) {
+        text = 'Monitoring locally';
+        if (motion.previewWidth && motion.previewHeight) {
+          text += ' at ' + motion.previewWidth + 'x' + motion.previewHeight;
+        }
+        text += '.';
+        if (typeof motion.lastMotionAgeSeconds === 'number') {
+          text += motion.lastMotionAgeSeconds < 5
+            ? ' Movement seen just now.'
+            : ' Last movement ' + motion.lastMotionAgeSeconds + ' seconds ago.';
+        } else {
+          text += ' Waiting for movement.';
+        }
+        if (typeof motion.score === 'number') {
+          text += ' Change score ' + motion.score + '%.';
+        }
+        if (automation.sleeping && automation.sleepReason === 'inactivity') {
+          text += ' Backlight is off until movement is seen.';
+        }
+      } else if (motion.state === 'starting') {
+        text = 'Starting the local camera monitor.';
+      } else {
+        text = motion.error || 'Camera monitoring is paused. The mirror will remain awake inside its schedule.';
+        isError = motion.state === 'error';
+      }
+    }
+    element.textContent = text;
+    element.classList.toggle('error', isError);
   }
 
   function refreshPhotos() {
@@ -742,11 +794,18 @@
       wakeBrightness: Number(byId('wake-brightness').value),
       ambientEnabled: byId('ambient-enabled').checked,
       ambientMinimum: 20,
-      ambientMaximum: 220
+      ambientMaximum: 220,
+      motionEnabled: byId('motion-enabled').checked,
+      motionTimeoutSeconds: Math.round(Number(byId('motion-timeout-minutes').value) * 60),
+      motionSensitivity: Number(byId('motion-sensitivity').value)
     })).then(function () {
-      setMessage('automation-message', 'Schedule saved.');
+      setMessage('automation-message', 'Automation saved.');
       return refreshAutomation();
     }).catch(function (error) { setMessage('automation-message', error.message, true); });
+  });
+
+  byId('motion-sensitivity').addEventListener('input', function () {
+    byId('motion-sensitivity-output').textContent = byId('motion-sensitivity').value;
   });
 
   byId('wake-now').addEventListener('click', function () {
