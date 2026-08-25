@@ -70,6 +70,15 @@ reflection safe-zone, undo/redo, widget locks, layers, keyboard movement,
 duplicate instances, and validated JSON import/export. Canonical widgets remain
 available and can be hidden; duplicated instances can be deleted.
 
+The **Photo** widget places a framed photo anywhere in the layout. Choose one
+library photo or let the frame rotate through the whole library every twenty
+seconds with a slow crossfade; choose **Fill** to crop to the frame or
+**Whole** to letterbox; alignment sets the crop focus. Duplicate frames for a
+collage. Tapping a photo in the library places it in a frame. Photo frames,
+backgrounds, and the gallery all use scaled, EXIF-oriented variants prepared on
+the Mirror so phone pictures display upright and the display never decodes a
+multi-megapixel original.
+
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
 

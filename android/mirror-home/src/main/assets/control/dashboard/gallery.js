@@ -62,7 +62,7 @@
         var image = document.createElement('img');
         image.className = 'photo';
         image.alt = '';
-        image.src = '/photos/' + encodeURIComponent(photo.name);
+        image.src = '/photos/' + encodeURIComponent(photo.name) + '/display';
         stage.appendChild(image);
       });
       next();

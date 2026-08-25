@@ -407,7 +407,7 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; padding: 12px 12px 6px; }
 .photo-tile { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
-.photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity 0.4s; }
+.photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity 0.4s; cursor: pointer; }
 .photo-tile img.ready { opacity: 1; }
 .photo-tile .remove {
   position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%;
@@ -416,7 +416,7 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 .photo-tile .remove svg { width: 14px; height: 14px; }
 .photo-tile:hover .remove, .photo-tile:focus-within .remove { opacity: 1; }
 @media (hover: none) { .photo-tile .remove { opacity: 1; } }
-.photo-tile.in-use::after { content: "On mirror"; position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.photo-tile.in-use::after { content: "In use"; position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .photo-add {
   aspect-ratio: 1; display: grid; place-items: center; align-content: center; gap: 4px;
   background: transparent; border: 1.5px dashed var(--line-strong); border-radius: 10px; color: var(--text-2); font-size: 13px;

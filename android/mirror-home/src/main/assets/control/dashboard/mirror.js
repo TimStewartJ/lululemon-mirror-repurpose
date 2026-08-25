@@ -134,14 +134,30 @@
     var nodes = {};
     var backgroundKey = '';
     var photoToken = 0;
-    var resolvePhoto = settings.resolvePhoto || function (name, done) {
-      done('/photos/' + encodeURIComponent(name));
+    var library = { names: [], fetchedAt: 0, pending: false };
+    var slideIndex = 0;
+    var slideTimer = null;
+    var SLIDE_INTERVAL_MS = 20000;
+    var LIBRARY_TTL_MS = 60000;
+    var pixelRatio = window.devicePixelRatio || 1;
+    /* Pick the smallest server-side variant that still fills the box crisply. */
+    var resolvePhoto = settings.resolvePhoto || function (name, done, box) {
+      var edge = box ? Math.max(box.width, box.height) * pixelRatio : Infinity;
+      var variant = edge <= 320 ? '/thumbnail' : '/display';
+      done('/photos/' + encodeURIComponent(name) + variant);
+    };
+    var listPhotos = settings.listPhotos || function (done) {
+      fetch('/api/v1/photos/slideshow', { cache: 'no-store' }).then(function (response) {
+        return response.json();
+      }).then(function (result) {
+        done((result.photos || []).map(function (photo) { return photo.name; }));
+      }).then(null, function () { done(null); });
     };
 
     container.className += (container.className ? ' ' : '') + 'mr-stage' +
       (editing ? ' mr-editing' : '');
     var photoLayer = document.createElement('div');
-    photoLayer.className = 'mr-layer mr-photo';
+    photoLayer.className = 'mr-layer mr-backdrop';
     var shadeLayer = document.createElement('div');
     shadeLayer.className = 'mr-layer mr-shade';
     var widgetLayer = document.createElement('div');
@@ -347,19 +363,114 @@
           return metric('Pair with code', value
             ? '<span class="mr-code">' + escapeHtml(value.slice(0, 3) + ' ' + value.slice(3)) + '</span>'
             : '\u2014', !value);
+        case 'photo': return photoMarkup(widget);
         default: return '';
       }
     }
 
+    /* ---- Photo frames ---- */
+
+    function photoName(widget, node) {
+      if (widget.photo) return widget.photo;
+      if (!library.names.length) return '';
+      return library.names[(slideIndex + (node ? node.order : 0)) % library.names.length];
+    }
+
+    function photoMarkup(widget) {
+      var empty = !widget.photo && !library.names.length;
+      return '<span class="mr-frame' + (empty ? ' mr-frame-empty' : '') + '">' +
+        '<img class="mr-frame-img" alt=""><img class="mr-frame-img" alt="">' +
+        (empty && editing ? '<span class="mr-frame-hint mr-medium">Photo</span>' : '') +
+        '</span>';
+    }
+
+    function ensureLibrary() {
+      var stale = Date.now() - library.fetchedAt > LIBRARY_TTL_MS;
+      if (library.pending || !stale) return;
+      library.pending = true;
+      listPhotos(function (names) {
+        library.pending = false;
+        library.fetchedAt = Date.now();
+        if (!names) return;
+        var changed = names.join('\n') !== library.names.join('\n');
+        library.names = names;
+        if (changed) render(false);
+      });
+    }
+
+    function ensureSlideshow() {
+      if (slideTimer) return;
+      slideTimer = window.setInterval(function () {
+        slideIndex += 1;
+        Object.keys(nodes).forEach(function (id) {
+          var node = nodes[id];
+          if (node.widget && node.widget.type === 'photo' && !node.widget.photo) {
+            applyPhoto(node, node.widget);
+          }
+        });
+      }, SLIDE_INTERVAL_MS);
+    }
+
+    function applyPhoto(node, widget) {
+      var frame = node.inner.querySelector('.mr-frame');
+      if (!frame) return;
+      var box = boxSize(widget);
+      frame.style.borderRadius = Math.round(Math.max(3, stageSize().width * 0.012)) + 'px';
+      var name = photoName(widget, node);
+      if (!widget.photo) ensureSlideshow();
+      /* Re-request only when the photo or the variant-relevant size changes. */
+      var bucket = Math.max(box.width, box.height) * pixelRatio <= 320 ? 'small' : 'large';
+      var key = name + '|' + bucket;
+      if (key === node.photoKey) return;
+      node.photoKey = key;
+      node.photoToken = (node.photoToken || 0) + 1;
+      var token = node.photoToken;
+      if (!name) {
+        showFrameImage(node, '', token);
+        return;
+      }
+      resolvePhoto(name, function (url) {
+        if (token !== node.photoToken) return;
+        showFrameImage(node, url || '', token);
+      }, box);
+    }
+
+    /* The hidden layer loads the next image itself, then the two layers
+       crossfade; one request, and the swap happens only once pixels exist. */
+    function showFrameImage(node, url, token) {
+      var layers = node.inner.querySelectorAll('.mr-frame-img');
+      if (layers.length < 2) return;
+      var front = layers[0].className.indexOf('mr-on') >= 0 ? layers[0] : layers[1];
+      var back = front === layers[0] ? layers[1] : layers[0];
+      if (!url) {
+        layers[0].className = 'mr-frame-img';
+        layers[1].className = 'mr-frame-img';
+        return;
+      }
+      back.onload = function () {
+        if (token !== node.photoToken) return;
+        back.className = 'mr-frame-img mr-on';
+        front.className = 'mr-frame-img';
+      };
+      back.onerror = function () {
+        if (token !== node.photoToken) return;
+        back.className = 'mr-frame-img';
+      };
+      back.src = url;
+    }
+
     function geometryKey(widget) {
       return [widget.x, widget.y, widget.w, widget.h, widget.align, widget.opacity,
-        widget.layer, widget.visible, widget.locked, widget.type].join('|');
+        widget.layer, widget.visible, widget.locked, widget.type, widget.photo || '',
+        widget.fit || ''].join('|');
     }
 
     function applyGeometry(node, widget) {
       var element = node.element;
+      var isPhoto = widget.type === 'photo';
       element.className = 'mr-widget mr-' + widget.type +
-        (TEXT_TYPES[widget.type] ? '' : ' mr-metric') +
+        (TEXT_TYPES[widget.type] || isPhoto ? '' : ' mr-metric') +
+        (isPhoto && widget.fit === 'contain' ? ' mr-fit-contain' : '') +
         ' mr-align-' + widget.align +
         (widget.visible ? '' : ' mr-hidden') +
         (widget.locked ? ' mr-locked' : '') +
@@ -397,6 +508,7 @@
 
     function renderWidget(widget, local, force) {
       var node = ensureNode(widget);
+      node.widget = widget;
       var geometry = geometryKey(widget) + '|' + layout.textColor + '|' + layout.accentColor;
       var geometryChanged = force || geometry !== node.geometry;
       if (geometryChanged) {
@@ -408,6 +520,16 @@
       }
       var html = contentHtml(widget, local);
       var contentChanged = html !== node.content;
+      if (widget.type === 'photo') {
+        /* Frames keep their layers across geometry changes so images never flash. */
+        if (contentChanged) {
+          node.content = html;
+          node.inner.innerHTML = html;
+          node.photoKey = '';
+        }
+        if (contentChanged || geometryChanged) applyPhoto(node, widget);
+        return;
+      }
       if (contentChanged || geometryChanged) {
         /* Re-seed the markup so any earlier trimming is reconsidered. */
         node.content = html;
@@ -429,14 +551,14 @@
       shadeLayer.style.background = 'rgba(0, 0, 0, ' + (Number(background.dim || 0) / 100) + ')';
       photoToken += 1;
       var token = photoToken;
-      photoLayer.className = 'mr-layer mr-photo';
+      photoLayer.className = 'mr-layer mr-backdrop';
       photoLayer.style.backgroundImage = '';
       if (background.mode === 'photo' && background.photo) {
         resolvePhoto(background.photo, function (url) {
           if (token !== photoToken || !url) return;
           photoLayer.style.backgroundImage = 'url("' + url + '")';
-          photoLayer.className = 'mr-layer mr-photo mr-ready';
-        });
+          photoLayer.className = 'mr-layer mr-backdrop mr-ready';
+        }, stageSize());
       }
     }
 
@@ -445,11 +567,22 @@
       var local = localDate(now, runtime);
       applyBackground();
       var seen = {};
+      var rotating = 0;
       layout.widgets.forEach(function (widget) {
         var showsWeather = widget.type !== 'weather' && widget.type !== 'forecast'
           || Boolean(weatherData(runtime, editing));
-        if (!editing && (!widget.visible || !showsWeather)) return;
+        if (widget.type === 'photo' && !widget.photo && (widget.visible || editing)) {
+          ensureLibrary();
+          /* Offset rotating frames so a collage never repeats one photo. */
+          var existing = nodes[widget.id];
+          if (existing) existing.order = rotating;
+          rotating += 1;
+        }
+        var showsPhoto = widget.type !== 'photo' || Boolean(widget.photo) || library.names.length > 0;
+        if (!editing && (!widget.visible || !showsWeather || !showsPhoto)) return;
         seen[widget.id] = true;
+        var node = ensureNode(widget);
+        if (widget.type === 'photo' && node.order == null) node.order = rotating - 1;
         renderWidget(widget, local, force);
       });
       Object.keys(nodes).forEach(function (id) {
@@ -485,6 +618,11 @@
       },
       element: function (id) {
         return nodes[id] ? nodes[id].element : null;
+      },
+      refreshPhotos: function () {
+        library.fetchedAt = 0;
+        Object.keys(nodes).forEach(function (id) { nodes[id].photoKey = ''; });
+        render(true);
       },
       stage: container,
       layer: widgetLayer

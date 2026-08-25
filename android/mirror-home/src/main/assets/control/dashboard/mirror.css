@@ -48,14 +48,14 @@
   left: 0;
 }
 
-.mr-photo {
+.mr-backdrop {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
   opacity: 0;
   transition: opacity 1.2s ease;
 }
-.mr-photo.mr-ready { opacity: 1; }
+.mr-backdrop.mr-ready { opacity: 1; }
 
 .mr-shade { background: rgba(0, 0, 0, 0); }
 
@@ -196,6 +196,60 @@
   stroke-linejoin: round;
 }
 .mr-icon-svg .mr-fill { fill: currentColor; stroke: none; }
+
+/* Photo frames: two stacked layers crossfade; the box is the frame. */
+.mr-widget.mr-photo { display: block; }
+.mr-photo .mr-inner {
+  display: block;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+.mr-frame {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+.mr-frame-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  -o-object-fit: cover;
+  object-fit: cover;
+  -o-object-position: center;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 1.4s ease;
+}
+.mr-frame-img.mr-on { opacity: 1; }
+.mr-fit-contain .mr-frame-img { -o-object-fit: contain; object-fit: contain; }
+.mr-align-start .mr-frame-img { -o-object-position: left center; object-position: left center; }
+.mr-align-end .mr-frame-img { -o-object-position: right center; object-position: right center; }
+.mr-frame-empty { border: 1px dashed rgba(255, 255, 255, 0.3); }
+.mr-frame-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  margin-top: -0.5em;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
 
 /* Editing affordances used by the control application only. */
 .mr-editing .mr-widget { cursor: move; }

@@ -27,8 +27,10 @@ public final class DashboardLayoutConfig {
             "weather",
             "forecast",
             "pairing",
-            "note"
+            "note",
+            "photo"
     };
+    private static final String DEFAULT_PHOTO_FIT = "cover";
 
     private final JSONObject value;
 
@@ -78,6 +80,9 @@ public final class DashboardLayoutConfig {
                     "start",
                     "Make space for what matters.",
                     15));
+            widgets.put(widget("photo", "photo", 50, 680, 440, 190, false, 82, "center", "", 16)
+                    .put("photo", "")
+                    .put("fit", DEFAULT_PHOTO_FIT));
             root.put("widgets", widgets);
             return new DashboardLayoutConfig(root);
         } catch (JSONException impossible) {
@@ -140,14 +145,7 @@ public final class DashboardLayoutConfig {
         if (!"solid".equals(mode) && !"gradient".equals(mode) && !"photo".equals(mode)) {
             throw new JSONException("Unknown dashboard background mode");
         }
-        String photo = value.optString("photo", "");
-        if (photo.length() > 180
-                || photo.contains("/")
-                || photo.contains("\\")
-                || photo.contains("..")
-                || containsControlCharacter(photo)) {
-            throw new JSONException("Invalid dashboard background photo");
-        }
+        String photo = normalizePhotoName(value.optString("photo", ""));
         int dim = value.optInt("dim", fallback.getInt("dim"));
         if (dim < 0 || dim > 90) {
             throw new JSONException("Dashboard background dim must be 0-90");
@@ -300,7 +298,7 @@ public final class DashboardLayoutConfig {
                 0,
                 99,
                 "layer");
-        return new JSONObject()
+        JSONObject normalized = new JSONObject()
                 .put("id", id)
                 .put("type", type)
                 .put("x", x)
@@ -313,6 +311,28 @@ public final class DashboardLayoutConfig {
                 .put("text", text)
                 .put("locked", value.optBoolean("locked", fallback.optBoolean("locked", false)))
                 .put("layer", layer);
+        if ("photo".equals(type)) {
+            /* An empty photo name means "rotate through the library". */
+            String fit = value.optString("fit", fallback.optString("fit", DEFAULT_PHOTO_FIT));
+            if (!"cover".equals(fit) && !"contain".equals(fit)) {
+                throw new JSONException("Dashboard photo fit must be cover or contain");
+            }
+            normalized.put("photo", normalizePhotoName(value.optString("photo", "")));
+            normalized.put("fit", fit);
+        }
+        return normalized;
+    }
+
+    private static String normalizePhotoName(String photo) throws JSONException {
+        if (photo == null
+                || photo.length() > 180
+                || photo.contains("/")
+                || photo.contains("\\")
+                || photo.contains("..")
+                || containsControlCharacter(photo)) {
+            throw new JSONException("Invalid dashboard photo");
+        }
+        return photo;
     }
 
     private static JSONObject widget(

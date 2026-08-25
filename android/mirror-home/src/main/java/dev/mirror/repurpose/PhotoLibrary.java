@@ -3,6 +3,8 @@ package dev.mirror.repurpose;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -23,7 +25,8 @@ public final class PhotoLibrary {
     public static final long MAX_PHOTO_BYTES = 20L * 1024L * 1024L;
     private static final long MAX_LIBRARY_BYTES = 250L * 1024L * 1024L;
     private static final int MAX_PHOTOS = 250;
-    private static final int THUMBNAIL_EDGE = 480;
+    public static final int THUMBNAIL_EDGE = 480;
+    public static final int DISPLAY_EDGE = 1920;
 
     private final File root;
 
@@ -116,21 +119,29 @@ public final class PhotoLibrary {
         if (photo == null || !photo.isFile()) {
             return false;
         }
-        File cached = new File(new File(root.getParentFile(), "photo-thumbnails"), photo.getName() + ".jpg");
-        if (cached.isFile() && !cached.delete()) {
-            cached.deleteOnExit();
+        for (int edge : new int[]{THUMBNAIL_EDGE, DISPLAY_EDGE}) {
+            File cached = new File(cacheRoot(), cacheName(photo, edge));
+            if (cached.isFile() && !cached.delete()) {
+                cached.deleteOnExit();
+            }
         }
         return photo.delete();
     }
 
-    /* Small JPEG previews for the control application so phones never have to
-       download the full-size originals just to browse the library. */
-    public synchronized File thumbnail(String encodedName) throws IOException {
+    /* Scaled JPEG variants, cached per edge and oriented from EXIF: the 480px
+       thumbnail feeds the control application's grid and small frames, the
+       1920px display variant feeds full-bleed backgrounds and the gallery so
+       the 2015 WebView never decodes a multi-megapixel original. */
+    public synchronized File scaled(String encodedName, int edge) throws IOException {
         File photo = resolve(encodedName);
         if (photo == null || !photo.isFile()) {
             return null;
         }
-        File cached = new File(thumbnailRoot(), photo.getName() + ".jpg");
+        File root = cacheRoot();
+        if (!root.isDirectory() && !root.mkdirs()) {
+            throw new IOException("Unable to create photo cache");
+        }
+        File cached = new File(root, cacheName(photo, edge));
         if (cached.isFile() && cached.lastModified() >= photo.lastModified()) {
             return cached;
         }
@@ -142,51 +153,90 @@ public final class PhotoLibrary {
         }
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = 1;
-        while (Math.max(bounds.outWidth, bounds.outHeight) / (options.inSampleSize * 2)
-                >= THUMBNAIL_EDGE) {
+        while (Math.max(bounds.outWidth, bounds.outHeight) / (options.inSampleSize * 2) >= edge) {
             options.inSampleSize *= 2;
         }
         Bitmap decoded = BitmapFactory.decodeFile(photo.getPath(), options);
         if (decoded == null) {
             throw new IOException("Photo could not be decoded");
         }
-        float scale = Math.min(
-                1f,
-                THUMBNAIL_EDGE / (float) Math.max(decoded.getWidth(), decoded.getHeight()));
-        Bitmap scaled = scale < 1f
-                ? Bitmap.createScaledBitmap(
-                        decoded,
-                        Math.max(1, Math.round(decoded.getWidth() * scale)),
-                        Math.max(1, Math.round(decoded.getHeight() * scale)),
-                        true)
-                : decoded;
-        File temporary = new File(thumbnailRoot(), photo.getName() + ".tmp");
-        try (OutputStream output = new FileOutputStream(temporary)) {
-            if (!scaled.compress(Bitmap.CompressFormat.JPEG, 82, output)) {
-                throw new IOException("Thumbnail could not be written");
+        Bitmap oriented = decoded;
+        try {
+            float scale = Math.min(
+                    1f,
+                    edge / (float) Math.max(decoded.getWidth(), decoded.getHeight()));
+            Matrix matrix = orientationMatrix(photo);
+            if (scale < 1f) {
+                matrix.postScale(scale, scale);
             }
+            if (!matrix.isIdentity()) {
+                oriented = Bitmap.createBitmap(
+                        decoded,
+                        0,
+                        0,
+                        decoded.getWidth(),
+                        decoded.getHeight(),
+                        matrix,
+                        true);
+            }
+            File temporary = new File(root, cacheName(photo, edge) + ".tmp");
+            try (OutputStream output = new FileOutputStream(temporary)) {
+                if (!oriented.compress(Bitmap.CompressFormat.JPEG, edge > THUMBNAIL_EDGE ? 88 : 82, output)) {
+                    throw new IOException("Photo variant could not be written");
+                }
+            }
+            if (!temporary.renameTo(cached)) {
+                if (cached.exists() && !cached.delete() || !temporary.renameTo(cached)) {
+                    throw new IOException("Photo variant could not be stored");
+                }
+            }
+            return cached;
         } finally {
-            if (scaled != decoded) {
-                scaled.recycle();
+            if (oriented != decoded) {
+                oriented.recycle();
             }
             decoded.recycle();
         }
-        if (!temporary.renameTo(cached)) {
-            if (cached.exists() && !cached.delete() || !temporary.renameTo(cached)) {
-                throw new IOException("Thumbnail could not be stored");
+    }
+
+    private static Matrix orientationMatrix(File photo) {
+        Matrix matrix = new Matrix();
+        if (!photo.getName().toLowerCase(Locale.US).matches(".*\\.jpe?g$")) {
+            return matrix;
+        }
+        try {
+            int orientation = new ExifInterface(photo.getPath()).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL);
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90: matrix.postRotate(90); break;
+                case ExifInterface.ORIENTATION_ROTATE_180: matrix.postRotate(180); break;
+                case ExifInterface.ORIENTATION_ROTATE_270: matrix.postRotate(270); break;
+                case ExifInterface.ORIENTATION_FLIP_HORIZONTAL: matrix.postScale(-1, 1); break;
+                case ExifInterface.ORIENTATION_FLIP_VERTICAL: matrix.postScale(1, -1); break;
+                case ExifInterface.ORIENTATION_TRANSPOSE:
+                    matrix.postRotate(90);
+                    matrix.postScale(-1, 1);
+                    break;
+                case ExifInterface.ORIENTATION_TRANSVERSE:
+                    matrix.postRotate(270);
+                    matrix.postScale(-1, 1);
+                    break;
+                default: break;
             }
+        } catch (IOException ignored) {
+            /* Unreadable EXIF simply means no rotation. */
         }
-        return cached;
+        return matrix;
     }
 
-    private File thumbnailRoot() throws IOException {
-        File directory = new File(root.getParentFile(), "photo-thumbnails");
-        if (!directory.isDirectory() && !directory.mkdirs()) {
-            throw new IOException("Unable to create thumbnail cache");
-        }
-        return directory;
+    private File cacheRoot() {
+        return new File(root.getParentFile(), "photo-variants");
     }
 
+    private static String cacheName(File photo, int edge) {
+        return photo.getName() + "." + edge + ".jpg";
+    }
     public static String mimeType(String name) {
         String lower = name.toLowerCase(Locale.US);
         if (lower.endsWith(".png")) {

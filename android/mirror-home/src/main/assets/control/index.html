@@ -225,6 +225,17 @@
                 <span class="row-label">Note</span>
                 <textarea id="layout-note-text" maxlength="120" rows="2" placeholder="A few words for the mirror"></textarea>
               </label>
+              <label class="row photo-only hidden">
+                <span class="row-label">Photo</span>
+                <select id="layout-widget-photo" class="select"></select>
+              </label>
+              <div class="row photo-only hidden">
+                <span class="row-label">Fit</span>
+                <div class="seg" role="radiogroup" aria-label="Photo fit">
+                  <label class="seg-opt"><input type="radio" name="widget-fit" value="cover"><span>Fill</span></label>
+                  <label class="seg-opt"><input type="radio" name="widget-fit" value="contain"><span>Whole</span></label>
+                </div>
+              </div>
             </div>
 
             <div class="group">
@@ -302,7 +313,7 @@
           </div>
           <input id="photo-file" class="hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif">
           <p id="photo-message" class="status inset" role="status"></p>
-          <p class="hint inset">JPEG, PNG, WebP, or GIF up to 20 MB. Photos never leave this mirror.</p>
+          <p class="hint inset">JPEG, PNG, WebP, or GIF up to 20 MB. Photos never leave this mirror. Tap a photo to place it in a frame on the layout.</p>
         </div>
       </section>
 

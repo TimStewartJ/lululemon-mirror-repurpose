@@ -14,9 +14,9 @@ public final class DashboardLayoutConfigTest {
         assertEquals(2, value.getInt("version"));
         assertEquals("solid", value.getJSONObject("background").getString("mode"));
         assertEquals("#000000", value.getJSONObject("background").getString("primary"));
-        assertEquals(15, value.getJSONArray("widgets").length());
+        assertEquals(16, value.getJSONArray("widgets").length());
         assertEquals(0, value.getJSONObject("background").getInt("dim"));
-        assertEquals(15, DashboardLayoutConfig.parse(value).toJson()
+        assertEquals(16, DashboardLayoutConfig.parse(value).toJson()
                 .getJSONArray("widgets").length());
         assertTrue(value.getJSONArray("widgets").getJSONObject(3).getBoolean("visible"));
     }
@@ -47,7 +47,7 @@ public final class DashboardLayoutConfigTest {
         JSONObject migrated = DashboardLayoutConfig.parse(value).toJson();
 
         assertEquals(2, migrated.getInt("version"));
-        assertEquals(15, migrated.getJSONArray("widgets").length());
+        assertEquals(16, migrated.getJSONArray("widgets").length());
         assertTrue(!find(migrated, "weather").getBoolean("visible"));
         assertTrue(!find(migrated, "forecast").getBoolean("visible"));
     }
@@ -64,7 +64,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(16, parsed.getJSONArray("widgets").length());
+        assertEquals(17, parsed.getJSONArray("widgets").length());
         assertTrue(find(parsed, "clock-2").getBoolean("locked"));
         assertEquals(42, find(parsed, "clock-2").getInt("layer"));
     }
@@ -86,7 +86,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject normalized = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(15, normalized.getJSONArray("widgets").length());
+        assertEquals(16, normalized.getJSONArray("widgets").length());
         assertTrue(!find(normalized, "weather").getBoolean("visible"));
         assertTrue(!find(normalized, "date").getBoolean("visible"));
     }
@@ -95,6 +95,36 @@ public final class DashboardLayoutConfigTest {
     public void rejectsCanonicalWidgetTypeChanges() throws JSONException {
         JSONObject value = DashboardLayoutConfig.defaults().toJson();
         value.getJSONArray("widgets").getJSONObject(0).put("type", "note");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test
+    public void photoWidgetKeepsValidatedPhotoAndFit() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        JSONObject photo = find(value, "photo");
+        assertTrue(!photo.getBoolean("visible"));
+        assertEquals("", photo.getString("photo"));
+        assertEquals("cover", photo.getString("fit"));
+        photo.put("photo", "Family (2024).jpg").put("fit", "contain").put("visible", true);
+
+        JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
+
+        assertEquals("Family (2024).jpg", find(parsed, "photo").getString("photo"));
+        assertEquals("contain", find(parsed, "photo").getString("fit"));
+        assertTrue(!find(parsed, "clock").has("photo"));
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsPhotoWidgetPathTraversal() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "photo").put("photo", "../secrets.jpg");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownPhotoFit() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "photo").put("fit", "stretch");
         DashboardLayoutConfig.parse(value);
     }
 

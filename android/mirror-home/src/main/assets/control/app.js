@@ -53,7 +53,8 @@
     weather: 'Weather',
     forecast: 'Hourly forecast',
     pairing: 'Pairing code',
-    note: 'Note'
+    note: 'Note',
+    photo: 'Photo'
   };
 
   function byId(id) { return document.getElementById(id); }
@@ -139,21 +140,34 @@
 
   /* ---------- Shared mirror renderers ---------- */
 
-  function resolvePhoto(name, done) {
-    if (photoUrlCache[name]) { done(photoUrlCache[name]); return; }
-    fetch('/api/v1/photos/' + encodeURIComponent(name), {
+  /* Fetch the smallest authenticated variant that fills the box, as a blob URL. */
+  function resolvePhoto(name, done, box) {
+    var edge = box ? Math.max(box.width, box.height) * (window.devicePixelRatio || 1) : Infinity;
+    var variant = edge <= 320 ? '/thumbnail' : '/display';
+    var key = name + variant;
+    if (photoUrlCache[key]) { done(photoUrlCache[key]); return; }
+    fetch('/api/v1/photos/' + encodeURIComponent(name) + variant, {
       headers: { Authorization: 'Bearer ' + token }
     }).then(function (response) {
       if (!response.ok) throw new Error('Photo unavailable');
       return response.blob();
     }).then(function (blob) {
-      photoUrlCache[name] = URL.createObjectURL(blob);
-      done(photoUrlCache[name]);
+      photoUrlCache[key] = URL.createObjectURL(blob);
+      done(photoUrlCache[key]);
     }).catch(function () { done(''); });
   }
 
-  var homeRenderer = window.MirrorRenderer.create(byId('home-preview'), { resolvePhoto: resolvePhoto });
-  var editor = window.MirrorRenderer.create(byId('layout-preview'), { editing: true, resolvePhoto: resolvePhoto });
+  function listPhotos(done) {
+    done(photoList.map(function (photo) { return photo.name; }));
+  }
+
+  var rendererOptions = { resolvePhoto: resolvePhoto, listPhotos: listPhotos };
+  var homeRenderer = window.MirrorRenderer.create(byId('home-preview'), rendererOptions);
+  var editor = window.MirrorRenderer.create(byId('layout-preview'), {
+    editing: true,
+    resolvePhoto: resolvePhoto,
+    listPhotos: listPhotos
+  });
 
   function previewRuntime() {
     return status || {};
@@ -327,6 +341,13 @@
     byId('layout-widget-layer').value = String(widget.layer || 0);
     byId('layout-note-row').classList.toggle('hidden', widget.type !== 'note');
     byId('layout-note-text').value = widget.text || '';
+    Array.from(document.querySelectorAll('.photo-only')).forEach(function (row) {
+      row.classList.toggle('hidden', widget.type !== 'photo');
+    });
+    if (widget.type === 'photo') {
+      byId('layout-widget-photo').value = widget.photo || '';
+      setRadio('widget-fit', widget.fit || 'cover');
+    }
     ['layout-widget-x', 'layout-widget-y', 'layout-widget-width', 'layout-widget-height'].forEach(function (id) {
       byId(id).disabled = Boolean(widget.locked);
     });
@@ -685,37 +706,47 @@
       var add = byId('photo-add');
       Array.from(grid.querySelectorAll('.photo-tile')).forEach(function (tile) { tile.remove(); });
       var backgroundSelect = byId('layout-background-photo');
+      var frameSelect = byId('layout-widget-photo');
       var selectedBackground = dashboardLayout ? dashboardLayout.background.photo : '';
+      var selected = selectedWidget();
+      var selectedFrame = selected && selected.type === 'photo' ? selected.photo || '' : '';
+      var framed = {};
+      if (dashboardLayout) {
+        dashboardLayout.widgets.forEach(function (widget) {
+          if (widget.type === 'photo' && widget.visible && widget.photo) framed[widget.photo] = true;
+        });
+      }
       backgroundSelect.textContent = '';
+      frameSelect.textContent = '';
       var noPhoto = document.createElement('option');
       noPhoto.value = '';
       noPhoto.textContent = 'Choose a photo';
       backgroundSelect.appendChild(noPhoto);
+      var rotate = document.createElement('option');
+      rotate.value = '';
+      rotate.textContent = 'Rotate through the library';
+      frameSelect.appendChild(rotate);
       photoList.forEach(function (photo) {
         var option = document.createElement('option');
         option.value = photo.name;
         option.textContent = photo.name;
         backgroundSelect.appendChild(option);
+        frameSelect.appendChild(option.cloneNode(true));
 
         var tile = document.createElement('figure');
-        tile.className = 'photo-tile' + (photo.name === selectedBackground ? ' in-use' : '');
+        tile.className = 'photo-tile' +
+          (photo.name === selectedBackground || framed[photo.name] ? ' in-use' : '');
         tile.style.margin = '0';
         var image = document.createElement('img');
         image.alt = photo.name;
         image.loading = 'lazy';
-        fetch('/api/v1/photos/' + encodeURIComponent(photo.name) + '/thumbnail', {
-          headers: { Authorization: 'Bearer ' + token }
-        }).then(function (response) {
-          if (!response.ok) throw new Error('thumbnail');
-          return response.blob();
-        }).then(function (blob) {
+        image.title = 'Place in a frame';
+        resolvePhoto(photo.name, function (url) {
+          if (!url) return;
           image.onload = function () { image.classList.add('ready'); };
-          image.src = URL.createObjectURL(blob);
-        }).catch(function () {
-          resolvePhoto(photo.name, function (url) {
-            if (url) { image.src = url; image.classList.add('ready'); }
-          });
-        });
+          image.src = url;
+        }, { width: 160, height: 160 });
+        image.addEventListener('click', function () { placePhotoInFrame(photo.name); });
         var remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'remove';
@@ -732,6 +763,9 @@
         grid.insertBefore(tile, add);
       });
       backgroundSelect.value = selectedBackground || '';
+      frameSelect.value = selectedFrame;
+      editor.refreshPhotos();
+      homeRenderer.refreshPhotos();
     });
   }
 
@@ -969,6 +1003,43 @@
     editor.update(dashboardLayout, previewRuntime());
   });
   byId('layout-note-text').addEventListener('change', commitLayoutChange);
+
+  byId('layout-widget-photo').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.type !== 'photo') return;
+    widget.photo = byId('layout-widget-photo').value;
+    renderLayoutEditor();
+    commitLayoutChange();
+  });
+
+  Array.from(document.querySelectorAll('input[name="widget-fit"]')).forEach(function (input) {
+    input.addEventListener('change', function () {
+      var widget = selectedWidget();
+      if (!widget || widget.type !== 'photo') return;
+      widget.fit = input.value;
+      renderLayoutEditor();
+      commitLayoutChange();
+    });
+  });
+
+  /* Tapping a library photo drops it into a frame: the selected frame if one
+     is selected, otherwise the canonical Photo widget. */
+  function placePhotoInFrame(name) {
+    if (!dashboardLayout) return;
+    var target = selectedWidget();
+    if (!target || target.type !== 'photo') {
+      target = dashboardLayout.widgets.find(function (widget) { return widget.id === 'photo'; });
+    }
+    if (!target) return;
+    target.photo = name;
+    target.visible = true;
+    selectedWidgetId = target.id;
+    renderLayoutEditor();
+    commitLayoutChange();
+    toast('Placed in a frame. Save to show it on the mirror.');
+    var editorElement = document.querySelector('.editor');
+    if (editorElement) editorElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   function updateWidgetGeometry() {
     var widget = selectedWidget();

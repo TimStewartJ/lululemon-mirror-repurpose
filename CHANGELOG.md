@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.7.0 - 2026-08-24
+
+- Add a Photo widget: a framed library photo, or a slow crossfading rotation
+  through the whole library, placed and resized like any widget with Fill or
+  Whole fitting, alignment-based crop focus, and duplication for collages.
+- Prepare cached, EXIF-oriented 480px and 1920px photo variants on the Mirror
+  and use them for frames, backgrounds, the gallery, and the control
+  application so phone photos display upright and the display never decodes a
+  multi-megapixel original.
+- Place a library photo in a frame by tapping it in the control application.
+
 ## 1.6.0 - 2026-08-24
 
 - Redesign every surface people see in the glass: a shared renderer draws the

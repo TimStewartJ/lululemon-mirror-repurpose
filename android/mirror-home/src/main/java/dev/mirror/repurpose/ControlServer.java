@@ -69,7 +69,18 @@ public final class ControlServer extends NanoHTTPD {
             if (Method.GET.equals(session.getMethod())
                     && uri.startsWith("/photos/")
                     && isLoopback(session)) {
-                return servePhoto(uri.substring("/photos/".length()));
+                String rest = uri.substring("/photos/".length());
+                if (rest.endsWith("/thumbnail")) {
+                    return serveScaledPhoto(
+                            rest.substring(0, rest.length() - "/thumbnail".length()),
+                            PhotoLibrary.THUMBNAIL_EDGE);
+                }
+                if (rest.endsWith("/display")) {
+                    return serveScaledPhoto(
+                            rest.substring(0, rest.length() - "/display".length()),
+                            PhotoLibrary.DISPLAY_EDGE);
+                }
+                return servePhoto(rest);
             }
             if (Method.GET.equals(session.getMethod())
                     && "/api/v1/dashboard/runtime".equals(uri)
@@ -202,9 +213,18 @@ public final class ControlServer extends NanoHTTPD {
             if (Method.GET.equals(session.getMethod())
                     && uri.startsWith("/api/v1/photos/")
                     && uri.endsWith("/thumbnail")) {
-                return serveThumbnail(uri.substring(
+                return serveScaledPhoto(uri.substring(
                         "/api/v1/photos/".length(),
-                        uri.length() - "/thumbnail".length()));
+                        uri.length() - "/thumbnail".length()),
+                        PhotoLibrary.THUMBNAIL_EDGE);
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/photos/")
+                    && uri.endsWith("/display")) {
+                return serveScaledPhoto(uri.substring(
+                        "/api/v1/photos/".length(),
+                        uri.length() - "/display".length()),
+                        PhotoLibrary.DISPLAY_EDGE);
             }
             if (Method.GET.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
                 return servePhoto(uri.substring("/api/v1/photos/".length()));
@@ -489,16 +509,26 @@ public final class ControlServer extends NanoHTTPD {
         return result;
     }
 
-    private Response serveThumbnail(String encodedName) throws IOException {
-        File thumbnail = photos.thumbnail(encodedName);
-        if (thumbnail == null) {
+    private Response serveScaledPhoto(String encodedName, int edge) {
+        File variant;
+        try {
+            variant = photos.scaled(encodedName, edge);
+        } catch (IOException error) {
+            return error(Response.Status.UNSUPPORTED_MEDIA_TYPE, "Photo could not be decoded");
+        }
+        if (variant == null) {
             return error(Response.Status.NOT_FOUND, "Photo not found");
         }
-        Response result = newFixedLengthResponse(
-                Response.Status.OK,
-                "image/jpeg",
-                new FileInputStream(thumbnail),
-                thumbnail.length());
+        Response result;
+        try {
+            result = newFixedLengthResponse(
+                    Response.Status.OK,
+                    "image/jpeg",
+                    new FileInputStream(variant),
+                    variant.length());
+        } catch (IOException error) {
+            return error(Response.Status.NOT_FOUND, "Photo not found");
+        }
         result.addHeader("Cache-Control", "private, max-age=86400");
         result.addHeader("X-Content-Type-Options", "nosniff");
         return result;
