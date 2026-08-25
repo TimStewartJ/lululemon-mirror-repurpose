@@ -284,9 +284,13 @@
     return flat.length > length ? flat.slice(0, length - 1) + '\u2026' : flat;
   }
 
+  /* Grow with the text from a single line; past max-height the textarea
+     scrolls. scrollHeight excludes the border, so add it back or the box
+     ends up a hair short and clips the last line. */
   function autosize(textarea) {
     textarea.style.height = 'auto';
-    textarea.style.height = Math.min(320, Math.max(textarea.scrollHeight, 44)) + 'px';
+    var border = textarea.offsetHeight - textarea.clientHeight;
+    textarea.style.height = (textarea.scrollHeight + border) + 'px';
   }
 
   function updateNoteCount(textarea, output) {

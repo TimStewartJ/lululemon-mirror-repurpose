@@ -297,7 +297,7 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 
 /* Notes: a composer on top, the notes on the glass beneath it. */
 .note-composer { padding-bottom: 14px; }
-textarea.note-input, #layout-note-text { resize: none; overflow: hidden; min-height: 44px; line-height: 1.45; }
+textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-height: 40vh; line-height: 1.45; }
 .note-actions { align-items: center; }
 .note-count { margin-left: auto; color: var(--text-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .note-count.near { color: var(--accent); }
