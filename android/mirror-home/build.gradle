@@ -34,10 +34,10 @@ android {
         targetSdk 35
         versionCode configuredVersionCode.isPresent()
                 ? configuredVersionCode.get().toInteger()
-                : 25
+                : 27
         versionName configuredVersionName.isPresent()
                 ? configuredVersionName.get()
-                : "1.5.2"
+                : "1.6.0"
         buildConfigField(
                 "boolean",
                 "OTA_HEALTH_FAILURE_TEST",

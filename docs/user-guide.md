@@ -22,20 +22,39 @@ companion is optional.
 
 Open the setup/status dashboard on the Mirror, scan its QR code, and enter the
 current pairing code. Every browser receives an independent random credential.
-Use **Access > Paired devices** to review or revoke one device without signing
-out the others.
+Use **Settings > Paired devices** to review or revoke one device without
+signing out the others.
 
 Pairing codes expire after ten minutes, are single-use, and lock temporarily
 after repeated failures.
 
+## The control application
+
+The control application has four sections:
+
+- **Home**: a live miniature of what the mirror is showing right now, the
+  brightness slider (applies when released), wake/sleep, what is playing, and a
+  way to play a media link.
+- **Display**: what the mirror shows, the layout editor, weather, and photos.
+- **Schedule**: sleep/wake times, wake brightness, and presence sensing.
+- **Settings**: name, clock, Wi-Fi, the recovery setup network, paired
+  devices, and version/address details.
+
 ## Dashboards
 
-The **Display** tab provides:
+**Display > What the mirror shows** offers four sources; selecting one applies
+it immediately:
 
-- **Built-in mirror dashboard**: an offline, customizable freeform canvas.
-- **Aurora clock**: an offline, device-local ambient clock.
-- **Local photo gallery**: private images stored inside Mirror Home.
-- **Custom or Home Assistant URL**: any HTTP(S) page reachable by the Mirror.
+- **Mirror**: the built-in layout with a hairline clock, weather, and any
+  widgets you arrange.
+- **Aurora**: slow curtains of deep color on black behind a centered clock.
+- **Photos**: a slow slideshow of the private on-device library with a clock.
+- **Web page**: any HTTP(S) page reachable by the Mirror, such as a Home
+  Assistant dashboard.
+
+All built-in surfaces are designed for two-way mirror glass: true black
+backgrounds, thin white type, and stroke weather glyphs that stay legible
+through the reflection.
 
 The built-in dashboard can show current weather, today’s high/low and rain
 chance, plus an optional hourly strip. Search for a city/postal code or enter
@@ -56,21 +75,22 @@ page returns an error or becomes unreachable. Mirror Home retries every minute.
 
 ### Visual layout editor
 
-Open **Display > Arrange the mirror** from any paired phone or desktop:
+Open **Display > Arrange the mirror** from any paired phone or desktop. The
+canvas uses exactly the same renderer as the mirror, so what you see is what the
+glass shows:
 
-- drag a widget to move it,
-- drag its lower-right handle to resize it,
-- select hidden widgets from the Widget menu,
-- change visibility, alignment, and opacity,
-- choose a solid color, subtle gradient, or gallery photo background,
-- adjust background dimming and text/metric colors,
-- edit the optional custom note,
-- select **Save & use** to switch immediately to the built-in dashboard.
+- drag a widget to move it; drag its corner handle to resize it,
+- tap a widget chip to select it, or its eye to show or hide it,
+- change visibility, lock, alignment, opacity, layer, and exact geometry,
+- choose a solid color, gradient, or gallery photo background,
+- adjust photo dimming and the text/detail colors,
+- edit the optional note,
+- select **Save & show on mirror** to apply the layout immediately.
 
-**Reset subtle layout** restores the quiet mirror-oriented default without
-changing Wi-Fi, pairings, photos, or schedules. First-run and disconnected
-states continue to use the native QR recovery screen regardless of the saved
-daily layout.
+The **…** menu exports or imports a layout file and offers **Reset to
+default**, which restores the reflection-first composition without changing
+Wi-Fi, pairings, photos, or schedules. First-run and disconnected states
+continue to use the native setup screen regardless of the saved layout.
 
 The gallery accepts JPEG, PNG, WebP, and GIF images up to 20 MB each, with a
 250 MB total library limit. Photo bytes are served only to the Mirror's

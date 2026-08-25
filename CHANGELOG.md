@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 1.6.0 - 2026-08-24
+
+- Redesign every surface people see in the glass: a shared renderer draws the
+  built-in dashboard with a hairline clock and quiet meridiem, stroke weather
+  glyphs by WMO code, an hourly strip that hides meaningless rain chances, and
+  stable fit-to-box typography that never clips or jitters.
+- Select type weights through the Android family aliases because the 2015
+  WebView ignores numeric `font-weight`; update the clock on the exact second
+  and only repaint what changed.
+- Rebuild Aurora as slow curtains of deep light, the photo gallery with
+  long crossfades and a legibility scrim, and the offline fallback as a calm
+  clock.
+- Replace the native first-run screen with a hairline clock, rounded QR card,
+  and a large grouped pairing code; remove on-glass debug telemetry.
+- Rebuild the control application around Home, Display, Schedule, and
+  Settings with a live miniature of the mirror, switches, segmented controls,
+  immediate-apply brightness and source selection, a widget chip rail, and a
+  canvas that shares the mirror's renderer.
+- Add authenticated photo thumbnails for the library grid and a
+  reflection-first default layout with warmer white text.
+- Restyle the desktop companion to match.
+
 ## 1.5.2 - 2026-08-24
 
 - Reject incomplete enabled weather coordinates before an empty field can
