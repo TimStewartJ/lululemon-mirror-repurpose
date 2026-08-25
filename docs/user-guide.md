@@ -42,17 +42,16 @@ The control application has four sections:
 
 ## Dashboards
 
-**Display > What the mirror shows** offers three sources; selecting one applies
+**Display > What the mirror shows** offers two sources; selecting one applies
 it immediately:
 
 - **Mirror**: the built-in layout with a hairline clock, weather, and any
   widgets you arrange. Photos live here too: place one or more Photo widgets,
   up to a full-bleed frame that rotates through the library.
-- **Aurora**: slow curtains of deep color on black behind a centered clock.
 - **Web page**: any HTTP(S) page reachable by the Mirror, such as a Home
   Assistant dashboard.
 
-All built-in surfaces are designed for two-way mirror glass: true black
+The built-in surfaces are designed for two-way mirror glass: true black
 backgrounds, thin white type, and stroke weather glyphs that stay legible
 through the reflection.
 
@@ -66,7 +65,7 @@ is available only from a secure HTTPS or localhost control origin; normal LAN
 HTTP users should use city search.
 
 The visual editor supports a configurable snap grid, edge/center guides,
-reflection safe-zone, undo/redo, widget locks, layers, keyboard movement,
+undo/redo, widget locks, layers, keyboard movement,
 duplicate instances, and validated JSON import/export. Canonical widgets remain
 available and can be hidden; duplicated instances can be deleted.
 

@@ -760,19 +760,6 @@ public final class ControlServer extends NanoHTTPD {
                 assetName = "control/dashboard/mirror.js";
                 mimeType = "application/javascript; charset=utf-8";
                 break;
-            case "/dashboard/aurora.html":
-                assetName = "control/dashboard/aurora.html";
-                mimeType = "text/html; charset=utf-8";
-                document = true;
-                break;
-            case "/dashboard/aurora.css":
-                assetName = "control/dashboard/aurora.css";
-                mimeType = "text/css; charset=utf-8";
-                break;
-            case "/dashboard/aurora.js":
-                assetName = "control/dashboard/aurora.js";
-                mimeType = "application/javascript; charset=utf-8";
-                break;
             case "/dashboard/offline.html":
                 assetName = "control/dashboard/offline.html";
                 mimeType = "text/html; charset=utf-8";

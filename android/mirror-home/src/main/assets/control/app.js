@@ -3,7 +3,6 @@
 
   var TOKEN_KEY = 'mirror-home-token';
   var CLIENT_ID_KEY = 'mirror-home-client-id';
-  var LOCAL_AURORA = 'http://127.0.0.1:8787/dashboard/aurora.html';
 
   var handoff = window.location.hash.indexOf('#handoff=') === 0
     ? window.location.hash.substring('#handoff='.length).split('&')
@@ -34,8 +33,7 @@
   var photoUrlCache = {};
   var layoutSettings = {
     snap: window.localStorage.getItem('mirror-layout-snap') !== 'false',
-    grid: Number(window.localStorage.getItem('mirror-layout-grid') || 20),
-    safeZone: window.localStorage.getItem('mirror-layout-safe-zone') !== 'false'
+    grid: Number(window.localStorage.getItem('mirror-layout-grid') || 20)
   };
   var widgetLabels = {
     clock: 'Clock',
@@ -176,8 +174,7 @@
     var url = status && status.dashboardUrl;
     if (url) {
       note.classList.remove('hidden');
-      note.textContent = url === LOCAL_AURORA ? 'Aurora is showing on the mirror'
-        : 'A web page is showing on the mirror';
+      note.textContent = 'A web page is showing on the mirror';
       return;
     }
     note.classList.add('hidden');
@@ -359,13 +356,6 @@
       grid.className = 'mr-grid';
       canvas.insertBefore(grid, editor.layer);
     }
-    var safe = canvas.querySelector('.mr-safe');
-    if (!safe) {
-      safe = document.createElement('div');
-      safe.className = 'mr-safe';
-      canvas.insertBefore(safe, editor.layer);
-    }
-    safe.classList.toggle('hidden', !layoutSettings.safeZone);
   }
 
   function renderLayoutEditor() {
@@ -388,7 +378,6 @@
     updateWidgetControls();
     byId('layout-snap-enabled').checked = layoutSettings.snap;
     byId('layout-grid-size').value = String(gridSize());
-    byId('layout-safe-zone').checked = layoutSettings.safeZone;
   }
 
   /* ---------- Data refresh ---------- */
@@ -491,9 +480,7 @@
   }
 
   function sourceFromUrl(url) {
-    if (!url) return 'native';
-    if (url === LOCAL_AURORA || url === window.location.origin + '/dashboard/aurora.html') return 'aurora';
-    return 'custom';
+    return url ? 'custom' : 'native';
   }
 
   function refreshDashboard() {
@@ -918,10 +905,7 @@
         byId('dashboard-url').focus();
         return;
       }
-      applyDashboardUrl(
-        mode === 'native' ? '' : LOCAL_AURORA,
-        mode === 'native' ? 'Mirror dashboard is showing' : 'Aurora is showing'
-      );
+      applyDashboardUrl('', 'Mirror dashboard is showing');
     });
   });
 
@@ -1122,11 +1106,6 @@
   byId('layout-grid-size').addEventListener('change', function () {
     layoutSettings.grid = Number(byId('layout-grid-size').value);
     window.localStorage.setItem('mirror-layout-grid', String(gridSize()));
-  });
-  byId('layout-safe-zone').addEventListener('change', function () {
-    layoutSettings.safeZone = byId('layout-safe-zone').checked;
-    window.localStorage.setItem('mirror-layout-safe-zone', String(layoutSettings.safeZone));
-    ensureCanvasChrome();
   });
 
   function closeMenu() {

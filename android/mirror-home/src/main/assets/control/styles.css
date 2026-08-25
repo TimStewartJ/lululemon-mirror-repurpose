@@ -303,7 +303,6 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 /* ---------- Display: sources ---------- */
 
 .choice-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-@media (min-width: 700px) { .choice-grid { grid-template-columns: repeat(3, 1fr); } }
 .choice { position: relative; display: block; cursor: pointer; }
 .choice input { position: absolute; opacity: 0; pointer-events: none; }
 .choice-body {
@@ -319,8 +318,6 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 .choice-glyph { width: 34px; height: 58px; border-radius: 7px; border: 1px solid var(--line-strong); background: #000; position: relative; overflow: hidden; }
 .glyph-native::before { content: ""; position: absolute; left: 5px; top: 6px; width: 14px; height: 6px; border-radius: 1px; background: rgba(255, 255, 255, 0.9); }
 .glyph-native::after { content: ""; position: absolute; left: 5px; top: 15px; width: 10px; height: 2px; background: rgba(255, 255, 255, 0.45); box-shadow: 13px -9px 0 0 rgba(255, 255, 255, 0.6); }
-.glyph-aurora { background: radial-gradient(60% 40% at 50% 85%, rgba(36, 214, 150, 0.55), transparent 70%), radial-gradient(60% 40% at 70% 10%, rgba(112, 72, 214, 0.5), transparent 70%), #000; }
-.glyph-aurora::before { content: ""; position: absolute; left: 9px; top: 14px; width: 16px; height: 6px; border-radius: 1px; background: rgba(255, 255, 255, 0.9); }
 .glyph-web::before { content: ""; position: absolute; left: 5px; right: 5px; top: 7px; height: 3px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 7px 0 0 rgba(255, 255, 255, 0.3), 0 14px 0 0 rgba(255, 255, 255, 0.3), 0 21px 0 0 rgba(255, 255, 255, 0.3); }
 
 /* ---------- Display: editor ---------- */
@@ -357,15 +354,6 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 .canvas .mr-guide { position: absolute; z-index: 300; background: var(--accent); opacity: 0.9; pointer-events: none; }
 .canvas .mr-guide.vertical { top: 0; bottom: 0; width: 1px; }
 .canvas .mr-guide.horizontal { left: 0; right: 0; height: 1px; }
-.canvas .mr-safe {
-  position: absolute; z-index: 1; left: 17%; right: 17%; top: 24%; bottom: 20%; pointer-events: none;
-  border: 1px dashed rgba(255, 255, 255, 0.16); border-radius: 42% / 30%;
-}
-.canvas .mr-safe::after {
-  content: "Face"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  color: rgba(255, 255, 255, 0.22); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
-  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-}
 .canvas .mr-grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 10% 10%; }
 .editor-canvas-column .hint { margin-top: 10px; text-align: center; }
 
