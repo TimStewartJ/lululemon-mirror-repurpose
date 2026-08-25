@@ -4,16 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/dashboard/offline.css">
-  <title>Dashboard offline</title>
+  <title>Mirror</title>
 </head>
 <body>
   <main>
-    <div class="pulse" aria-hidden="true"></div>
-    <p class="eyebrow">Local fallback</p>
-    <h1 id="time">--:--</h1>
-    <p id="date">Dashboard temporarily unavailable</p>
-    <p id="name">Mirror Home will retry automatically.</p>
+    <div class="clock"><span id="time" class="digits">--:--</span><span id="meridiem" class="meridiem"></span></div>
+    <div id="date" class="date">&nbsp;</div>
   </main>
+  <footer>
+    <span class="dot" aria-hidden="true"></span>
+    <span id="status">Dashboard unavailable &middot; retrying</span>
+  </footer>
   <script src="/dashboard/offline.js"></script>
 </body>
 </html>

@@ -8,15 +8,15 @@
 </head>
 <body>
   <main id="stage">
-    <div id="empty">
-      <p class="eyebrow">Mirror Gallery</p>
-      <h1>Add photos from Mirror Home controls</h1>
-      <p>Photos remain stored locally on this Mirror.</p>
+    <div id="empty" class="empty">
+      <p class="empty-title">No photos yet</p>
+      <p class="empty-hint">Add photos from the Mirror controls on your phone. They stay on this Mirror.</p>
     </div>
   </main>
-  <aside>
-    <strong id="clock">--:--</strong>
-    <span id="name">Mirror</span>
+  <div class="scrim" aria-hidden="true"></div>
+  <aside class="caption fade">
+    <div class="clock"><span id="clock" class="digits">--:--</span><span id="meridiem" class="meridiem"></span></div>
+    <div id="date" class="date">&nbsp;</div>
   </aside>
   <script src="/dashboard/gallery.js"></script>
 </body>

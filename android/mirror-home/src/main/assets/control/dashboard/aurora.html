@@ -7,12 +7,21 @@
   <title>Mirror</title>
 </head>
 <body>
-  <main>
-    <div id="time">--:--</div>
-    <div id="date">Loading</div>
-    <div id="name">Mirror</div>
-    <div id="status">Local dashboard</div>
+  <div class="sky" aria-hidden="true">
+    <div class="curtain c1"></div>
+    <div class="curtain c2"></div>
+    <div class="curtain c3"></div>
+    <div class="curtain c4"></div>
+    <div class="horizon"></div>
+  </div>
+  <main class="fade">
+    <div class="clock"><span id="time" class="digits">--:--</span><span id="meridiem" class="meridiem"></span></div>
+    <div id="date" class="date">&nbsp;</div>
   </main>
+  <footer class="fade">
+    <span id="name" class="name">Mirror</span>
+    <span id="status" class="status"></span>
+  </footer>
   <script src="/dashboard/aurora.js"></script>
 </body>
 </html>

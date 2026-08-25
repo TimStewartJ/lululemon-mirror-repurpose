@@ -48,33 +48,33 @@ public final class DashboardLayoutConfig {
                             .put("secondary", "#000000")
                             .put("photo", "")
                             .put("dim", 0));
-            root.put("textColor", "#e7eff1");
-            root.put("accentColor", "#8ab8c2");
+            root.put("textColor", "#f5f2ec");
+            root.put("accentColor", "#c2ced3");
 
             JSONArray widgets = new JSONArray();
-            widgets.put(widget("clock", "clock", 55, 58, 455, 132, true, 88, "start", "", 10));
-            widgets.put(widget("date", "date", 60, 188, 390, 48, true, 64, "start", "", 11));
-            widgets.put(widget("name", "name", 745, 65, 200, 42, false, 58, "end", "", 12));
-            widgets.put(widget("weather", "weather", 605, 58, 340, 145, true, 72, "end", "", 13));
-            widgets.put(widget("forecast", "forecast", 540, 205, 405, 100, false, 58, "end", "", 14));
-            widgets.put(widget("wifi", "wifi", 55, 905, 170, 36, false, 54, "start", "", 20));
-            widgets.put(widget("media", "media", 240, 905, 170, 36, false, 54, "start", "", 21));
-            widgets.put(widget("schedule", "schedule", 425, 905, 200, 36, false, 54, "start", "", 22));
-            widgets.put(widget("brightness", "brightness", 640, 905, 145, 36, false, 54, "start", "", 23));
-            widgets.put(widget("fcast", "fcast", 800, 905, 145, 36, false, 54, "end", "", 24));
-            widgets.put(widget("ble", "ble", 55, 950, 180, 30, false, 46, "start", "", 25));
-            widgets.put(widget("uptime", "uptime", 250, 950, 180, 30, false, 46, "start", "", 26));
-            widgets.put(widget("motion", "motion", 445, 950, 220, 30, false, 46, "start", "", 27));
-            widgets.put(widget("pairing", "pairing", 690, 950, 255, 30, false, 42, "end", "", 28));
+            widgets.put(widget("clock", "clock", 50, 52, 560, 150, true, 100, "start", "", 10));
+            widgets.put(widget("date", "date", 54, 208, 540, 46, true, 70, "start", "", 11));
+            widgets.put(widget("name", "name", 700, 20, 250, 34, false, 58, "end", "", 12));
+            widgets.put(widget("weather", "weather", 600, 58, 350, 110, true, 86, "end", "", 13));
+            widgets.put(widget("forecast", "forecast", 560, 185, 390, 95, true, 70, "end", "", 14));
+            widgets.put(widget("wifi", "wifi", 50, 905, 170, 40, false, 56, "start", "", 20));
+            widgets.put(widget("media", "media", 240, 905, 200, 40, false, 56, "start", "", 21));
+            widgets.put(widget("schedule", "schedule", 460, 905, 200, 40, false, 56, "start", "", 22));
+            widgets.put(widget("brightness", "brightness", 680, 905, 120, 40, false, 56, "start", "", 23));
+            widgets.put(widget("fcast", "fcast", 820, 905, 130, 40, false, 56, "end", "", 24));
+            widgets.put(widget("ble", "ble", 50, 950, 180, 32, false, 48, "start", "", 25));
+            widgets.put(widget("uptime", "uptime", 250, 950, 180, 32, false, 48, "start", "", 26));
+            widgets.put(widget("motion", "motion", 450, 950, 200, 32, false, 48, "start", "", 27));
+            widgets.put(widget("pairing", "pairing", 690, 950, 260, 32, false, 48, "end", "", 28));
             widgets.put(widget(
                     "note",
                     "note",
-                    55,
-                    360,
+                    50,
+                    330,
                     480,
-                    85,
+                    90,
                     false,
-                    52,
+                    56,
                     "start",
                     "Make space for what matters.",
                     15));

@@ -1,0 +1,232 @@
+/* Shared mirror renderer styles.
+   Runs inside the Mirror's Chromium 44 WebView: no custom properties, grid,
+   gap, inset, clamp(), or unprefixed filter. Keep everything 2015-safe.
+
+   Weight is chosen by family name, not font-weight: the 2015 Android font
+   matcher ignores numeric weights below bold but resolves the platform
+   aliases (sans-serif-thin / -light / -medium) to the real Roboto faces.
+   The trailing stacks keep phones and desktops close to the same voice. */
+
+.mr-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: sans-serif-light, -apple-system, "Segoe UI Semilight", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 300;
+  -webkit-font-feature-settings: "tnum" 1, "lnum" 1;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  text-rendering: optimizeLegibility;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mr-thin {
+  font-family: sans-serif-thin, -apple-system, "Segoe UI Light", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 100;
+}
+.mr-light {
+  font-family: sans-serif-light, -apple-system, "Segoe UI Semilight", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 300;
+}
+.mr-regular {
+  font-family: sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 400;
+}
+.mr-medium {
+  font-family: sans-serif-medium, -apple-system, "Segoe UI Semibold", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 500;
+}
+
+.mr-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.mr-photo {
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+.mr-photo.mr-ready { opacity: 1; }
+
+.mr-shade { background: rgba(0, 0, 0, 0); }
+
+.mr-widgets { z-index: 2; }
+
+.mr-widget {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.mr-align-start { align-items: flex-start; text-align: left; }
+.mr-align-center { align-items: center; text-align: center; }
+.mr-align-end { align-items: flex-end; text-align: right; }
+
+/* Hero clock: hairline digits, quiet meridiem resting on the baseline. */
+.mr-clock .mr-line { display: block; white-space: nowrap; }
+.mr-clock .mr-digits { letter-spacing: -0.04em; }
+.mr-clock .mr-meridiem {
+  display: inline-block;
+  margin-left: 0.14em;
+  font-size: 0.24em;
+  letter-spacing: 0.08em;
+  vertical-align: baseline;
+}
+
+.mr-date { letter-spacing: 0.005em; }
+
+.mr-name { letter-spacing: 0.08em; }
+
+.mr-note {
+  line-height: 1.28;
+  white-space: normal;
+  letter-spacing: 0.005em;
+}
+
+/* Small telemetry: a tracked caption above a light value. */
+.mr-metric .mr-label {
+  display: block;
+  margin-bottom: 0.18em;
+  font-size: 0.4em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+.mr-metric .mr-value {
+  display: block;
+  letter-spacing: 0.01em;
+}
+.mr-metric .mr-value.mr-quiet { opacity: 0.55; }
+.mr-metric .mr-code { letter-spacing: 0.12em; }
+
+/* Current conditions: icon beside a hairline temperature, details beneath. */
+.mr-weather .mr-now {
+  display: flex;
+  align-items: center;
+}
+.mr-align-center .mr-now { justify-content: center; }
+.mr-align-end .mr-now { justify-content: flex-end; }
+.mr-weather .mr-icon {
+  display: block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.14em;
+  flex-shrink: 0;
+}
+.mr-weather .mr-temp {
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.mr-weather .mr-inner { max-width: 100%; }
+.mr-weather .mr-detail {
+  display: block;
+  margin-top: 0.14em;
+  font-size: 0.29em;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+.mr-weather .mr-detail .mr-sep {
+  display: inline-block;
+  margin: 0 0.45em;
+  opacity: 0.45;
+}
+.mr-weather .mr-stale { opacity: 0.55; }
+
+/* Hourly strip: evenly spaced columns, rain chance only when it matters. */
+.mr-forecast .mr-inner { width: 100%; }
+.mr-forecast .mr-hours {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+}
+.mr-forecast .mr-hour {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 2.1em;
+}
+.mr-forecast .mr-hour-label {
+  font-size: 0.4em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+.mr-forecast .mr-hour-icon {
+  display: block;
+  width: 0.8em;
+  height: 0.8em;
+  margin: 0.2em 0 0.12em;
+  opacity: 0.95;
+}
+.mr-forecast .mr-hour-temp {
+  font-size: 0.86em;
+  letter-spacing: -0.01em;
+}
+.mr-forecast .mr-hour-rain {
+  margin-top: 0.14em;
+  font-size: 0.36em;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+  min-height: 0.42em;
+}
+
+.mr-icon-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mr-icon-svg .mr-fill { fill: currentColor; stroke: none; }
+
+/* Editing affordances used by the control application only. */
+.mr-editing .mr-widget { cursor: move; }
+.mr-editing .mr-widget.mr-locked { cursor: default; }
+.mr-editing .mr-widget.mr-hidden {
+  opacity: 0.22 !important;
+  outline: 1px dashed rgba(255, 255, 255, 0.35);
+  outline-offset: -1px;
+}
+.mr-editing .mr-widget.mr-selected {
+  outline: 1px solid rgba(255, 255, 255, 0.92);
+  outline-offset: -1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(255, 255, 255, 0.22);
+}
+.mr-editing .mr-widget.mr-hidden.mr-selected { opacity: 0.5 !important; }
+.mr-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px 0 0 0;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  cursor: nwse-resize;
+  display: none;
+}
+.mr-editing .mr-widget.mr-selected:not(.mr-locked) .mr-handle { display: block; }
+
+.mr-fade-in {
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+.mr-fade-in.mr-ready { opacity: 1; }

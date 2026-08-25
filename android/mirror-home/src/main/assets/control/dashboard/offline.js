@@ -1,21 +1,44 @@
-(function(){
-  var timeZone;
-  var utcOffsetMinutes=0;
-  var clock24Hour=false;
-  function tick(){
-    var now=new Date();
-    var displayDate=new Date(now.getTime()+utcOffsetMinutes*60000);
-    var options={hour:'2-digit',minute:'2-digit',hour12:!clock24Hour,timeZone:'UTC'};
-    try{document.getElementById('time').textContent=displayDate.toLocaleTimeString([],options)}
-    catch(error){delete options.timeZone;document.getElementById('time').textContent=displayDate.toLocaleTimeString([],options)}
+/* Offline fallback clock. Runs on the Mirror's Chromium 44 WebView: ES5 only. */
+(function () {
+  'use strict';
+
+  var utcOffsetMinutes = 0;
+  var clock24Hour = false;
+  var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December'];
+
+  function pad(value) { return value < 10 ? '0' + value : String(value); }
+
+  function tick() {
+    var date = new Date(Date.now() + utcOffsetMinutes * 60000);
+    var hours = date.getUTCHours();
+    var minutes = pad(date.getUTCMinutes());
+    document.getElementById('time').textContent = clock24Hour
+      ? pad(hours) + ':' + minutes
+      : (hours % 12 || 12) + ':' + minutes;
+    document.getElementById('meridiem').textContent = clock24Hour ? '' : (hours >= 12 ? 'PM' : 'AM');
+    document.getElementById('date').textContent =
+      WEEKDAYS[date.getUTCDay()] + ', ' + MONTHS[date.getUTCMonth()] + ' ' + date.getUTCDate();
   }
-  fetch('/api/v1/status').then(function(response){return response.json()}).then(function(status){
-    timeZone=status.timeZone;
-    utcOffsetMinutes=Number(status.utcOffsetMinutes||0);
-    clock24Hour=Boolean(status.clock24Hour);
-    document.getElementById('name').textContent=(status.displayName||'Mirror')+' will retry automatically.';
+
+  function status() {
+    fetch('/api/v1/status', { cache: 'no-store' })
+      .then(function (response) { return response.json(); })
+      .then(function (snapshot) {
+        utcOffsetMinutes = Number(snapshot.utcOffsetMinutes || 0);
+        clock24Hour = Boolean(snapshot.clock24Hour);
+        tick();
+      })
+      .then(null, function () {});
+  }
+
+  function alignedTick() {
     tick();
-  }).catch(tick);
-  tick();
-  setInterval(tick,1000);
+    window.setTimeout(alignedTick, 1000 - (Date.now() % 1000) + 15);
+  }
+
+  status();
+  alignedTick();
+  window.setInterval(status, 30000);
 }());

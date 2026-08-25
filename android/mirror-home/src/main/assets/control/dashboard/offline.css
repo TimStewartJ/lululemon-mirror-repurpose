@@ -1,10 +1,13 @@
+/* Offline fallback: simply be a good clock. Chromium 44 safe. */
 *{box-sizing:border-box}
-html,body{width:100%;height:100%;margin:0}
-body{display:flex;align-items:center;justify-content:center;text-align:center;color:#f4fbfc;background:#061019;font-family:sans-serif}
-main{padding:8vw}
-.pulse{width:4vw;height:4vw;margin:0 auto 5vh;border:1vw solid rgba(85,230,193,.18);border-top-color:#55e6c1;border-radius:50%;animation:spin 3s linear infinite}
-.eyebrow{color:#55e6c1;font-size:2vw;letter-spacing:.2em;text-transform:uppercase}
-h1{margin:2vh 0;font-size:20vw;font-weight:200;letter-spacing:-.06em}
-#date{font-size:3.2vw;color:#b4c9cf}
-#name{font-size:2.2vw;color:#78939d}
-@keyframes spin{to{transform:rotate(360deg)}}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#000}
+body{position:relative;color:#f5f2ec;font-family:sans-serif-light,Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-feature-settings:"tnum" 1;font-feature-settings:"tnum" 1}
+main{position:absolute;left:0;right:0;top:13vh;text-align:center;padding:0 6vw}
+.clock{white-space:nowrap;line-height:1}
+.digits{font-family:sans-serif-thin,Roboto,"Helvetica Neue",Arial,sans-serif;font-size:27vw;letter-spacing:-.04em}
+.meridiem{display:inline-block;margin-left:.6vw;font-size:6vw;letter-spacing:.08em}
+.date{margin-top:4.6vh;font-size:4.6vw;opacity:.78}
+footer{position:absolute;left:0;right:0;bottom:6vh;display:flex;justify-content:center;align-items:center;font-size:2.1vw;letter-spacing:.04em;opacity:.5}
+.dot{display:inline-block;width:1vw;height:1vw;margin-right:1.4vw;border-radius:50%;background:#f5f2ec;-webkit-animation:breathe 3.2s ease-in-out infinite;animation:breathe 3.2s ease-in-out infinite}
+@-webkit-keyframes breathe{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes breathe{0%,100%{opacity:.25}50%{opacity:1}}
