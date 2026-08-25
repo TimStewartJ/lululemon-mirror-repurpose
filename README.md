@@ -1,8 +1,30 @@
-# Mirror Repurpose
+# Lululemon Mirror Repurpose
 
-An owner-controlled software stack for repurposing the original Qualcomm-based
-MIRROR fitness display as a configurable smart mirror, dashboard, and
-home-network media renderer.
+An owner-controlled, software-only revival of the discontinued **Lululemon
+MIRROR** fitness mirror (sold as *MIRROR* by Mirror.co from 2018, under
+lululemon after its 2020 acquisition, and as the *lululemon Studio Mirror* from
+late 2022 until it was discontinued in 2023). It turns the original
+Qualcomm-based unit into a configurable smart mirror, dashboard, and
+home-network media renderer without replacing the display electronics: the
+stock Android home app is replaced over ADB, and updates then arrive over the
+LAN.
+
+This is an independent project with no affiliation to, or endorsement by,
+lululemon athletica, Mirror, or Curiouser Products. MIRROR and lululemon are
+trademarks of their respective owners and are used here only to identify the
+hardware this software runs on.
+
+## Which Mirror is this for?
+
+The Qualcomm APQ8016/MSM8916 generation running Android 6.0.1, build
+`IFC-6309-2.0-MIR`. With ADB connected, `adb shell getprop ro.build.fingerprint`
+should report
+`mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys`. Later
+NXP i.MX8-based units are not supported; see
+[Supported devices](docs/supported-devices.md). If you would rather replace the
+electronics than the software, the
+[olm3ca/mirror](https://github.com/olm3ca/mirror) community project documents
+a TV-mainboard conversion.
 
 The project intentionally separates:
 
