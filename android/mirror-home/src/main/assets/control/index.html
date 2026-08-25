@@ -113,6 +113,23 @@
               </div>
             </div>
 
+            <div class="group notes">
+              <form id="note-form" class="form note-composer">
+                <label class="field">
+                  <span>Leave a note on the mirror</span>
+                  <textarea id="note-text" class="note-input" rows="2" maxlength="1000" placeholder="Dinner's in the fridge. Back by 7." aria-describedby="note-count"></textarea>
+                </label>
+                <div class="actions note-actions">
+                  <button type="submit" class="btn primary">Post to mirror</button>
+                  <button id="note-cancel-edit" type="button" class="btn hidden">Cancel</button>
+                  <span id="note-count" class="note-count" aria-live="polite">0 / 1000</span>
+                </div>
+                <p id="note-message" class="status" role="status"></p>
+              </form>
+              <ul id="note-list" class="note-list" aria-label="Notes on the mirror"></ul>
+              <p id="note-empty" class="hint inset">Notes appear on the mirror the moment you post them. Use Display to choose how the Note widget shows them.</p>
+            </div>
+
             <details class="group disclosure">
               <summary><span class="row-label">Play a link on the mirror</span><span class="chevron" aria-hidden="true"></span></summary>
               <form id="media-form" class="form">
@@ -218,10 +235,33 @@
                 <label><span>W</span><input id="layout-widget-width" type="number" min="24" max="1000"></label>
                 <label><span>H</span><input id="layout-widget-height" type="number" min="24" max="1000"></label>
               </div>
-              <label id="layout-note-row" class="row stacked hidden">
-                <span class="row-label">Note</span>
-                <textarea id="layout-note-text" maxlength="120" rows="2" placeholder="A few words for the mirror"></textarea>
+              <label class="row note-only hidden">
+                <span class="row-label">Shows</span>
+                <select id="layout-note-source" class="select"></select>
               </label>
+              <label id="layout-note-row" class="row stacked hidden">
+                <span class="row-label">Text</span>
+                <textarea id="layout-note-text" maxlength="1000" rows="2" placeholder="A few words for the mirror"></textarea>
+                <span id="layout-note-count" class="note-count">0 / 1000</span>
+              </label>
+              <div class="row note-only hidden">
+                <span class="row-label">Size</span>
+                <div class="seg" role="radiogroup" aria-label="Note size">
+                  <label class="seg-opt"><input type="radio" name="note-size" value="auto"><span>Fit</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-size" value="small"><span>S</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-size" value="medium"><span>M</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-size" value="large"><span>L</span></label>
+                </div>
+              </div>
+              <div class="row note-only hidden">
+                <span class="row-label">Weight</span>
+                <div class="seg" role="radiogroup" aria-label="Note weight">
+                  <label class="seg-opt"><input type="radio" name="note-weight" value="thin"><span>Thin</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-weight" value="light"><span>Light</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-weight" value="regular"><span>Regular</span></label>
+                  <label class="seg-opt"><input type="radio" name="note-weight" value="medium"><span>Medium</span></label>
+                </div>
+              </div>
               <label class="row photo-only hidden">
                 <span class="row-label">Photo</span>
                 <select id="layout-widget-photo" class="select"></select>

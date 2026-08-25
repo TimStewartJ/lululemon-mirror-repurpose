@@ -23,6 +23,10 @@
   var dashboardLayout = null;
   var weatherSnapshot = null;
   var photoList = [];
+  var noteList = [];
+  var notesVersion = null;
+  var noteLimit = 1000;
+  var editingNoteId = '';
   var selectedWidgetId = 'clock';
   var layoutHistory = [];
   var layoutFuture = [];
@@ -52,6 +56,12 @@
     note: 'Note',
     photo: 'Photo'
   };
+  var noteSourceLabels = [
+    ['latest', 'Newest note'],
+    ['rotate', 'Rotate through notes'],
+    ['list', 'All notes'],
+    ['text', 'Fixed text']
+  ];
 
   function byId(id) { return document.getElementById(id); }
 
@@ -166,7 +176,9 @@
   });
 
   function previewRuntime() {
-    return status || {};
+    var runtime = status || {};
+    runtime.notes = noteList;
+    return runtime;
   }
 
   function renderHomePreview() {
@@ -265,6 +277,51 @@
     return dashboardLayout.widgets.find(function (widget) { return widget.id === selectedWidgetId; }) || null;
   }
 
+  /* ---------- Notes helpers ---------- */
+
+  function notePreview(text, length) {
+    var flat = String(text || '').replace(/\s+/g, ' ').trim();
+    return flat.length > length ? flat.slice(0, length - 1) + '\u2026' : flat;
+  }
+
+  function autosize(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(320, Math.max(textarea.scrollHeight, 44)) + 'px';
+  }
+
+  function updateNoteCount(textarea, output) {
+    var length = textarea.value.length;
+    output.textContent = length + ' / ' + noteLimit;
+    output.classList.toggle('near', length >= noteLimit * 0.9);
+  }
+
+  function renderNoteSourceOptions(widget) {
+    var select = byId('layout-note-source');
+    var current = widget.source === 'pinned' ? 'pinned:' + (widget.note || '') : (widget.source || 'text');
+    select.textContent = '';
+    noteSourceLabels.forEach(function (entry) {
+      var option = document.createElement('option');
+      option.value = entry[0];
+      option.textContent = entry[1];
+      select.appendChild(option);
+    });
+    var found = false;
+    noteList.forEach(function (note) {
+      var option = document.createElement('option');
+      option.value = 'pinned:' + note.id;
+      option.textContent = 'Always: ' + notePreview(note.text, 40);
+      if (option.value === current) found = true;
+      select.appendChild(option);
+    });
+    if (widget.source === 'pinned' && !found) {
+      var missing = document.createElement('option');
+      missing.value = current;
+      missing.textContent = 'A deleted note';
+      select.appendChild(missing);
+    }
+    select.value = current;
+  }
+
   function setRadio(name, value) {
     var inputs = document.querySelectorAll('input[name="' + name + '"]');
     Array.from(inputs).forEach(function (input) { input.checked = input.value === value; });
@@ -334,8 +391,21 @@
     byId('layout-widget-width').value = String(widget.w);
     byId('layout-widget-height').value = String(widget.h);
     byId('layout-widget-layer').value = String(widget.layer || 0);
-    byId('layout-note-row').classList.toggle('hidden', widget.type !== 'note');
-    byId('layout-note-text').value = widget.text || '';
+    var isNote = widget.type === 'note';
+    Array.from(document.querySelectorAll('.note-only')).forEach(function (row) {
+      row.classList.toggle('hidden', !isNote);
+    });
+    byId('layout-note-row').classList.toggle('hidden', !isNote || (widget.source || 'text') !== 'text');
+    if (isNote) {
+      renderNoteSourceOptions(widget);
+      if (document.activeElement !== byId('layout-note-text')) {
+        byId('layout-note-text').value = widget.text || '';
+        autosize(byId('layout-note-text'));
+      }
+      updateNoteCount(byId('layout-note-text'), byId('layout-note-count'));
+      setRadio('note-size', widget.size || 'auto');
+      setRadio('note-weight', widget.weight || 'light');
+    }
     Array.from(document.querySelectorAll('.photo-only')).forEach(function (row) {
       row.classList.toggle('hidden', widget.type !== 'photo');
     });
@@ -466,6 +536,9 @@
         renderHomePreview();
         if (dashboardLayout && !layoutGestureActive) editor.update(dashboardLayout, previewRuntime());
         showPairedState(true);
+        if (typeof next.notesVersion === 'number' && notesVersion !== null && next.notesVersion !== notesVersion) {
+          refreshNotes().catch(function () {});
+        }
         return next;
       })
       .catch(function (error) {
@@ -761,6 +834,175 @@
     });
   }
 
+  /* ---------- Notes ---------- */
+
+  function refreshNotes() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/notes').then(function (result) {
+      noteList = result.notes || [];
+      notesVersion = typeof result.version === 'number' ? result.version : notesVersion;
+      if (typeof result.maxLength === 'number') {
+        noteLimit = result.maxLength;
+        byId('note-text').maxLength = noteLimit;
+        byId('layout-note-text').maxLength = noteLimit;
+      }
+      if (editingNoteId && !noteList.some(function (note) { return note.id === editingNoteId; })) {
+        cancelNoteEdit();
+      }
+      renderNoteList();
+      renderLayoutEditor();
+      renderHomePreview();
+    });
+  }
+
+  function renderNoteList() {
+    var list = byId('note-list');
+    list.textContent = '';
+    byId('note-empty').classList.toggle('hidden', noteList.length > 0);
+    noteList.forEach(function (note) {
+      var item = document.createElement('li');
+      if (note.id === editingNoteId) item.className = 'editing';
+      var body = document.createElement('div');
+      body.className = 'note-body';
+      var text = document.createElement('p');
+      text.className = 'note-text';
+      text.textContent = note.text;
+      var when = document.createElement('small');
+      when.textContent = (note.updatedAt !== note.createdAt ? 'Edited ' : 'Posted ') + formatDate(note.updatedAt);
+      body.appendChild(text);
+      body.appendChild(when);
+      var actions = document.createElement('div');
+      actions.className = 'icon-row';
+      var edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'btn small';
+      edit.textContent = 'Edit';
+      edit.addEventListener('click', function () { beginNoteEdit(note); });
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'icon-btn';
+      remove.setAttribute('aria-label', 'Delete note');
+      remove.innerHTML = '<svg><use href="#i-close"/></svg>';
+      remove.addEventListener('click', function () {
+        request('/api/v1/notes/' + encodeURIComponent(note.id), { method: 'DELETE' })
+          .then(function () {
+            toast('Note removed from the mirror');
+            return refreshNotes();
+          })
+          .catch(function (error) { setMessage('note-message', error.message, true); });
+      });
+      actions.appendChild(edit);
+      actions.appendChild(remove);
+      item.appendChild(body);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+  }
+
+  function updateComposerCount() {
+    updateNoteCount(byId('note-text'), byId('note-count'));
+  }
+
+  function beginNoteEdit(note) {
+    editingNoteId = note.id;
+    var input = byId('note-text');
+    input.value = note.text;
+    autosize(input);
+    updateComposerCount();
+    byId('note-form').querySelector('button[type="submit"]').textContent = 'Save changes';
+    byId('note-cancel-edit').classList.remove('hidden');
+    renderNoteList();
+    input.focus();
+    byId('note-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function cancelNoteEdit() {
+    editingNoteId = '';
+    var input = byId('note-text');
+    input.value = '';
+    autosize(input);
+    updateComposerCount();
+    byId('note-form').querySelector('button[type="submit"]').textContent = 'Post to mirror';
+    byId('note-cancel-edit').classList.add('hidden');
+    renderNoteList();
+  }
+
+  /* A freshly posted note should be seen. If nothing on the glass shows notes
+     yet, turn on the canonical Note widget with the newest note, leaving any
+     fixed-text tagline the person wrote alone. */
+  function ensureNoteWidgetShowing() {
+    if (!savedLayout) return Promise.resolve('');
+    var showing = savedLayout.widgets.some(function (widget) {
+      return widget.type === 'note' && widget.visible && (widget.source || 'text') !== 'text';
+    });
+    if (showing) return Promise.resolve('');
+    var target = savedLayout.widgets.find(function (widget) { return widget.id === 'note'; });
+    if (!target) return Promise.resolve('');
+    if (target.visible && (target.source || 'text') === 'text' && target.text) {
+      return Promise.resolve('The Note widget shows fixed text. Pick "Newest note" in Display to show notes.');
+    }
+    var wasClean = layoutText() === layoutBaseline;
+    var next = cloneValue(savedLayout);
+    var widget = next.widgets.find(function (candidate) { return candidate.id === 'note'; });
+    widget.visible = true;
+    widget.source = 'latest';
+    widget.note = '';
+    var working = dashboardLayout && dashboardLayout.widgets.find(function (candidate) { return candidate.id === 'note'; });
+    if (working) {
+      working.visible = true;
+      working.source = 'latest';
+      working.note = '';
+    }
+    return request('/api/v1/dashboard/layout', json('PUT', next)).then(function (saved) {
+      savedLayout = cloneValue(saved);
+      if (wasClean) {
+        dashboardLayout = saved;
+        resetLayoutHistory();
+      } else {
+        commitLayoutChange();
+      }
+      renderLayoutEditor();
+      renderHomePreview();
+      return 'The Note widget is now on so you can see it.';
+    });
+  }
+
+  byId('note-text').addEventListener('input', function () {
+    autosize(byId('note-text'));
+    updateComposerCount();
+  });
+
+  byId('note-cancel-edit').addEventListener('click', cancelNoteEdit);
+
+  byId('note-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var text = byId('note-text').value;
+    if (!text.trim()) {
+      setMessage('note-message', 'Write something first.', true);
+      return;
+    }
+    var editing = Boolean(editingNoteId);
+    var call = editing
+      ? request('/api/v1/notes/' + encodeURIComponent(editingNoteId), json('PUT', { text: text }))
+      : request('/api/v1/notes', json('POST', { text: text }));
+    setMessage('note-message', editing ? 'Saving…' : 'Posting…');
+    call
+      .then(function () {
+        cancelNoteEdit();
+        return refreshNotes();
+      })
+      .then(function () { return editing ? '' : ensureNoteWidgetShowing(); })
+      .then(function (extra) {
+        var webPage = status && status.dashboardUrl;
+        var message = editing ? 'Note updated.' : 'Posted to the mirror.';
+        if (webPage) message += ' The mirror is showing a web page; switch to Mirror in Display to see it.';
+        else if (extra) message += ' ' + extra;
+        setMessage('note-message', message);
+        toast(editing ? 'Note updated' : 'Posted to the mirror');
+      })
+      .catch(function (error) { setMessage('note-message', error.message, true); });
+  });
+
   function refreshAll() {
     return refreshStatus()
       .then(function () {
@@ -772,7 +1014,8 @@
           refreshAutomation(),
           refreshWeather(),
           refreshOnboarding(),
-          refreshPhotos()
+          refreshPhotos(),
+          refreshNotes()
         ]);
       })
       .catch(function (error) {
@@ -978,9 +1221,46 @@
     var widget = selectedWidget();
     if (!widget || widget.type !== 'note') return;
     widget.text = byId('layout-note-text').value;
+    autosize(byId('layout-note-text'));
+    updateNoteCount(byId('layout-note-text'), byId('layout-note-count'));
     editor.update(dashboardLayout, previewRuntime());
   });
   byId('layout-note-text').addEventListener('change', commitLayoutChange);
+
+  byId('layout-note-source').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.type !== 'note') return;
+    var value = byId('layout-note-source').value;
+    if (value.indexOf('pinned:') === 0) {
+      widget.source = 'pinned';
+      widget.note = value.substring('pinned:'.length);
+    } else {
+      widget.source = value;
+      widget.note = '';
+    }
+    renderLayoutEditor();
+    commitLayoutChange();
+  });
+
+  Array.from(document.querySelectorAll('input[name="note-size"]')).forEach(function (input) {
+    input.addEventListener('change', function () {
+      var widget = selectedWidget();
+      if (!widget || widget.type !== 'note') return;
+      widget.size = input.value;
+      renderLayoutEditor();
+      commitLayoutChange();
+    });
+  });
+
+  Array.from(document.querySelectorAll('input[name="note-weight"]')).forEach(function (input) {
+    input.addEventListener('change', function () {
+      var widget = selectedWidget();
+      if (!widget || widget.type !== 'note') return;
+      widget.weight = input.value;
+      renderLayoutEditor();
+      commitLayoutChange();
+    });
+  });
 
   byId('layout-widget-photo').addEventListener('change', function () {
     var widget = selectedWidget();

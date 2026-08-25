@@ -78,6 +78,32 @@ backgrounds, and the control application's library grid use scaled,
 EXIF-oriented variants prepared on the Mirror so phone pictures display upright
 and the display never decodes a multi-megapixel original.
 
+### Notes
+
+**Home > Leave a note on the mirror** posts a note (up to 1,000 characters,
+line breaks kept) that appears on the glass within a few seconds without
+touching the layout. The list beneath the composer shows every note on the
+Mirror with edit and delete controls; the Mirror keeps up to 50 notes, newest
+first. Notes are content rather than layout, so any paired phone can post one,
+and other paired browsers see the change at their next status refresh.
+
+The **Note** widget decides how notes appear. Its **Shows** menu offers:
+
+- **Newest note** — the most recent note (the default),
+- **Rotate through notes** — cycle through all notes every twenty seconds with
+  a short fade,
+- **All notes** — stack every note in the widget,
+- **Always: …** — pin one specific note,
+- **Fixed text** — the classic inline tagline typed into the widget itself.
+
+**Size** chooses **Fit** (shrink the text until it fits the box) or a fixed
+small, medium, or large size that clips from the top instead of shrinking;
+**Weight** picks thin, light, regular, or medium type. Duplicate the widget to
+show, for example, a pinned house rule beside the rotating family notes. If
+nothing on the glass is showing notes when you post one, the Mirror turns on
+the canonical Note widget with **Newest note** so the note is seen; a visible
+fixed-text tagline is left alone.
+
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
 
@@ -92,7 +118,7 @@ glass shows:
 - change visibility, lock, alignment, opacity, layer, and exact geometry,
 - choose a solid color, gradient, or library photo background,
 - adjust photo dimming and the text/detail colors,
-- edit the optional note,
+- choose what each Note widget shows and how large and heavy its type is,
 - select **Save & show on mirror** to apply the layout immediately.
 
 The **…** menu exports or imports a layout file and offers **Reset to

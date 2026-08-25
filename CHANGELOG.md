@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Add notes as content, separate from the layout. **Home > Leave a note on the
+  mirror** posts up to 1,000 characters (line breaks kept) that reach the glass
+  within a few seconds over `GET/POST /api/v1/notes` and
+  `PUT/DELETE /api/v1/notes/{id}`; the Mirror keeps up to 50 notes, newest
+  first, and a `notesVersion` field in status and runtime tells clients when
+  to re-fetch. The list under the composer edits and deletes notes.
+- Give the Note widget a source: newest note (the new default), rotate through
+  notes every twenty seconds with a short fade, all notes stacked, one pinned
+  note, or the classic fixed text. Add Fit / S / M / L sizing (fixed sizes
+  clip instead of shrinking) and thin / light / regular / medium weights.
+  Saved layouts without a source keep showing their own text.
+- Raise the note text cap from 120 to 1,000 characters and honor line breaks
+  on the glass; the cap stays at 120 for other widgets' unused text field.
+- Posting a note when nothing on the glass shows notes turns on the canonical
+  Note widget with "Newest note"; a visible fixed-text tagline is left alone.
+
 ## 1.8.2 - 2026-08-25
 
 - Remove the Aurora dashboard source. The Mirror layout and a web page are

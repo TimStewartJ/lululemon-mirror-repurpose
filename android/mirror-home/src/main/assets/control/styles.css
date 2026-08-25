@@ -295,6 +295,25 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 .home-controls .group + .group { margin-top: 0; }
 .now-playing .row-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Notes: a composer on top, the notes on the glass beneath it. */
+.note-composer { padding-bottom: 14px; }
+textarea.note-input, #layout-note-text { resize: none; overflow: hidden; min-height: 44px; line-height: 1.45; }
+.note-actions { align-items: center; }
+.note-count { margin-left: auto; color: var(--text-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.note-count.near { color: var(--accent); }
+.row.stacked .note-count { align-self: flex-end; margin-top: -4px; }
+.note-list { list-style: none; margin: 0; padding: 0; }
+.note-list li { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.note-list li.editing { background: var(--surface-2); }
+.note-body { min-width: 0; flex: 1; }
+.note-text {
+  margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.note-body small { display: block; margin-top: 4px; color: var(--text-3); font-size: 12.5px; }
+.notes .hint.inset { padding-top: 0; }
+.notes .hint.inset:not(.hidden) { border-top: 1px solid var(--line); padding-top: 12px; }
+
 @media (min-width: 900px) {
   .home-grid { grid-template-columns: 300px 1fr; align-items: start; }
   .preview-frame { width: 100%; max-width: 300px; }
