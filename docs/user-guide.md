@@ -42,13 +42,13 @@ The control application has four sections:
 
 ## Dashboards
 
-**Display > What the mirror shows** offers four sources; selecting one applies
+**Display > What the mirror shows** offers three sources; selecting one applies
 it immediately:
 
 - **Mirror**: the built-in layout with a hairline clock, weather, and any
-  widgets you arrange.
+  widgets you arrange. Photos live here too: place one or more Photo widgets,
+  up to a full-bleed frame that rotates through the library.
 - **Aurora**: slow curtains of deep color on black behind a centered clock.
-- **Photos**: a slow slideshow of the private on-device library with a clock.
 - **Web page**: any HTTP(S) page reachable by the Mirror, such as a Home
   Assistant dashboard.
 
@@ -75,9 +75,9 @@ library photo or let the frame rotate through the whole library every twenty
 seconds with a slow crossfade; choose **Fill** to crop to the frame or
 **Whole** to letterbox; alignment sets the crop focus. Duplicate frames for a
 collage. Tapping a photo in the library places it in a frame. Photo frames,
-backgrounds, and the gallery all use scaled, EXIF-oriented variants prepared on
-the Mirror so phone pictures display upright and the display never decodes a
-multi-megapixel original.
+backgrounds, and the control application's library grid use scaled,
+EXIF-oriented variants prepared on the Mirror so phone pictures display upright
+and the display never decodes a multi-megapixel original.
 
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
@@ -91,7 +91,7 @@ glass shows:
 - drag a widget to move it; drag its corner handle to resize it,
 - tap a widget chip to select it, or its eye to show or hide it,
 - change visibility, lock, alignment, opacity, layer, and exact geometry,
-- choose a solid color, gradient, or gallery photo background,
+- choose a solid color, gradient, or library photo background,
 - adjust photo dimming and the text/detail colors,
 - edit the optional note,
 - select **Save & show on mirror** to apply the layout immediately.
@@ -101,8 +101,8 @@ default**, which restores the reflection-first composition without changing
 Wi-Fi, pairings, photos, or schedules. First-run and disconnected states
 continue to use the native setup screen regardless of the saved layout.
 
-The gallery accepts JPEG, PNG, WebP, and GIF images up to 20 MB each, with a
-250 MB total library limit. Photo bytes are served only to the Mirror's
+The photo library accepts JPEG, PNG, WebP, and GIF images up to 20 MB each,
+with a 250 MB total library limit. Photo bytes are served only to the Mirror's
 loopback interface; remote browsers can list, upload, and delete them only with
 an authenticated API request.
 

@@ -130,7 +130,7 @@ public final class PhotoLibrary {
 
     /* Scaled JPEG variants, cached per edge and oriented from EXIF: the 480px
        thumbnail feeds the control application's grid and small frames, the
-       1920px display variant feeds full-bleed backgrounds and the gallery so
+       1920px display variant feeds full-bleed backgrounds and large frames so
        the 2015 WebView never decodes a multi-megapixel original. */
     public synchronized File scaled(String encodedName, int edge) throws IOException {
         File photo = resolve(encodedName);

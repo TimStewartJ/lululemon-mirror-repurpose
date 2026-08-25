@@ -29,6 +29,9 @@ public final class ConfigStore {
     private static final String KEY_WEATHER_LONGITUDE = "weather_longitude";
     private static final String KEY_WEATHER_LOCATION_NAME = "weather_location_name";
     private static final String KEY_WEATHER_UNITS = "weather_units";
+    /* Dashboard sources that no longer ship; a saved pointer to one falls back
+       to the built-in dashboard instead of the offline page. */
+    private static final String RETIRED_GALLERY_URL = "http://127.0.0.1:8787/dashboard/gallery.html";
 
     private final SharedPreferences preferences;
 
@@ -38,7 +41,14 @@ public final class ConfigStore {
     }
 
     public String getDashboardUrl() {
-        return preferences.getString(KEY_DASHBOARD_URL, "");
+        return normalizeDashboardUrl(preferences.getString(KEY_DASHBOARD_URL, ""));
+    }
+
+    static String normalizeDashboardUrl(String dashboardUrl) {
+        if (dashboardUrl == null || RETIRED_GALLERY_URL.equals(dashboardUrl)) {
+            return "";
+        }
+        return dashboardUrl;
     }
 
     public void setDashboardUrl(String dashboardUrl) {

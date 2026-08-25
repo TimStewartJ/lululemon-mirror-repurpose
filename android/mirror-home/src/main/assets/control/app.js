@@ -4,7 +4,6 @@
   var TOKEN_KEY = 'mirror-home-token';
   var CLIENT_ID_KEY = 'mirror-home-client-id';
   var LOCAL_AURORA = 'http://127.0.0.1:8787/dashboard/aurora.html';
-  var LOCAL_GALLERY = 'http://127.0.0.1:8787/dashboard/gallery.html';
 
   var handoff = window.location.hash.indexOf('#handoff=') === 0
     ? window.location.hash.substring('#handoff='.length).split('&')
@@ -178,7 +177,7 @@
     if (url) {
       note.classList.remove('hidden');
       note.textContent = url === LOCAL_AURORA ? 'Aurora is showing on the mirror'
-        : (url === LOCAL_GALLERY ? 'Photos are showing on the mirror' : 'A web page is showing on the mirror');
+        : 'A web page is showing on the mirror';
       return;
     }
     note.classList.add('hidden');
@@ -494,7 +493,6 @@
   function sourceFromUrl(url) {
     if (!url) return 'native';
     if (url === LOCAL_AURORA || url === window.location.origin + '/dashboard/aurora.html') return 'aurora';
-    if (url === LOCAL_GALLERY || url === window.location.origin + '/dashboard/gallery.html') return 'gallery';
     return 'custom';
   }
 
@@ -921,8 +919,8 @@
         return;
       }
       applyDashboardUrl(
-        mode === 'native' ? '' : (mode === 'aurora' ? LOCAL_AURORA : LOCAL_GALLERY),
-        mode === 'native' ? 'Mirror dashboard is showing' : (mode === 'aurora' ? 'Aurora is showing' : 'Photos are showing')
+        mode === 'native' ? '' : LOCAL_AURORA,
+        mode === 'native' ? 'Mirror dashboard is showing' : 'Aurora is showing'
       );
     });
   });

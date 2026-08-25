@@ -303,7 +303,7 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 /* ---------- Display: sources ---------- */
 
 .choice-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-@media (min-width: 700px) { .choice-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 700px) { .choice-grid { grid-template-columns: repeat(3, 1fr); } }
 .choice { position: relative; display: block; cursor: pointer; }
 .choice input { position: absolute; opacity: 0; pointer-events: none; }
 .choice-body {
@@ -321,8 +321,6 @@ details.subtle[open] summary::after { transform: rotate(-135deg); }
 .glyph-native::after { content: ""; position: absolute; left: 5px; top: 15px; width: 10px; height: 2px; background: rgba(255, 255, 255, 0.45); box-shadow: 13px -9px 0 0 rgba(255, 255, 255, 0.6); }
 .glyph-aurora { background: radial-gradient(60% 40% at 50% 85%, rgba(36, 214, 150, 0.55), transparent 70%), radial-gradient(60% 40% at 70% 10%, rgba(112, 72, 214, 0.5), transparent 70%), #000; }
 .glyph-aurora::before { content: ""; position: absolute; left: 9px; top: 14px; width: 16px; height: 6px; border-radius: 1px; background: rgba(255, 255, 255, 0.9); }
-.glyph-gallery { background: linear-gradient(160deg, #3a4a5c 0%, #1d2b3a 55%, #0a0f14 100%); }
-.glyph-gallery::before { content: ""; position: absolute; left: 6px; bottom: 6px; width: 12px; height: 5px; border-radius: 1px; background: rgba(255, 255, 255, 0.9); }
 .glyph-web::before { content: ""; position: absolute; left: 5px; right: 5px; top: 7px; height: 3px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 7px 0 0 rgba(255, 255, 255, 0.3), 0 14px 0 0 rgba(255, 255, 255, 0.3), 0 21px 0 0 rgba(255, 255, 255, 0.3); }
 
 /* ---------- Display: editor ---------- */
