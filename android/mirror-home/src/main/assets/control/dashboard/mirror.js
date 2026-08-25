@@ -375,8 +375,9 @@
 
     function photoMarkup(widget) {
       var empty = !widget.photo && !library.names.length;
+      var layer = '<span class="mr-frame-layer"><img class="mr-frame-img" alt=""></span>';
       return '<span class="mr-frame' + (empty ? ' mr-frame-empty' : '') + '">' +
-        '<img class="mr-frame-img" alt=""><img class="mr-frame-img" alt="">' +
+        layer + layer +
         (empty && editing ? '<span class="mr-frame-hint mr-medium">Photo</span>' : '') +
         '</span>';
     }
@@ -432,28 +433,32 @@
       }, box);
     }
 
-    /* The hidden layer loads the next image itself, then the two layers
-       crossfade; one request, and the swap happens only once pixels exist. */
+    /* The hidden layer's image loads the next photo itself, then the two
+       layers crossfade; one request, and the swap happens only once pixels
+       exist. The fade runs on the wrapper span, never on the <img>: Chromium
+       before 48 hands a composited <img> straight to the GPU and ignores
+       object-fit, so fading the image itself stretched it mid-transition. */
     function showFrameImage(node, url, token) {
-      var layers = node.inner.querySelectorAll('.mr-frame-img');
+      var layers = node.inner.querySelectorAll('.mr-frame-layer');
       if (layers.length < 2) return;
       var front = layers[0].className.indexOf('mr-on') >= 0 ? layers[0] : layers[1];
       var back = front === layers[0] ? layers[1] : layers[0];
-      if (!url) {
-        layers[0].className = 'mr-frame-img';
-        layers[1].className = 'mr-frame-img';
+      var image = back.querySelector('.mr-frame-img');
+      if (!url || !image) {
+        layers[0].className = 'mr-frame-layer';
+        layers[1].className = 'mr-frame-layer';
         return;
       }
-      back.onload = function () {
+      image.onload = function () {
         if (token !== node.photoToken) return;
-        back.className = 'mr-frame-img mr-on';
-        front.className = 'mr-frame-img';
+        back.className = 'mr-frame-layer mr-on';
+        front.className = 'mr-frame-layer';
       };
-      back.onerror = function () {
+      image.onerror = function () {
         if (token !== node.photoToken) return;
-        back.className = 'mr-frame-img';
+        back.className = 'mr-frame-layer';
       };
-      back.src = url;
+      image.src = url;
     }
 
     function geometryKey(widget) {
