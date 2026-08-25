@@ -9,11 +9,14 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -44,6 +47,7 @@ public final class MainActivity extends Activity {
             "http://127.0.0.1:8787/dashboard/offline.html";
     private static final String BUILT_IN_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/custom.html";
+    private static final int TEXT_COLOR = Color.rgb(245, 242, 236);
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
@@ -62,6 +66,9 @@ public final class MainActivity extends Activity {
         public void run() {
             if (nativeStatus != null) {
                 nativeStatus.setText(buildStatusText());
+            }
+            if (nativeCode != null) {
+                nativeCode.setText(groupedPairingCode());
             }
             statusHandler.postDelayed(this, STATUS_REFRESH_INTERVAL_MS);
         }
@@ -95,6 +102,7 @@ public final class MainActivity extends Activity {
     private PlayerView playerView;
     private View sleepOverlay;
     private TextView nativeStatus;
+    private TextView nativeCode;
     private String loadedDashboardUrl = "";
     private boolean dashboardOffline;
     private boolean cameraPermissionRequested;
@@ -225,69 +233,229 @@ public final class MainActivity extends Activity {
 
         LinearLayout dashboard = new LinearLayout(this);
         dashboard.setOrientation(LinearLayout.VERTICAL);
-        dashboard.setGravity(Gravity.CENTER);
-        dashboard.setBackgroundColor(Color.rgb(3, 12, 20));
-        dashboard.setPadding(48, 48, 48, 48);
+        dashboard.setBackgroundColor(Color.BLACK);
         refreshNativeDashboard(dashboard);
         setDashboardView(dashboard);
     }
 
+    /* The setup screen is the first thing anyone sees in the glass: a hairline
+       clock, one rounded QR card, and a pairing code large enough to read from
+       across the room. Telemetry stays off the mirror. */
     private void refreshNativeDashboard(LinearLayout dashboard) {
         dashboard.removeAllViews();
+        nativeCode = null;
+        int edge = dp(52);
+        dashboard.setPadding(edge, dp(64), edge, dp(44));
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.VERTICAL);
+        top.setGravity(Gravity.START);
 
         TextClock clock = new TextClock(this);
         clock.setTimeZone(configStore.getEffectiveTimeZoneId());
-        if (configStore.isClock24Hour()) {
-            clock.setFormat12Hour("HH:mm");
-            clock.setFormat24Hour("HH:mm");
-        } else {
-            clock.setFormat12Hour("h:mm");
-            clock.setFormat24Hour("h:mm");
-        }
-        clock.setTextColor(Color.WHITE);
-        clock.setTextSize(72);
-        dashboard.addView(clock);
+        String format = configStore.isClock24Hour() ? "HH:mm" : "h:mm";
+        clock.setFormat12Hour(format);
+        clock.setFormat24Hour(format);
+        clock.setTypeface(Typeface.create("sans-serif-thin", Typeface.NORMAL));
+        clock.setTextColor(TEXT_COLOR);
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 128);
+        clock.setLetterSpacing(-0.04f);
+        clock.setIncludeFontPadding(false);
+        top.addView(clock);
 
         TextClock date = new TextClock(this);
         date.setTimeZone(configStore.getEffectiveTimeZoneId());
         date.setFormat12Hour("EEEE, MMMM d");
         date.setFormat24Hour("EEEE, MMMM d");
-        date.setTextColor(Color.LTGRAY);
-        date.setTextSize(26);
-        dashboard.addView(date);
+        date.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        date.setTextColor(withAlpha(TEXT_COLOR, 0.72f));
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        LinearLayout.LayoutParams dateLayout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        dateLayout.topMargin = dp(6);
+        top.addView(date, dateLayout);
+        dashboard.addView(top);
+
+        LinearLayout middle = new LinearLayout(this);
+        middle.setOrientation(LinearLayout.VERTICAL);
+        middle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams middleLayout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f);
+        dashboard.addView(middle, middleLayout);
 
         String address = currentIpAddress();
+        WifiDirectOnboarding.Snapshot setup = WifiDirectOnboarding.getInstance(this).snapshot();
+        boolean setupNetwork = address.isEmpty()
+                && setup.active
+                && !setup.networkName.isEmpty()
+                && !setup.passphrase.isEmpty();
         if (!address.isEmpty()) {
-            String setupUrl = "http://" + address + ":" + ControlServerService.PORT + "/";
-            ImageView qrCode = createQrCode(
-                    setupUrl,
-                    360,
-                    "Scan to open Mirror Home controls");
-            LinearLayout.LayoutParams qrLayout = new LinearLayout.LayoutParams(384, 384);
-            qrLayout.setMargins(0, 42, 0, 12);
-            qrCode.setLayoutParams(qrLayout);
-            dashboard.addView(qrCode);
-
-            TextView qrHint = new TextView(this);
-            qrHint.setText("Scan to control this Mirror");
-            qrHint.setTextColor(Color.WHITE);
-            qrHint.setTextSize(18);
-            qrHint.setGravity(Gravity.CENTER);
-            dashboard.addView(qrHint);
+            String controlUrl = "http://" + address + ":" + ControlServerService.PORT + "/";
+            middle.addView(createQrCard(controlUrl, 252, "Scan to open Mirror controls"));
+            middle.addView(caption(
+                    pairingManager.isPaired()
+                            ? "Scan to open the controls"
+                            : "Scan with your phone to set up",
+                    dp(26)));
+            addPairingCode(middle);
+        } else if (setupNetwork) {
+            LinearLayout codes = new LinearLayout(this);
+            codes.setOrientation(LinearLayout.HORIZONTAL);
+            codes.setGravity(Gravity.CENTER);
+            codes.addView(setupStep(
+                    "1",
+                    "Join Mirror Setup Wi-Fi",
+                    WifiDirectOnboarding.wifiQrPayload(setup.networkName, setup.passphrase)));
+            View gap = new View(this);
+            codes.addView(gap, new LinearLayout.LayoutParams(dp(28), 1));
+            codes.addView(setupStep(
+                    "2",
+                    "Open setup",
+                    "http://" + setup.address + ":" + ControlServerService.PORT + "/"));
+            middle.addView(codes);
+            addPairingCode(middle);
         } else {
-            addWifiDirectSetup(dashboard);
+            TextView title = new TextView(this);
+            title.setText(pairingManager.isPaired() ? "Wi-Fi disconnected" : "Ready to set up");
+            title.setTypeface(Typeface.create("sans-serif-thin", Typeface.NORMAL));
+            title.setTextColor(TEXT_COLOR);
+            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
+            title.setGravity(Gravity.CENTER);
+            middle.addView(title);
+            middle.addView(caption(
+                    pairingManager.isPaired()
+                            ? "Waiting for the network to return"
+                            : "Connect over USB and open the companion, or start the setup network",
+                    dp(14)));
         }
 
         TextView status = new TextView(this);
-        status.setText(buildStatusText());
-        status.setTextColor(Color.rgb(80, 235, 255));
-        status.setTextSize(20);
+        status.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        status.setTextColor(withAlpha(TEXT_COLOR, 0.42f));
+        status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        status.setLetterSpacing(0.02f);
         status.setGravity(Gravity.CENTER);
-        status.setPadding(0, 48, 0, 0);
-        dashboard.addView(status);
+        status.setText(buildStatusText());
+        dashboard.addView(status, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         nativeStatus = status;
     }
 
+    private void addPairingCode(LinearLayout parent) {
+        TextView label = new TextView(this);
+        label.setText("PAIRING CODE");
+        label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        label.setTextColor(withAlpha(TEXT_COLOR, 0.5f));
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        label.setLetterSpacing(0.22f);
+        label.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams labelLayout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelLayout.topMargin = dp(44);
+        parent.addView(label, labelLayout);
+
+        TextView code = new TextView(this);
+        code.setText(groupedPairingCode());
+        code.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        code.setTextColor(TEXT_COLOR);
+        code.setTextSize(TypedValue.COMPLEX_UNIT_SP, 64);
+        code.setLetterSpacing(0.14f);
+        code.setGravity(Gravity.CENTER);
+        code.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams codeLayout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        codeLayout.topMargin = dp(8);
+        parent.addView(code, codeLayout);
+        nativeCode = code;
+    }
+
+    private String groupedPairingCode() {
+        String value = pairingManager.currentCode();
+        return value.length() == 6 ? value.substring(0, 3) + " " + value.substring(3) : value;
+    }
+
+    private View setupStep(String number, String title, String payload) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER_HORIZONTAL);
+        column.addView(createQrCard(payload, 178, title));
+
+        TextView step = new TextView(this);
+        step.setText(number);
+        step.setTypeface(Typeface.create("sans-serif-thin", Typeface.NORMAL));
+        step.setTextColor(TEXT_COLOR);
+        step.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+        step.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams stepLayout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        stepLayout.topMargin = dp(20);
+        column.addView(step, stepLayout);
+
+        TextView hint = caption(title, dp(4));
+        hint.setMaxWidth(dp(230));
+        column.addView(hint);
+        return column;
+    }
+
+    private TextView caption(String text, int topMargin) {
+        TextView hint = new TextView(this);
+        hint.setText(text);
+        hint.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        hint.setTextColor(withAlpha(TEXT_COLOR, 0.78f));
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        hint.setGravity(Gravity.CENTER);
+        hint.setLineSpacing(0f, 1.25f);
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        layout.topMargin = topMargin;
+        layout.gravity = Gravity.CENTER_HORIZONTAL;
+        hint.setLayoutParams(layout);
+        hint.setMaxWidth(dp(420));
+        return hint;
+    }
+
+    private View createQrCard(String value, int sizeDp, String description) {
+        int size = dp(sizeDp);
+        int quietZone = dp(18);
+        FrameLayout card = new FrameLayout(this);
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.WHITE);
+        background.setCornerRadius(dp(22));
+        card.setBackground(background);
+        card.setPadding(quietZone, quietZone, quietZone, quietZone);
+
+        ImageView code = new ImageView(this);
+        code.setImageBitmap(QrCodeRenderer.render(value, size));
+        code.setContentDescription(description);
+        card.addView(code, new FrameLayout.LayoutParams(size, size));
+
+        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        layout.gravity = Gravity.CENTER_HORIZONTAL;
+        card.setLayoutParams(layout);
+        return card;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static int withAlpha(int color, float alpha) {
+        return Color.argb(
+                Math.round(255 * alpha),
+                Color.red(color),
+                Color.green(color),
+                Color.blue(color));
+    }
     @SuppressLint("SetJavaScriptEnabled")
     private void renderWebDashboard(String dashboardUrl) {
         if (webDashboard != null && dashboardUrl.equals(loadedDashboardUrl)) {
@@ -350,6 +518,7 @@ public final class MainActivity extends Activity {
 
     private void removeDashboardView() {
         nativeStatus = null;
+        nativeCode = null;
         dashboardHandler.removeCallbacks(dashboardRetry);
         dashboardOffline = false;
         if (dashboardView != null) {
@@ -417,38 +586,15 @@ public final class MainActivity extends Activity {
     }
 
     private String buildStatusText() {
-        StringBuilder text = new StringBuilder();
-        text.append(getString(R.string.bootstrap_status));
-        text.append("\n\nPairing code: ").append(pairingManager.currentCode());
-        text.append("\nUSB setup: http://127.0.0.1:")
-                .append(ControlServerService.PORT);
-        text.append("\nFCast receiver: port ").append(FCastServer.PORT);
-
-        WifiManager wifiManager =
-                (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        WifiInfo info = wifiManager == null ? null : wifiManager.getConnectionInfo();
-        if (info != null && info.getNetworkId() >= 0) {
-            text.append("\nWi-Fi: ").append(WifiProvisioner.cleanSsid(info.getSSID()));
-            String address = WifiProvisioner.ipAddress(info.getIpAddress());
-            if (!address.isEmpty()) {
-                text.append("\nLAN setup: http://")
-                        .append(address)
-                        .append(":")
-                        .append(ControlServerService.PORT);
-            }
-        } else {
-            text.append("\nWi-Fi: not connected");
-            WifiDirectOnboarding.Snapshot setup =
-                    WifiDirectOnboarding.getInstance(this).snapshot();
-            if (setup.active && !setup.networkName.isEmpty()) {
-                text.append("\nSetup network: ").append(setup.networkName);
-                text.append("\nSetup page: http://")
-                        .append(setup.address)
-                        .append(":")
-                        .append(ControlServerService.PORT);
-            }
+        String address = currentIpAddress();
+        if (!address.isEmpty()) {
+            return "http://" + address + ":" + ControlServerService.PORT;
         }
-        return text.toString();
+        WifiDirectOnboarding.Snapshot setup = WifiDirectOnboarding.getInstance(this).snapshot();
+        if (setup.active && !setup.networkName.isEmpty()) {
+            return setup.networkName + "  \u00b7  http://" + setup.address + ":" + ControlServerService.PORT;
+        }
+        return "USB  \u00b7  http://127.0.0.1:" + ControlServerService.PORT;
     }
 
     private String currentIpAddress() {
@@ -458,66 +604,5 @@ public final class MainActivity extends Activity {
         return info == null || info.getNetworkId() < 0
                 ? ""
                 : WifiProvisioner.ipAddress(info.getIpAddress());
-    }
-
-    private void addWifiDirectSetup(LinearLayout dashboard) {
-        WifiDirectOnboarding.Snapshot setup =
-                WifiDirectOnboarding.getInstance(this).snapshot();
-        if (!setup.active
-                || setup.networkName.isEmpty()
-                || setup.passphrase.isEmpty()) {
-            return;
-        }
-
-        TextView heading = new TextView(this);
-        heading.setText("First-time wireless setup");
-        heading.setTextColor(Color.WHITE);
-        heading.setTextSize(22);
-        heading.setGravity(Gravity.CENTER);
-        heading.setPadding(0, 32, 0, 12);
-        dashboard.addView(heading);
-
-        LinearLayout codes = new LinearLayout(this);
-        codes.setOrientation(LinearLayout.HORIZONTAL);
-        codes.setGravity(Gravity.CENTER);
-        addSetupCode(
-                codes,
-                WifiDirectOnboarding.wifiQrPayload(
-                        setup.networkName,
-                        setup.passphrase),
-                "1. Join Mirror Setup Wi-Fi");
-        addSetupCode(
-                codes,
-                "http://" + setup.address + ":" + ControlServerService.PORT + "/",
-                "2. Open setup");
-        dashboard.addView(codes);
-    }
-
-    private void addSetupCode(LinearLayout row, String value, String label) {
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setGravity(Gravity.CENTER);
-        column.setPadding(16, 0, 16, 0);
-
-        ImageView code = createQrCode(value, 280, label);
-        column.addView(code, new LinearLayout.LayoutParams(304, 304));
-
-        TextView hint = new TextView(this);
-        hint.setText(label);
-        hint.setTextColor(Color.WHITE);
-        hint.setTextSize(16);
-        hint.setGravity(Gravity.CENTER);
-        hint.setPadding(0, 10, 0, 0);
-        column.addView(hint);
-        row.addView(column);
-    }
-
-    private ImageView createQrCode(String value, int size, String description) {
-        ImageView code = new ImageView(this);
-        code.setImageBitmap(QrCodeRenderer.render(value, size));
-        code.setContentDescription(description);
-        code.setBackgroundColor(Color.WHITE);
-        code.setPadding(12, 12, 12, 12);
-        return code;
     }
 }
