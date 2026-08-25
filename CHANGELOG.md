@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.9.0 - 2026-08-25
+
 - Add notes as content, separate from the layout. **Home > Leave a note on the
   mirror** posts up to 1,000 characters (line breaks kept) that reach the glass
   within a few seconds over `GET/POST /api/v1/notes` and
