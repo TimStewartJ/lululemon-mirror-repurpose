@@ -39,6 +39,8 @@ PUT  /api/v1/automation
 POST /api/v1/automation/sleep
 POST /api/v1/automation/wake
 GET  /api/v1/photos
+GET  /api/v1/photos/{name}
+GET  /api/v1/photos/{name}/thumbnail
 PUT  /api/v1/photos/{name}
 DELETE /api/v1/photos/{name}
 POST /api/v1/control/brightness

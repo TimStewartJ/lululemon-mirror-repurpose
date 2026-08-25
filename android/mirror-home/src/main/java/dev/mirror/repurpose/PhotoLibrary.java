@@ -1,6 +1,8 @@
 package dev.mirror.repurpose;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -21,6 +23,7 @@ public final class PhotoLibrary {
     public static final long MAX_PHOTO_BYTES = 20L * 1024L * 1024L;
     private static final long MAX_LIBRARY_BYTES = 250L * 1024L * 1024L;
     private static final int MAX_PHOTOS = 250;
+    private static final int THUMBNAIL_EDGE = 480;
 
     private final File root;
 
@@ -110,7 +113,78 @@ public final class PhotoLibrary {
 
     public synchronized boolean delete(String encodedName) {
         File photo = resolve(encodedName);
-        return photo != null && photo.isFile() && photo.delete();
+        if (photo == null || !photo.isFile()) {
+            return false;
+        }
+        File cached = new File(new File(root.getParentFile(), "photo-thumbnails"), photo.getName() + ".jpg");
+        if (cached.isFile() && !cached.delete()) {
+            cached.deleteOnExit();
+        }
+        return photo.delete();
+    }
+
+    /* Small JPEG previews for the control application so phones never have to
+       download the full-size originals just to browse the library. */
+    public synchronized File thumbnail(String encodedName) throws IOException {
+        File photo = resolve(encodedName);
+        if (photo == null || !photo.isFile()) {
+            return null;
+        }
+        File cached = new File(thumbnailRoot(), photo.getName() + ".jpg");
+        if (cached.isFile() && cached.lastModified() >= photo.lastModified()) {
+            return cached;
+        }
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(photo.getPath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            throw new IOException("Photo could not be decoded");
+        }
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 1;
+        while (Math.max(bounds.outWidth, bounds.outHeight) / (options.inSampleSize * 2)
+                >= THUMBNAIL_EDGE) {
+            options.inSampleSize *= 2;
+        }
+        Bitmap decoded = BitmapFactory.decodeFile(photo.getPath(), options);
+        if (decoded == null) {
+            throw new IOException("Photo could not be decoded");
+        }
+        float scale = Math.min(
+                1f,
+                THUMBNAIL_EDGE / (float) Math.max(decoded.getWidth(), decoded.getHeight()));
+        Bitmap scaled = scale < 1f
+                ? Bitmap.createScaledBitmap(
+                        decoded,
+                        Math.max(1, Math.round(decoded.getWidth() * scale)),
+                        Math.max(1, Math.round(decoded.getHeight() * scale)),
+                        true)
+                : decoded;
+        File temporary = new File(thumbnailRoot(), photo.getName() + ".tmp");
+        try (OutputStream output = new FileOutputStream(temporary)) {
+            if (!scaled.compress(Bitmap.CompressFormat.JPEG, 82, output)) {
+                throw new IOException("Thumbnail could not be written");
+            }
+        } finally {
+            if (scaled != decoded) {
+                scaled.recycle();
+            }
+            decoded.recycle();
+        }
+        if (!temporary.renameTo(cached)) {
+            if (cached.exists() && !cached.delete() || !temporary.renameTo(cached)) {
+                throw new IOException("Thumbnail could not be stored");
+            }
+        }
+        return cached;
+    }
+
+    private File thumbnailRoot() throws IOException {
+        File directory = new File(root.getParentFile(), "photo-thumbnails");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IOException("Unable to create thumbnail cache");
+        }
+        return directory;
     }
 
     public static String mimeType(String name) {

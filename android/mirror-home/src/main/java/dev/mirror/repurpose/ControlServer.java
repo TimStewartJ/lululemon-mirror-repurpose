@@ -199,6 +199,13 @@ public final class ControlServer extends NanoHTTPD {
                         Response.Status.OK,
                         new JSONObject().put("photos", photos.list()));
             }
+            if (Method.GET.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/photos/")
+                    && uri.endsWith("/thumbnail")) {
+                return serveThumbnail(uri.substring(
+                        "/api/v1/photos/".length(),
+                        uri.length() - "/thumbnail".length()));
+            }
             if (Method.GET.equals(session.getMethod()) && uri.startsWith("/api/v1/photos/")) {
                 return servePhoto(uri.substring("/api/v1/photos/".length()));
             }
@@ -482,6 +489,21 @@ public final class ControlServer extends NanoHTTPD {
         return result;
     }
 
+    private Response serveThumbnail(String encodedName) throws IOException {
+        File thumbnail = photos.thumbnail(encodedName);
+        if (thumbnail == null) {
+            return error(Response.Status.NOT_FOUND, "Photo not found");
+        }
+        Response result = newFixedLengthResponse(
+                Response.Status.OK,
+                "image/jpeg",
+                new FileInputStream(thumbnail),
+                thumbnail.length());
+        result.addHeader("Cache-Control", "private, max-age=86400");
+        result.addHeader("X-Content-Type-Options", "nosniff");
+        return result;
+    }
+
     private static boolean isLoopback(IHTTPSession session) {
         String address = session.getRemoteIpAddress();
         return "127.0.0.1".equals(address)
@@ -701,6 +723,14 @@ public final class ControlServer extends NanoHTTPD {
                 assetName = "control/icon.svg";
                 mimeType = "image/svg+xml";
                 break;
+            case "/dashboard/mirror.css":
+                assetName = "control/dashboard/mirror.css";
+                mimeType = "text/css; charset=utf-8";
+                break;
+            case "/dashboard/mirror.js":
+                assetName = "control/dashboard/mirror.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
             case "/dashboard/aurora.html":
                 assetName = "control/dashboard/aurora.html";
                 mimeType = "text/html; charset=utf-8";
@@ -776,7 +806,7 @@ public final class ControlServer extends NanoHTTPD {
         result.addHeader(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; style-src 'self'; "
-                        + "img-src 'self' data:; connect-src 'self'; "
+                        + "img-src 'self' data: blob:; connect-src 'self'; "
                         + "frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
         result.addHeader("X-Content-Type-Options", "nosniff");
         result.addHeader("X-Frame-Options", "DENY");
