@@ -6,6 +6,10 @@
   'use strict';
 
   var TEXT_TYPES = { clock: true, date: true, name: true, note: true };
+  var NOTE_WEIGHTS = { thin: true, light: true, regular: true, medium: true };
+  /* Fixed note sizes scale with the shorter stage edge so they read the same
+     on the glass, the editor canvas, and the Home preview. */
+  var NOTE_SIZES = { small: 0.022, medium: 0.032, large: 0.046 };
   var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
     'August', 'September', 'October', 'November', 'December'];
@@ -183,11 +187,23 @@
         case 'clock': return box.height * 0.82;
         case 'date': return box.height * 0.66;
         case 'name': return box.height * 0.62;
-        case 'note': return Math.min(box.height * 0.3, box.width * 0.075);
+        case 'note': return noteFontSize(widget, box);
         case 'weather': return box.height / 1.55;
         case 'forecast': return forecastFontSize(box);
         default: return box.height / 1.72;
       }
+    }
+
+    function noteFontSize(widget, box) {
+      var scale = NOTE_SIZES[widget.size];
+      if (!scale) return Math.min(box.height * 0.3, box.width * 0.075);
+      var stage = stageSize();
+      return Math.min(stage.width, stage.height) * scale;
+    }
+
+    /* Fixed-size notes keep their size and clip; everything else shrinks to fit. */
+    function shrinksToFit(widget) {
+      return widget.type !== 'note' || !NOTE_SIZES[widget.size];
     }
 
     function forecastColumns(box) {
@@ -206,9 +222,10 @@
       var base = baseFontSize(widget, box);
       var inner = node.inner;
       var element = node.element;
+      element.style.fontSize = base + 'px';
+      if (!shrinksToFit(widget)) return;
       var realHtml = inner.innerHTML;
       if (probeHtml) inner.innerHTML = probeHtml;
-      element.style.fontSize = base + 'px';
       /* Widgets may nominate a child (.mr-fit) whose width governs sizing. */
       var gauge = inner.querySelector('.mr-fit') || inner;
       var width = Math.max(gauge.offsetWidth, gauge.scrollWidth);
@@ -326,7 +343,7 @@
       }).join('') + '</span>';
     }
 
-    function contentHtml(widget, local) {
+    function contentHtml(widget, local, node) {
       var media = runtime && runtime.media ? runtime.media : {};
       var wifi = runtime && runtime.wifi ? runtime.wifi : {};
       var automation = runtime && runtime.automation ? runtime.automation : null;
@@ -335,7 +352,7 @@
         case 'clock': return clockHtml(local);
         case 'date': return escapeHtml(formatDate(local));
         case 'name': return escapeHtml(runtime && runtime.displayName ? runtime.displayName : 'Mirror');
-        case 'note': return escapeHtml(widget.text || '');
+        case 'note': return noteHtml(widget, node);
         case 'weather': return weatherHtml();
         case 'forecast': return forecastHtml(widget);
         case 'wifi':
@@ -363,6 +380,71 @@
         case 'photo': return photoMarkup(widget);
         default: return '';
       }
+    }
+
+    /* ---- Notes ---- */
+
+    /* The texts a note widget shows right now. Everything but 'text' reads the
+       NoteBook the host hands over as runtime.notes (newest first). */
+    function noteItems(widget, node) {
+      var source = widget.source || 'text';
+      var notes = runtime && runtime.notes ? runtime.notes : [];
+      var texts = [];
+      if (source === 'text') {
+        if (widget.text) texts.push(widget.text);
+        return texts;
+      }
+      if (source === 'pinned') {
+        for (var index = 0; index < notes.length; index++) {
+          if (notes[index].id === widget.note) {
+            texts.push(notes[index].text);
+            break;
+          }
+        }
+        return texts;
+      }
+      if (!notes.length) return texts;
+      if (source === 'latest') {
+        texts.push(notes[0].text);
+      } else if (source === 'rotate') {
+        texts.push(notes[(slideIndex + (node && node.noteOrder ? node.noteOrder : 0)) % notes.length].text);
+      } else if (source === 'list') {
+        for (var position = 0; position < notes.length; position++) texts.push(notes[position].text);
+      }
+      return texts;
+    }
+
+    function rotatesNotes(widget) {
+      return widget.type === 'note' && widget.source === 'rotate';
+    }
+
+    function noteHtml(widget, node) {
+      var items = noteItems(widget, node);
+      if (!items.length) {
+        return editing && (widget.source || 'text') !== 'text'
+          ? '<span class="mr-note-hint mr-medium">Notes</span>'
+          : '';
+      }
+      var html = '';
+      for (var index = 0; index < items.length; index++) {
+        html += '<span class="mr-note-item">' + escapeHtml(items[index]) + '</span>';
+      }
+      return html;
+    }
+
+    /* Notes change while people watch, so swap their words through a short
+       fade instead of snapping. A newer change within the fade wins. */
+    function fadeSwap(node, widget, html) {
+      node.content = html;
+      node.pendingHtml = html;
+      node.inner.className = 'mr-inner mr-fading';
+      window.setTimeout(function () {
+        if (node.pendingHtml !== html || !nodes[widget.id]) return;
+        node.pendingHtml = null;
+        node.inner.innerHTML = html;
+        fitContent(node, widget, null);
+        node.inner.className = 'mr-inner';
+      }, 450);
     }
 
     /* ---- Photo frames ---- */
@@ -400,10 +482,14 @@
       if (slideTimer) return;
       slideTimer = window.setInterval(function () {
         slideIndex += 1;
+        var local = localDate(now, runtime);
         Object.keys(nodes).forEach(function (id) {
           var node = nodes[id];
-          if (node.widget && node.widget.type === 'photo' && !node.widget.photo) {
+          if (!node.widget) return;
+          if (node.widget.type === 'photo' && !node.widget.photo) {
             applyPhoto(node, node.widget);
+          } else if (rotatesNotes(node.widget)) {
+            renderWidget(node.widget, local, false);
           }
         });
       }, SLIDE_INTERVAL_MS);
@@ -464,15 +550,19 @@
     function geometryKey(widget) {
       return [widget.x, widget.y, widget.w, widget.h, widget.align, widget.opacity,
         widget.layer, widget.visible, widget.locked, widget.type, widget.photo || '',
-        widget.fit || ''].join('|');
+        widget.fit || '', widget.source || '', widget.note || '', widget.size || '',
+        widget.weight || ''].join('|');
     }
 
     function applyGeometry(node, widget) {
       var element = node.element;
       var isPhoto = widget.type === 'photo';
+      var isNote = widget.type === 'note';
       element.className = 'mr-widget mr-' + widget.type +
         (TEXT_TYPES[widget.type] || isPhoto ? '' : ' mr-metric') +
         (isPhoto && widget.fit === 'contain' ? ' mr-fit-contain' : '') +
+        (isNote && NOTE_WEIGHTS[widget.weight] ? ' mr-' + widget.weight : '') +
+        (isNote && NOTE_SIZES[widget.size] ? ' mr-note-fixed' : '') +
         ' mr-align-' + widget.align +
         (widget.visible ? '' : ' mr-hidden') +
         (widget.locked ? ' mr-locked' : '') +
@@ -520,7 +610,7 @@
           node.element.setAttribute('aria-label', widget.type + ' widget');
         }
       }
-      var html = contentHtml(widget, local);
+      var html = contentHtml(widget, local, node);
       var contentChanged = html !== node.content;
       if (widget.type === 'photo') {
         /* Frames keep their layers across geometry changes so images never flash. */
@@ -532,9 +622,16 @@
         if (contentChanged || geometryChanged) applyPhoto(node, widget);
         return;
       }
+      if (widget.type === 'note' && contentChanged && !geometryChanged
+          && !editing && node.content != null) {
+        fadeSwap(node, widget, html);
+        return;
+      }
       if (contentChanged || geometryChanged) {
         /* Re-seed the markup so any earlier trimming is reconsidered. */
         node.content = html;
+        node.pendingHtml = null;
+        node.inner.className = 'mr-inner';
         node.inner.innerHTML = html;
         fitContent(node, widget, widget.type === 'clock' ? clockProbe() : null);
         if (widget.type === 'weather') trimDetail(node, widget);
@@ -570,6 +667,7 @@
       applyBackground();
       var seen = {};
       var rotating = 0;
+      var rotatingNotes = 0;
       layout.widgets.forEach(function (widget) {
         var showsWeather = widget.type !== 'weather' && widget.type !== 'forecast'
           || Boolean(weatherData(runtime, editing));
@@ -580,11 +678,19 @@
           if (existing) existing.order = rotating;
           rotating += 1;
         }
+        if (rotatesNotes(widget) && (widget.visible || editing)) {
+          ensureSlideshow();
+          var existingNote = nodes[widget.id];
+          if (existingNote) existingNote.noteOrder = rotatingNotes;
+          rotatingNotes += 1;
+        }
         var showsPhoto = widget.type !== 'photo' || Boolean(widget.photo) || library.names.length > 0;
-        if (!editing && (!widget.visible || !showsWeather || !showsPhoto)) return;
+        var showsNote = widget.type !== 'note' || noteItems(widget, nodes[widget.id]).length > 0;
+        if (!editing && (!widget.visible || !showsWeather || !showsPhoto || !showsNote)) return;
         seen[widget.id] = true;
         var node = ensureNode(widget);
         if (widget.type === 'photo' && node.order == null) node.order = rotating - 1;
+        if (rotatesNotes(widget) && node.noteOrder == null) node.noteOrder = rotatingNotes - 1;
         renderWidget(widget, local, force);
       });
       Object.keys(nodes).forEach(function (id) {

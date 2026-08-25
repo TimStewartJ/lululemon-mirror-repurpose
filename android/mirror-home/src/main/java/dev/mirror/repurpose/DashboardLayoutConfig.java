@@ -30,6 +30,14 @@ public final class DashboardLayoutConfig {
             "photo"
     };
     private static final String DEFAULT_PHOTO_FIT = "cover";
+    /* Other widgets carry an unused text field; only notes hold real prose. */
+    private static final int MAX_WIDGET_TEXT = 120;
+    /* Where a note widget gets its words: its own text, or the NoteBook. */
+    private static final String[] NOTE_SOURCES = {"text", "latest", "rotate", "list", "pinned"};
+    private static final String[] NOTE_SIZES = {"auto", "small", "medium", "large"};
+    private static final String[] NOTE_WEIGHTS = {"thin", "light", "regular", "medium"};
+    private static final String DEFAULT_NOTE_SIZE = "auto";
+    private static final String DEFAULT_NOTE_WEIGHT = "light";
     /* Widget types from removed features; dropped from saved layouts instead of
        invalidating the whole layout and resetting it to defaults. */
     private static final String[] RETIRED_WIDGET_TYPES = {
@@ -82,7 +90,11 @@ public final class DashboardLayoutConfig {
                     56,
                     "start",
                     "Make space for what matters.",
-                    15));
+                    15)
+                    .put("source", "latest")
+                    .put("note", "")
+                    .put("size", DEFAULT_NOTE_SIZE)
+                    .put("weight", DEFAULT_NOTE_WEIGHT));
             widgets.put(widget("photo", "photo", 50, 680, 440, 190, false, 82, "center", "", 16)
                     .put("photo", "")
                     .put("fit", DEFAULT_PHOTO_FIT));
@@ -299,7 +311,8 @@ public final class DashboardLayoutConfig {
             throw new JSONException("Invalid dashboard widget alignment");
         }
         String text = value.optString("text", fallback.optString("text", ""));
-        if (text.length() > 120 || containsControlCharacter(text)) {
+        int maxText = "note".equals(type) ? NoteBook.MAX_TEXT_LENGTH : MAX_WIDGET_TEXT;
+        if (text.length() > maxText || containsControlCharacter(text)) {
             throw new JSONException("Dashboard note is invalid");
         }
         int layer = bounded(
@@ -328,6 +341,33 @@ public final class DashboardLayoutConfig {
             }
             normalized.put("photo", normalizePhotoName(value.optString("photo", "")));
             normalized.put("fit", fit);
+        }
+        if ("note".equals(type)) {
+            /* Layouts saved before notes had sources keep showing their own text;
+               only a restored default inherits the default source. */
+            String defaultSource = source == null ? fallback.optString("source", "text") : "text";
+            String noteSource = value.optString("source", defaultSource);
+            String noteId = value.optString("note", fallback.optString("note", ""));
+            String size = value.optString("size", fallback.optString("size", DEFAULT_NOTE_SIZE));
+            String weight = value.optString(
+                    "weight",
+                    fallback.optString("weight", DEFAULT_NOTE_WEIGHT));
+            if (!isOneOf(noteSource, NOTE_SOURCES)) {
+                throw new JSONException("Unknown dashboard note source: " + noteSource);
+            }
+            if (!noteId.isEmpty() && !NoteBook.validId(noteId)) {
+                throw new JSONException("Invalid dashboard note reference");
+            }
+            if (!isOneOf(size, NOTE_SIZES)) {
+                throw new JSONException("Dashboard note size must be auto, small, medium, or large");
+            }
+            if (!isOneOf(weight, NOTE_WEIGHTS)) {
+                throw new JSONException("Dashboard note weight must be thin, light, regular, or medium");
+            }
+            normalized.put("source", noteSource);
+            normalized.put("note", noteId);
+            normalized.put("size", size);
+            normalized.put("weight", weight);
         }
         return normalized;
     }
@@ -398,6 +438,15 @@ public final class DashboardLayoutConfig {
     private static boolean isRetiredWidgetType(String type) {
         for (String candidate : RETIRED_WIDGET_TYPES) {
             if (candidate.equals(type)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isOneOf(String value, String[] options) {
+        for (String option : options) {
+            if (option.equals(value)) {
                 return true;
             }
         }

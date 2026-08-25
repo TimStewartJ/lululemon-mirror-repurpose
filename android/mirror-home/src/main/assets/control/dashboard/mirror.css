@@ -91,10 +91,35 @@
 
 .mr-name { letter-spacing: 0.08em; }
 
+/* Notes: real prose. Line breaks survive, long words wrap, and several notes
+   stack as separate blocks. Fixed-size notes clip from the top; the fade lives
+   on the inner span (plain text, so no object-fit caveat applies). */
 .mr-note {
   line-height: 1.28;
-  white-space: normal;
+  white-space: pre-wrap;
+  word-wrap: break-word;
   letter-spacing: 0.005em;
+}
+.mr-note .mr-inner {
+  display: block;
+  max-width: 100%;
+  transition: opacity 0.45s ease;
+}
+.mr-note .mr-inner.mr-fading { opacity: 0; }
+.mr-note .mr-note-item { display: block; }
+.mr-note .mr-note-item + .mr-note-item { margin-top: 0.55em; }
+.mr-note.mr-note-fixed {
+  justify-content: flex-start;
+  overflow: hidden;
+}
+.mr-note .mr-note-hint {
+  display: block;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.5;
 }
 
 /* Small telemetry: a tracked caption above a light value. */

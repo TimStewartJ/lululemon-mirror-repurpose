@@ -173,6 +173,115 @@ public final class DashboardLayoutConfigTest {
         DashboardLayoutConfig.parse(value);
     }
 
+    @Test
+    public void defaultNoteShowsTheNewestNoteWithDefaultTypography() throws JSONException {
+        JSONObject note = find(DashboardLayoutConfig.defaults().toJson(), "note");
+        assertEquals("latest", note.getString("source"));
+        assertEquals("", note.getString("note"));
+        assertEquals("auto", note.getString("size"));
+        assertEquals("light", note.getString("weight"));
+        assertTrue(!find(DashboardLayoutConfig.defaults().toJson(), "clock").has("source"));
+    }
+
+    @Test
+    public void savedNotesWithoutSourceKeepShowingTheirOwnText() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        JSONObject note = find(value, "note");
+        note.remove("source");
+        note.remove("size");
+        note.remove("weight");
+        note.put("text", "Line one\nLine two");
+
+        JSONObject parsed = find(DashboardLayoutConfig.parse(value).toJson(), "note");
+
+        assertEquals("text", parsed.getString("source"));
+        assertEquals("Line one\nLine two", parsed.getString("text"));
+        assertEquals("auto", parsed.getString("size"));
+        assertEquals("light", parsed.getString("weight"));
+    }
+
+    @Test
+    public void restoredDefaultNoteInheritsTheDefaultSource() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        org.json.JSONArray widgets = value.getJSONArray("widgets");
+        for (int index = widgets.length() - 1; index >= 0; index--) {
+            if ("note".equals(widgets.getJSONObject(index).getString("id"))) {
+                widgets.remove(index);
+            }
+        }
+
+        JSONObject restored = find(DashboardLayoutConfig.parse(value).toJson(), "note");
+
+        assertEquals("latest", restored.getString("source"));
+        assertFalse(restored.getBoolean("visible"));
+    }
+
+    @Test
+    public void noteWidgetsKeepValidatedSourceAndTypography() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "note")
+                .put("source", "pinned")
+                .put("note", "abc123")
+                .put("size", "large")
+                .put("weight", "thin");
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < NoteBook.MAX_TEXT_LENGTH; index++) {
+            text.append('n');
+        }
+        find(value, "note").put("text", text.toString());
+
+        JSONObject parsed = find(DashboardLayoutConfig.parse(value).toJson(), "note");
+
+        assertEquals("pinned", parsed.getString("source"));
+        assertEquals("abc123", parsed.getString("note"));
+        assertEquals("large", parsed.getString("size"));
+        assertEquals("thin", parsed.getString("weight"));
+        assertEquals(NoteBook.MAX_TEXT_LENGTH, parsed.getString("text").length());
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsOversizedNoteText() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index <= NoteBook.MAX_TEXT_LENGTH; index++) {
+            text.append('n');
+        }
+        find(value, "note").put("text", text.toString());
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void keepsTheShortTextCapForOtherWidgets() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        StringBuilder text = new StringBuilder();
+        for (int index = 0; index < 121; index++) {
+            text.append('c');
+        }
+        find(value, "clock").put("text", text.toString());
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownNoteSource() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "note").put("source", "rss");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsMalformedNoteReference() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "note").put("source", "pinned").put("note", "../x");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownNoteWeight() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "note").put("weight", "bold");
+        DashboardLayoutConfig.parse(value);
+    }
+
     private static JSONObject find(JSONObject layout, String id) throws JSONException {
         for (int index = 0; index < layout.getJSONArray("widgets").length(); index++) {
             JSONObject widget = layout.getJSONArray("widgets").getJSONObject(index);
