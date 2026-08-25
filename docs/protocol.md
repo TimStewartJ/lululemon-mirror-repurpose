@@ -28,6 +28,10 @@ GET  /api/v1/dashboard/layout
 PUT  /api/v1/dashboard/layout
 POST /api/v1/dashboard/layout/reset
 POST /api/v1/dashboard/layout/validate
+GET  /api/v1/notes
+POST /api/v1/notes
+PUT  /api/v1/notes/{id}
+DELETE /api/v1/notes/{id}
 GET  /api/v1/preferences
 PUT  /api/v1/preferences
 GET  /api/v1/weather
@@ -62,6 +66,13 @@ Only bootstrap, pairing, static controls, and loopback-only dashboard resources
 are public. Full status and all state changes require authentication for LAN
 clients. ADB-forwarded and on-device loopback status remains available for
 recovery and local templates.
+
+Notes are content, not layout. `GET /api/v1/notes` returns
+`{notes: [{id, text, createdAt, updatedAt}], version, maxLength, maxNotes}`
+newest first and is readable from loopback so the glass can fetch it; the
+mutating routes require authentication and take `{text}`. `status` and
+`dashboard/runtime` carry `notesVersion`, a counter that changes with every
+mutation, so clients re-fetch notes only when something changed.
 
 Wi-Fi passphrases are accepted only through authenticated local channels and
 are passed directly to Android's Wi-Fi configuration API.

@@ -29,6 +29,7 @@ public final class ControlServer extends NanoHTTPD {
     private final AutomationManager automation;
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
+    private final NoteStore notes;
     private final PairingManager pairing;
     private final PhotoLibrary photos;
     private final SystemHelperClient systemHelper;
@@ -43,6 +44,7 @@ public final class ControlServer extends NanoHTTPD {
         automation = AutomationManager.getInstance(context);
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
+        notes = NoteStore.getInstance(context);
         pairing = PairingManager.getInstance(context);
         photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
@@ -93,6 +95,11 @@ public final class ControlServer extends NanoHTTPD {
                 return response(
                         Response.Status.OK,
                         configStore.getDashboardLayout().toJson());
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/notes".equals(uri)
+                    && isLoopback(session)) {
+                return response(Response.Status.OK, notesDocument());
             }
             if (Method.GET.equals(session.getMethod())) {
                 Response asset = controlAsset(uri);
@@ -145,6 +152,22 @@ public final class ControlServer extends NanoHTTPD {
                 return response(
                         Response.Status.OK,
                         configStore.getDashboardLayout().toJson());
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/notes".equals(uri)) {
+                return response(Response.Status.OK, notesDocument());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/notes".equals(uri)) {
+                return addNote(readJson(session));
+            }
+            if (Method.PUT.equals(session.getMethod()) && uri.startsWith("/api/v1/notes/")) {
+                return updateNote(uri.substring("/api/v1/notes/".length()), readJson(session));
+            }
+            if (Method.DELETE.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/notes/")) {
+                boolean deleted = notes.delete(uri.substring("/api/v1/notes/".length()));
+                return response(
+                        deleted ? Response.Status.OK : Response.Status.NOT_FOUND,
+                        new JSONObject().put("deleted", deleted).put("version", notes.version()));
             }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/preferences".equals(uri)) {
                 return response(Response.Status.OK, preferences());
@@ -338,6 +361,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("media", media.snapshot());
         result.put("automation", automation.snapshot());
         result.put("weather", weather.snapshot(false));
+        result.put("notesVersion", notes.version());
         return result;
     }
 
@@ -395,6 +419,43 @@ public final class ControlServer extends NanoHTTPD {
         configStore.setDashboardLayout(layout);
         notifyConfigurationChanged();
         return response(Response.Status.OK, layout.toJson());
+    }
+
+    private JSONObject notesDocument() throws JSONException {
+        return new JSONObject()
+                .put("notes", notes.list())
+                .put("version", notes.version())
+                .put("maxLength", NoteBook.MAX_TEXT_LENGTH)
+                .put("maxNotes", NoteBook.MAX_NOTES);
+    }
+
+    private Response addNote(JSONObject body) throws JSONException {
+        try {
+            JSONObject note = notes.add(noteText(body));
+            return response(
+                    Response.Status.CREATED,
+                    new JSONObject().put("note", note).put("version", notes.version()));
+        } catch (IllegalArgumentException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
+        }
+    }
+
+    private Response updateNote(String id, JSONObject body) throws JSONException {
+        try {
+            JSONObject note = notes.update(id, noteText(body));
+            if (note == null) {
+                return error(Response.Status.NOT_FOUND, "Note not found");
+            }
+            return response(
+                    Response.Status.OK,
+                    new JSONObject().put("note", note).put("version", notes.version()));
+        } catch (IllegalArgumentException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
+        }
+    }
+
+    private static String noteText(JSONObject body) {
+        return body.isNull("text") ? null : body.optString("text");
     }
 
     private String controlUrl() {
