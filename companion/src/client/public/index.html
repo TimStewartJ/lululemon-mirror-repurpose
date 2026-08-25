@@ -3,200 +3,174 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0c0c0d" />
     <title>Mirror Companion</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="app-header">
-      <h1>Mirror Companion</h1>
-      <p class="subtitle">USB setup, pairing, dashboard, Wi-Fi, and media for your Mirror.</p>
+    <header class="topbar">
+      <div class="identity">
+        <span class="mark" aria-hidden="true"></span>
+        <div>
+          <h1>Mirror Companion</h1>
+          <p class="subtitle">Recovery and development workbench. Day‑to‑day control lives on the mirror itself.</p>
+        </div>
+      </div>
     </header>
 
-    <main class="layout">
-      <section class="card" id="access-card">
-        <h2>0. Companion access</h2>
-        <p class="hint">
-          Only required when the companion is reachable over the LAN (not needed for the default
-          loopback-only setup). Ask whoever configured the companion for the access token; it is
-          kept only in this tab's session storage and sent as an <code>X-Companion-Token</code>
-          header.
-        </p>
-        <form id="access-token-form" autocomplete="off">
-          <label for="access-token">Access token</label>
-          <input id="access-token" name="token" type="password" autocomplete="off" />
-          <button type="submit">Save token</button>
-          <button id="clear-access-token" type="button" class="secondary">Clear</button>
-        </form>
-        <p id="access-token-status" class="status-line"></p>
-      </section>
+    <main class="workbench">
+      <!-- Left rail: getting connected -->
+      <div class="column">
+        <section class="group" id="connect-card">
+          <div class="group-head"><span class="step">1</span><h2>Connect over USB</h2></div>
+          <p class="hint">Plug the mirror in and approve USB debugging on the glass if it asks.</p>
+          <div class="actions">
+            <button id="refresh-devices" type="button" class="btn primary">Scan for devices</button>
+            <button id="disconnect-device" type="button" class="btn">Disconnect</button>
+          </div>
+          <ul id="device-list" class="list" aria-live="polite"></ul>
+          <p id="connect-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="connect-card">
-        <h2>1. Connect over USB</h2>
-        <p class="hint">
-          Plug the Mirror in over USB and authorize debugging on-device if prompted.
-        </p>
-        <button id="refresh-devices" type="button">Scan for devices</button>
-        <ul id="device-list" class="device-list" aria-live="polite"></ul>
-        <button id="disconnect-device" type="button" class="secondary">Disconnect</button>
-        <p id="connect-status" class="status-line"></p>
-      </section>
+        <section class="group" id="pair-card">
+          <div class="group-head"><span class="step">2</span><h2>Pair</h2></div>
+          <p class="hint">Enter the six‑digit code shown on the mirror.</p>
+          <form id="pair-form" autocomplete="off" class="form">
+            <label class="field"><span>Pairing code</span><input id="pair-code" name="code" inputmode="numeric" maxlength="6" placeholder="000000" required /></label>
+            <div class="actions">
+              <button type="submit" class="btn primary">Pair</button>
+              <button id="revoke-pairing" type="button" class="btn">Revoke pairing</button>
+            </div>
+          </form>
+          <p id="pair-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="pair-card">
-        <h2>2. Pair</h2>
-        <p class="hint">Enter the short-lived pairing code shown on the Mirror's display.</p>
-        <form id="pair-form" autocomplete="off">
-          <label for="pair-code">Pairing code</label>
-          <input id="pair-code" name="code" inputmode="numeric" required />
-          <button type="submit">Pair</button>
-        </form>
-        <button id="revoke-pairing" type="button" class="secondary">Revoke pairing</button>
-        <p id="pair-status" class="status-line"></p>
-      </section>
+        <section class="group" id="status-card">
+          <div class="group-head"><h2>Status</h2><button id="refresh-status" type="button" class="btn small">Refresh</button></div>
+          <dl class="facts" id="status-grid">
+            <dt>Paired</dt><dd data-field="paired">—</dd>
+            <dt>Name</dt><dd data-field="displayName">—</dd>
+            <dt>Brightness</dt><dd data-field="brightness">—</dd>
+            <dt>Wi‑Fi</dt><dd data-field="wifi">—</dd>
+          </dl>
+        </section>
 
-      <section class="card" id="status-card">
-        <h2>Status</h2>
-        <button id="refresh-status" type="button">Refresh</button>
-        <dl class="status-grid" id="status-grid">
-          <dt>Paired</dt>
-          <dd data-field="paired">—</dd>
-          <dt>Display name</dt>
-          <dd data-field="displayName">—</dd>
-          <dt>Brightness</dt>
-          <dd data-field="brightness">—</dd>
-          <dt>Wi-Fi</dt>
-          <dd data-field="wifi">—</dd>
-        </dl>
-      </section>
+        <section class="group" id="access-card">
+          <details>
+            <summary><h2>Companion access token</h2><span class="chev" aria-hidden="true"></span></summary>
+            <p class="hint">Only needed when the companion itself is reachable over the LAN. Kept in this tab's session storage and sent as <code>X-Companion-Token</code>.</p>
+            <form id="access-token-form" autocomplete="off" class="form">
+              <label class="field"><span>Access token</span><input id="access-token" name="token" type="password" autocomplete="off" /></label>
+              <div class="actions">
+                <button type="submit" class="btn">Save token</button>
+                <button id="clear-access-token" type="button" class="btn">Clear</button>
+              </div>
+            </form>
+            <p id="access-token-status" class="status status-line"></p>
+          </details>
+        </section>
+      </div>
 
-      <section class="card" id="wifi-card">
-        <h2>Wi-Fi</h2>
-        <p class="hint">
-          The passphrase is sent directly to the Mirror and is never stored by the companion.
-        </p>
-        <form id="wifi-form" autocomplete="off">
-          <label for="wifi-ssid">SSID</label>
-          <input id="wifi-ssid" name="ssid" required />
-          <label for="wifi-passphrase">Passphrase</label>
-          <input id="wifi-passphrase" name="passphrase" type="password" autocomplete="new-password" />
-          <label class="checkbox-row">
-            <input id="wifi-hidden" name="hidden" type="checkbox" />
-            Hidden network
-          </label>
-          <button type="submit">Configure Wi-Fi</button>
-        </form>
-        <p id="wifi-status" class="status-line"></p>
-      </section>
+      <!-- Right rail: acting on the mirror -->
+      <div class="column">
+        <section class="group" id="wifi-card">
+          <div class="group-head"><h2>Wi‑Fi</h2></div>
+          <p class="hint">The password goes straight to the mirror and is never stored by the companion.</p>
+          <form id="wifi-form" autocomplete="off" class="form">
+            <label class="field"><span>Network</span><input id="wifi-ssid" name="ssid" required /></label>
+            <label class="field"><span>Password</span><input id="wifi-passphrase" name="passphrase" type="password" autocomplete="new-password" /></label>
+            <label class="toggle-row"><span>Hidden network</span><input id="wifi-hidden" name="hidden" type="checkbox" class="switch" /></label>
+            <div class="actions"><button type="submit" class="btn primary">Connect</button></div>
+          </form>
+          <p id="wifi-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="dashboard-card">
-        <h2>Dashboard, name &amp; brightness</h2>
-        <form id="dashboard-form" autocomplete="off">
-          <label for="dashboard-url">Dashboard URL</label>
-          <input id="dashboard-url" name="url" type="url" placeholder="https://example.com" />
-          <button type="submit">Save URL</button>
-        </form>
-        <form id="name-form" autocomplete="off">
-          <label for="display-name">Display name</label>
-          <input id="display-name" name="name" maxlength="64" />
-          <button type="submit">Save name</button>
-        </form>
-        <form id="brightness-form" autocomplete="off">
-          <label for="brightness-value">Brightness (1-255)</label>
-          <input id="brightness-value" name="value" type="range" min="1" max="255" value="128" />
-          <output id="brightness-output" for="brightness-value">128</output>
-          <button type="submit">Set brightness</button>
-        </form>
-        <p id="dashboard-status" class="status-line"></p>
-      </section>
+        <section class="group" id="dashboard-card">
+          <div class="group-head"><h2>Dashboard, name, brightness</h2></div>
+          <form id="dashboard-form" autocomplete="off" class="form inline">
+            <label class="field"><span>Dashboard URL</span><input id="dashboard-url" name="url" type="url" placeholder="Leave empty for the built‑in mirror layout" /></label>
+            <button type="submit" class="btn">Save</button>
+          </form>
+          <form id="name-form" autocomplete="off" class="form inline">
+            <label class="field"><span>Name</span><input id="display-name" name="name" maxlength="64" /></label>
+            <button type="submit" class="btn">Save</button>
+          </form>
+          <form id="brightness-form" autocomplete="off" class="form">
+            <label class="field" for="brightness-value"><span>Brightness <output id="brightness-output" for="brightness-value">128</output></span>
+              <input id="brightness-value" name="value" type="range" min="1" max="255" value="128" class="slider" /></label>
+            <div class="actions"><button type="submit" class="btn">Set brightness</button></div>
+          </form>
+          <p id="dashboard-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="media-card">
-        <h2>Media library</h2>
-        <p class="hint">Upload local files to host over the LAN with range-request playback.</p>
-        <form id="upload-form" autocomplete="off">
-          <label for="upload-file">File</label>
-          <input id="upload-file" name="file" type="file" required />
-          <button type="submit">Upload</button>
-        </form>
-        <button id="refresh-media" type="button" class="secondary">Refresh list</button>
-        <ul id="media-list" class="media-list" aria-live="polite"></ul>
-        <p id="media-status" class="status-line"></p>
-      </section>
+        <section class="group" id="media-card">
+          <div class="group-head"><h2>Media library</h2><button id="refresh-media" type="button" class="btn small">Refresh</button></div>
+          <p class="hint">Files hosted by this computer and streamed to the mirror with range requests.</p>
+          <form id="upload-form" autocomplete="off" class="form inline">
+            <label class="field"><span>File</span><input id="upload-file" name="file" type="file" required /></label>
+            <button type="submit" class="btn primary">Upload</button>
+          </form>
+          <ul id="media-list" class="list media" aria-live="polite"></ul>
+          <p id="media-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="ble-provision-card">
-        <h2>BLE provisioning (Web Bluetooth)</h2>
-        <p class="hint">
-          Provision Wi-Fi and connect over Bluetooth Low Energy instead of USB, using your
-          browser's Web Bluetooth support (Chrome/Edge on desktop or Android). The Mirror must be
-          advertising its provisioning service. This must be started by clicking the button below
-          directly (browsers require a user gesture to start a Bluetooth scan).
-        </p>
-        <form id="ble-form" autocomplete="off">
-          <label for="ble-code">Pairing code</label>
-          <input id="ble-code" name="code" inputmode="numeric" required />
-          <label for="ble-ssid">SSID</label>
-          <input id="ble-ssid" name="ssid" required />
-          <label for="ble-passphrase">Passphrase</label>
-          <input id="ble-passphrase" name="passphrase" type="password" autocomplete="new-password" />
-          <label class="checkbox-row">
-            <input id="ble-hidden" name="hidden" type="checkbox" />
-            Hidden network
-          </label>
-          <button type="submit">Provision over Bluetooth</button>
-        </form>
-        <p id="ble-status" class="status-line"></p>
-      </section>
+        <section class="group" id="device-media-card">
+          <div class="group-head"><h2>Playback on the mirror</h2><button id="refresh-media-status" type="button" class="btn small">Refresh</button></div>
+          <dl class="facts" id="device-media-grid">
+            <dt>State</dt><dd data-field="mediaState">—</dd>
+            <dt>Title</dt><dd data-field="mediaTitle">—</dd>
+            <dt>Position</dt><dd data-field="mediaTime">—</dd>
+          </dl>
+          <div class="actions">
+            <button id="media-pause" type="button" class="btn">Pause</button>
+            <button id="media-resume" type="button" class="btn">Resume</button>
+            <button id="media-stop" type="button" class="btn">Stop</button>
+          </div>
+          <form id="media-seek-form" autocomplete="off" class="form inline">
+            <label class="field"><span>Seek to (seconds)</span><input id="media-seek-time" name="time" type="number" min="0" step="1" value="0" /></label>
+            <button type="submit" class="btn">Seek</button>
+          </form>
+          <form id="media-volume-form" autocomplete="off" class="form">
+            <label class="field" for="media-volume-value"><span>Volume <output id="media-volume-output" for="media-volume-value">1</output></span>
+              <input id="media-volume-value" name="value" type="range" min="0" max="1" step="0.05" value="1" class="slider" /></label>
+            <div class="actions"><button type="submit" class="btn">Set volume</button></div>
+          </form>
+          <p id="device-media-status" class="status status-line"></p>
+        </section>
 
-      <section class="card" id="device-media-card">
-        <h2>Device media playback</h2>
-        <p class="hint">Controls whatever is currently loaded on the Mirror's media player.</p>
-        <button id="refresh-media-status" type="button">Refresh</button>
-        <dl class="status-grid" id="device-media-grid">
-          <dt>State</dt>
-          <dd data-field="mediaState">—</dd>
-          <dt>Title</dt>
-          <dd data-field="mediaTitle">—</dd>
-          <dt>Position</dt>
-          <dd data-field="mediaTime">—</dd>
-        </dl>
-        <div class="button-row">
-          <button id="media-pause" type="button">Pause</button>
-          <button id="media-resume" type="button">Resume</button>
-          <button id="media-stop" type="button" class="secondary">Stop</button>
-        </div>
-        <form id="media-seek-form" autocomplete="off">
-          <label for="media-seek-time">Seek to (seconds)</label>
-          <input id="media-seek-time" name="time" type="number" min="0" step="1" value="0" />
-          <button type="submit">Seek</button>
-        </form>
-        <form id="media-volume-form" autocomplete="off">
-          <label for="media-volume-value">Volume (0-1)</label>
-          <input id="media-volume-value" name="value" type="range" min="0" max="1" step="0.05" value="1" />
-          <output id="media-volume-output" for="media-volume-value">1</output>
-          <button type="submit">Set volume</button>
-        </form>
-        <p id="device-media-status" class="status-line"></p>
-      </section>
+        <section class="group" id="ble-provision-card">
+          <details>
+            <summary><h2>Provision over Bluetooth</h2><span class="chev" aria-hidden="true"></span></summary>
+            <p class="hint">Uses Web Bluetooth (Chrome or Edge). The mirror must be advertising setup; the button has to be clicked directly because browsers require a user gesture to scan.</p>
+            <form id="ble-form" autocomplete="off" class="form">
+              <label class="field"><span>Pairing code</span><input id="ble-code" name="code" inputmode="numeric" required /></label>
+              <label class="field"><span>Network</span><input id="ble-ssid" name="ssid" required /></label>
+              <label class="field"><span>Password</span><input id="ble-passphrase" name="passphrase" type="password" autocomplete="new-password" /></label>
+              <label class="toggle-row"><span>Hidden network</span><input id="ble-hidden" name="hidden" type="checkbox" class="switch" /></label>
+              <div class="actions"><button type="submit" class="btn primary">Provision over Bluetooth</button></div>
+            </form>
+            <p id="ble-status" class="status status-line"></p>
+          </details>
+        </section>
 
-      <section class="card" id="system-card">
-        <h2>System helper</h2>
-        <p class="hint">
-          Reports whether the on-device system helper is reachable and lets you prepare kiosk
-          mode (locks the Mirror into the dashboard view), switch the default launcher to Mirror
-          Home, or restore the device's stock launcher, once paired.
-        </p>
-        <button id="refresh-system" type="button">Refresh status</button>
-        <dl class="status-grid" id="system-grid">
-          <dt>Helper connected</dt>
-          <dd data-field="systemConnected">—</dd>
-          <dt>Capabilities</dt>
-          <dd data-field="systemCapabilities">—</dd>
-        </dl>
-        <div class="button-row">
-          <button id="prepare-kiosk" type="button">Prepare kiosk mode</button>
-          <button id="use-mirror-home" type="button">Use Mirror Home</button>
-          <button id="restore-stock-home" type="button" class="secondary">Restore stock HOME</button>
-        </div>
-        <p id="system-status" class="status-line"></p>
-      </section>
+        <section class="group danger-zone" id="system-card">
+          <details>
+            <summary><h2>System helper</h2><span class="chev" aria-hidden="true"></span></summary>
+            <p class="hint">Privileged, transient operations: prepare kiosk mode, make Mirror Home the default launcher, or restore the stock launcher. Requires the helper to be installed and a paired connection.</p>
+            <div class="actions"><button id="refresh-system" type="button" class="btn small">Refresh status</button></div>
+            <dl class="facts" id="system-grid">
+              <dt>Helper connected</dt><dd data-field="systemConnected">—</dd>
+              <dt>Capabilities</dt><dd data-field="systemCapabilities">—</dd>
+            </dl>
+            <div class="actions">
+              <button id="prepare-kiosk" type="button" class="btn">Prepare kiosk mode</button>
+              <button id="use-mirror-home" type="button" class="btn">Use Mirror Home</button>
+              <button id="restore-stock-home" type="button" class="btn danger">Restore stock HOME</button>
+            </div>
+            <p id="system-status" class="status status-line"></p>
+          </details>
+        </section>
+      </div>
     </main>
 
     <script type="module" src="app.js"></script>
