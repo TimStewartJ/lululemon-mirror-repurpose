@@ -1,6 +1,7 @@
 package dev.mirror.repurpose;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.json.JSONException;
@@ -14,9 +15,9 @@ public final class DashboardLayoutConfigTest {
         assertEquals(2, value.getInt("version"));
         assertEquals("solid", value.getJSONObject("background").getString("mode"));
         assertEquals("#000000", value.getJSONObject("background").getString("primary"));
-        assertEquals(16, value.getJSONArray("widgets").length());
+        assertEquals(15, value.getJSONArray("widgets").length());
         assertEquals(0, value.getJSONObject("background").getInt("dim"));
-        assertEquals(16, DashboardLayoutConfig.parse(value).toJson()
+        assertEquals(15, DashboardLayoutConfig.parse(value).toJson()
                 .getJSONArray("widgets").length());
         assertTrue(value.getJSONArray("widgets").getJSONObject(3).getBoolean("visible"));
     }
@@ -47,7 +48,7 @@ public final class DashboardLayoutConfigTest {
         JSONObject migrated = DashboardLayoutConfig.parse(value).toJson();
 
         assertEquals(2, migrated.getInt("version"));
-        assertEquals(16, migrated.getJSONArray("widgets").length());
+        assertEquals(15, migrated.getJSONArray("widgets").length());
         assertTrue(!find(migrated, "weather").getBoolean("visible"));
         assertTrue(!find(migrated, "forecast").getBoolean("visible"));
     }
@@ -64,7 +65,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(17, parsed.getJSONArray("widgets").length());
+        assertEquals(16, parsed.getJSONArray("widgets").length());
         assertTrue(find(parsed, "clock-2").getBoolean("locked"));
         assertEquals(42, find(parsed, "clock-2").getInt("layer"));
     }
@@ -86,9 +87,53 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject normalized = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(16, normalized.getJSONArray("widgets").length());
+        assertEquals(15, normalized.getJSONArray("widgets").length());
         assertTrue(!find(normalized, "weather").getBoolean("visible"));
         assertTrue(!find(normalized, "date").getBoolean("visible"));
+    }
+
+    @Test
+    public void dropsRetiredBluetoothWidgetFromSavedVersionTwoLayouts() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        value.getJSONArray("widgets").getJSONObject(0).put("x", 120);
+        value.getJSONArray("widgets").put(new JSONObject()
+                .put("id", "ble")
+                .put("type", "ble")
+                .put("x", 50)
+                .put("y", 950)
+                .put("w", 180)
+                .put("h", 32)
+                .put("visible", true)
+                .put("opacity", 48)
+                .put("align", "start")
+                .put("text", "")
+                .put("locked", false)
+                .put("layer", 25));
+
+        JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
+
+        assertEquals(15, parsed.getJSONArray("widgets").length());
+        assertEquals(120, find(parsed, "clock").getInt("x"));
+        assertFalse(contains(parsed, "ble"));
+    }
+
+    @Test
+    public void dropsRetiredBluetoothWidgetFromSavedVersionOneLayouts() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        value.put("version", 1);
+        value.getJSONArray("widgets").put(new JSONObject()
+                .put("id", "ble")
+                .put("x", 50)
+                .put("y", 950)
+                .put("w", 180)
+                .put("h", 32)
+                .put("visible", true));
+
+        JSONObject migrated = DashboardLayoutConfig.parse(value).toJson();
+
+        assertEquals(2, migrated.getInt("version"));
+        assertEquals(15, migrated.getJSONArray("widgets").length());
+        assertFalse(contains(migrated, "ble"));
     }
 
     @Test(expected = JSONException.class)
@@ -136,5 +181,14 @@ public final class DashboardLayoutConfigTest {
             }
         }
         throw new JSONException("Widget not found: " + id);
+    }
+
+    private static boolean contains(JSONObject layout, String id) throws JSONException {
+        for (int index = 0; index < layout.getJSONArray("widgets").length(); index++) {
+            if (id.equals(layout.getJSONArray("widgets").getJSONObject(index).getString("id"))) {
+                return true;
+            }
+        }
+        return false;
     }
 }

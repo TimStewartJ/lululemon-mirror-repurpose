@@ -350,9 +350,6 @@
           value = runtime && typeof runtime.brightness === 'number' ? runtime.brightness : null;
           return metric('Brightness', value == null ? '\u2014' : Math.round(value / 255 * 100) + '%', value == null);
         case 'fcast': return metric('Cast', 'Ready', false);
-        case 'ble':
-          value = runtime && runtime.bleProvisioning ? String(runtime.bleProvisioning) : 'Unavailable';
-          return metric('Bluetooth', escapeHtml(value.charAt(0).toUpperCase() + value.slice(1)), false);
         case 'uptime':
           return metric('Uptime', formatUptime(runtime && runtime.deviceUptimeSeconds), false);
         case 'motion':

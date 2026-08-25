@@ -161,7 +161,7 @@ Advance only when each gate has a recorded rollback:
 2. eMMC and read-only stock-partition access,
 3. stable LVDS output at the panel's native mode,
 4. GPU acceleration without restart-inducing faults,
-5. Wi-Fi reconnect and Bluetooth provisioning,
+5. Wi-Fi reconnect and QR/Wi-Fi Direct provisioning,
 6. speaker/microphone with volume forced low during testing,
 7. browser kiosk, Media3-equivalent playback, FCast v4, and watchdog,
 8. 24-hour thermal/memory soak,

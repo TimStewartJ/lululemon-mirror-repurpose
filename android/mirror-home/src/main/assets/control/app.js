@@ -47,7 +47,6 @@
     schedule: 'Schedule',
     brightness: 'Brightness',
     fcast: 'Casting',
-    ble: 'Bluetooth',
     uptime: 'Uptime',
     motion: 'Presence',
     weather: 'Weather',
@@ -465,12 +464,9 @@
         }
         byId('about-version').textContent = next.appVersion || '—';
         byId('about-address').textContent = next.wifi && next.wifi.ipAddress
-          ? next.wifi.ipAddress + ':8787' : 'USB or Bluetooth only';
+          ? next.wifi.ipAddress + ':8787' : 'USB only';
         byId('about-binder').textContent = next.mirrorBinderConnected ? 'Connected' : 'Reconnecting';
         byId('about-helper').textContent = next.systemHelperConnected ? 'Temporary helper active' : 'Factory service';
-        byId('about-ble').textContent = next.bleProvisioning
-          ? String(next.bleProvisioning).charAt(0).toUpperCase() + String(next.bleProvisioning).slice(1)
-          : 'Unavailable';
         byId('about-uptime').textContent = formatUptime(next.deviceUptimeSeconds);
         if (next.weather) {
           weatherSnapshot = next.weather;

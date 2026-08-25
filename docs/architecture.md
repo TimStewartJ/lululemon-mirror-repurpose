@@ -5,7 +5,6 @@
 ```text
 Phone / desktop browser
   | QR + LAN/Wi-Fi Direct: same-origin authenticated HTTP
-  | BLE: encrypted provisioning GATT service
   v
 Mirror Home (ordinary APK, default HOME)
   | device-hosted responsive controls
@@ -37,7 +36,6 @@ Mirror Home owns all user-facing behavior:
 - clock, status, and configurable web dashboard
 - pairing code and connection status
 - embedded HTTP control plane
-- BLE provisioning service
 - Wi-Fi network enrollment
 - media playback overlay and queue
 - return-to-dashboard behavior
@@ -66,7 +64,6 @@ The companion is a local Node.js service and static browser UI:
 - forwards a localhost port to Mirror Home over USB
 - proxies browser requests server-side so the device API does not require CORS
 - opens the same UI over LAN after Wi-Fi provisioning
-- uses Web Bluetooth for initial provisioning where supported
 - hosts local media files with range requests
 - sends playback, dashboard, and automation commands
 
@@ -84,9 +81,6 @@ health-check the loopback Home API and perform an in-place rollback.
 Requests use HMAC-SHA256 with monotonic replay counters. The active token and
 independent bootstrap secret remain in ignored local files. See
 [LAN OTA updates](ota-updates.md).
-
-BLE characteristics require an encrypted bond. The on-screen pairing code then
-authorizes token issuance and Wi-Fi enrollment at the application layer.
 
 ## Media path
 

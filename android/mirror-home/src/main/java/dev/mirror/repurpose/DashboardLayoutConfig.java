@@ -21,7 +21,6 @@ public final class DashboardLayoutConfig {
             "schedule",
             "brightness",
             "fcast",
-            "ble",
             "uptime",
             "motion",
             "weather",
@@ -31,6 +30,11 @@ public final class DashboardLayoutConfig {
             "photo"
     };
     private static final String DEFAULT_PHOTO_FIT = "cover";
+    /* Widget types from removed features; dropped from saved layouts instead of
+       invalidating the whole layout and resetting it to defaults. */
+    private static final String[] RETIRED_WIDGET_TYPES = {
+            "ble"
+    };
 
     private final JSONObject value;
 
@@ -64,7 +68,6 @@ public final class DashboardLayoutConfig {
             widgets.put(widget("schedule", "schedule", 460, 905, 200, 40, false, 56, "start", "", 22));
             widgets.put(widget("brightness", "brightness", 680, 905, 120, 40, false, 56, "start", "", 23));
             widgets.put(widget("fcast", "fcast", 820, 905, 130, 40, false, 56, "end", "", 24));
-            widgets.put(widget("ble", "ble", 50, 950, 180, 32, false, 48, "start", "", 25));
             widgets.put(widget("uptime", "uptime", 250, 950, 180, 32, false, 48, "start", "", 26));
             widgets.put(widget("motion", "motion", 450, 950, 200, 32, false, 48, "start", "", 27));
             widgets.put(widget("pairing", "pairing", 690, 950, 260, 32, false, 48, "end", "", 28));
@@ -176,6 +179,9 @@ public final class DashboardLayoutConfig {
                     throw new JSONException("Dashboard widgets must be objects");
                 }
                 String id = widget.optString("id", "");
+                if (isRetiredWidgetType(id)) {
+                    continue;
+                }
                 if (!isAllowedWidgetType(id) || supplied.put(id, widget) != null) {
                     throw new JSONException("Unknown or duplicate dashboard widget: " + id);
                 }
@@ -225,6 +231,9 @@ public final class DashboardLayoutConfig {
             }
             String id = source.optString("id", "");
             String type = source.optString("type", "");
+            if (isRetiredWidgetType(type)) {
+                continue;
+            }
             if (!validWidgetId(id) || ids.put(id, true) != null) {
                 throw new JSONException("Invalid or duplicate dashboard widget id: " + id);
             }
@@ -380,6 +389,15 @@ public final class DashboardLayoutConfig {
     private static boolean isAllowedWidgetType(String id) {
         for (String candidate : WIDGET_TYPES) {
             if (candidate.equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isRetiredWidgetType(String type) {
+        for (String candidate : RETIRED_WIDGET_TYPES) {
+            if (candidate.equals(type)) {
                 return true;
             }
         }

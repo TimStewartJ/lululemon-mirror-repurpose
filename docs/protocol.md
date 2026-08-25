@@ -5,7 +5,7 @@ Mirror Home exposes a versioned JSON API over HTTP.
 ## Pairing
 
 1. Mirror Home displays a short-lived numeric pairing code.
-2. A browser or companion submits the code over Wi-Fi Direct, USB, LAN, or BLE.
+2. A browser or companion submits the code over Wi-Fi Direct, USB, or LAN.
 3. Mirror Home returns a random per-client bearer token.
 4. Only its SHA-256 hash is persisted on the Mirror.
 5. Individual clients can be listed and revoked.

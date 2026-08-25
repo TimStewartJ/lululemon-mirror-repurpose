@@ -336,7 +336,6 @@ public final class ControlServer extends NanoHTTPD {
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
         result.put("media", media.snapshot());
-        result.put("bleProvisioning", BleProvisioningServer.lastKnownStatus());
         result.put("automation", automation.snapshot());
         result.put("weather", weather.snapshot(false));
         return result;

@@ -13,7 +13,6 @@ public final class ControlServerService extends Service {
             "dev.mirror.repurpose.CONFIGURATION_CHANGED";
 
     private static final String TAG = "ControlServerService";
-    private BleProvisioningServer bleServer;
     private ControlServer server;
     private FCastServer fcastServer;
     private LocalDiscovery localDiscovery;
@@ -39,11 +38,6 @@ public final class ControlServerService extends Service {
             return;
         }
 
-        bleServer = new BleProvisioningServer(
-                this,
-                PairingManager.getInstance(this),
-                new WifiProvisioner(this));
-        bleServer.start();
         wifiDirectOnboarding = WifiDirectOnboarding.getInstance(this);
         wifiDirectOnboarding.startIfNeeded();
 
@@ -81,10 +75,6 @@ public final class ControlServerService extends Service {
         if (fcastServer != null) {
             fcastServer.stop();
             fcastServer = null;
-        }
-        if (bleServer != null) {
-            bleServer.stop();
-            bleServer = null;
         }
         super.onDestroy();
     }
