@@ -1,11 +1,11 @@
 {
-  "name": "Mirror Home",
+  "name": "Mirror",
   "short_name": "Mirror",
-  "description": "Private local control for Mirror Home",
+  "description": "Control your Mirror from any device on your network.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#061019",
-  "theme_color": "#07131d",
+  "background_color": "#0c0c0d",
+  "theme_color": "#0c0c0d",
   "icons": [
     {
       "src": "/icon.svg",

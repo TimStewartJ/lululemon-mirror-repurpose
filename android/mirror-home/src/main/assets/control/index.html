@@ -3,384 +3,395 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#07131d">
-  <meta name="description" content="Private local control for Mirror Home">
+  <meta name="theme-color" content="#0c0c0d">
+  <meta name="description" content="Control your Mirror from any phone or computer on your network.">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="/dashboard/mirror.css">
   <link rel="stylesheet" href="/styles.css">
-  <title>Mirror Home</title>
+  <title>Mirror</title>
 </head>
 <body>
-  <header class="hero">
-    <div class="brand-mark" aria-hidden="true"></div>
-    <div>
-      <p class="eyebrow">Private local control</p>
-      <h1 id="mirror-name">Mirror Home</h1>
-    </div>
-    <span id="connection-pill" class="pill">Connecting</span>
-  </header>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-home" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.6"/><path d="M9.5 6.5l-2 8"/></symbol>
+    <symbol id="i-display" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.4"/><path d="M3 9.5h18M9 9.5V20"/></symbol>
+    <symbol id="i-schedule" viewBox="0 0 24 24"><path d="M12.5 3a6.4 6.4 0 0 0 9 9 9 9 0 1 1-9-9z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M4 4l16 16M9.9 5.4A10.4 10.4 0 0 1 12 6c6 0 9.5 6 9.5 6a16.6 16.6 0 0 1-3 3.6M6.2 7.6A15.8 15.8 0 0 0 2.5 12s3.5 6 9.5 6a9.8 9.8 0 0 0 3.4-.6"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M8 7l-4 4 4 4"/><path d="M4 11h10a5 5 0 0 1 0 10h-3"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M16 7l4 4-4 4"/><path d="M20 11H10a5 5 0 0 0 0 10h3"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.55 1.55M17.15 17.15l1.55 1.55M5.3 18.7l1.55-1.55M17.15 6.85l1.55-1.55"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6.4 6.4 0 0 0 9 9 9 9 0 1 1-9-9z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  </svg>
 
-  <main>
-    <section id="pairing-card" class="card pairing-card hidden">
-      <div>
-        <p class="eyebrow">First connection</p>
-        <h2>Pair this device</h2>
-        <p>Enter the current six-digit code shown on the Mirror. This browser receives its own revocable credential.</p>
-      </div>
-      <form id="pair-form" class="form-grid">
-        <label>
-          <span>Device name</span>
-          <input id="client-name" maxlength="64" autocomplete="name" value="My phone">
+  <section id="pairing-card" class="pairing hidden" aria-labelledby="pairing-title">
+    <div class="pairing-inner">
+      <div class="pairing-mark" aria-hidden="true"></div>
+      <h1 id="pairing-title">Pair with <span id="pairing-mirror-name">your Mirror</span></h1>
+      <p class="lede">Enter the six-digit code on the mirror. This browser gets its own key, which you can revoke any time.</p>
+      <form id="pair-form" class="pairing-form">
+        <label class="code-field">
+          <span class="visually-hidden">Pairing code</span>
+          <input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" required>
         </label>
-        <label>
-          <span>Pairing code</span>
-          <input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        <label class="field">
+          <span>Name this device</span>
+          <input id="client-name" maxlength="64" autocomplete="off" value="My phone">
         </label>
-        <button type="submit">Pair securely</button>
+        <button type="submit" class="btn primary wide">Pair</button>
       </form>
-      <p id="pair-message" class="message" role="status"></p>
-    </section>
+      <p id="pair-message" class="status" role="status"></p>
+    </div>
+  </section>
 
-    <div id="app-shell" class="hidden">
-      <nav class="tabs" aria-label="Mirror controls">
-        <button class="tab active" data-panel="overview">Overview</button>
-        <button class="tab" data-panel="display">Display</button>
-        <button class="tab" data-panel="automation">Schedule</button>
-        <button class="tab" data-panel="media">Media</button>
-        <button class="tab" data-panel="network">Network</button>
-        <button class="tab" data-panel="access">Access</button>
-      </nav>
+  <div id="app-shell" class="shell hidden">
+    <header class="topbar">
+      <div class="identity">
+        <span id="live-dot" class="live-dot" aria-hidden="true"></span>
+        <h1 id="mirror-name">Mirror</h1>
+      </div>
+      <span id="live-text" class="live-text">Connecting</span>
+    </header>
 
-      <section id="overview" class="panel active">
-        <div class="metric-grid">
-          <article class="metric">
-            <span>Wi-Fi</span>
-            <strong id="wifi-summary">Checking</strong>
-          </article>
-          <article class="metric">
-            <span>Playback</span>
-            <strong id="media-summary">Idle</strong>
-          </article>
-          <article class="metric">
-            <span>FCast</span>
-            <strong>Ready</strong>
-          </article>
-          <article class="metric">
-            <span>Bluetooth setup</span>
-            <strong id="ble-summary">Checking</strong>
-          </article>
-        </div>
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">At a glance</p>
-              <h2>Appliance status</h2>
-            </div>
-            <button id="refresh-status" class="secondary">Refresh</button>
+    <nav class="tabs" aria-label="Sections">
+      <button class="tab active" data-panel="home"><svg><use href="#i-home"/></svg><span>Home</span></button>
+      <button class="tab" data-panel="display"><svg><use href="#i-display"/></svg><span>Display</span></button>
+      <button class="tab" data-panel="schedule"><svg><use href="#i-schedule"/></svg><span>Schedule</span></button>
+      <button class="tab" data-panel="settings"><svg><use href="#i-settings"/></svg><span>Settings</span></button>
+    </nav>
+
+    <main class="content">
+      <!-- HOME -->
+      <section id="home" class="panel active">
+        <div class="home-grid">
+          <div class="preview-column">
+            <button id="home-preview-button" class="preview-frame" type="button" aria-label="Open the layout editor">
+              <div id="home-preview" class="preview-stage"></div>
+              <div id="home-preview-note" class="preview-note hidden"></div>
+            </button>
+            <p id="home-status" class="home-status">&nbsp;</p>
           </div>
-          <dl class="status-list">
-            <div><dt>Address</dt><dd id="ip-address">—</dd></div>
-            <div><dt>Brightness</dt><dd id="brightness-status">—</dd></div>
-            <div><dt>Mirror services</dt><dd id="binder-status">—</dd></div>
-            <div><dt>System helper</dt><dd id="helper-status">Not installed</dd></div>
-            <div><dt>Mirror Home</dt><dd id="app-version">—</dd></div>
-          </dl>
-        </article>
+          <div class="home-controls">
+            <div class="group">
+              <div class="row">
+                <div class="row-main">
+                  <span class="row-label">Brightness</span>
+                  <output id="brightness-output" class="row-value" for="brightness">—</output>
+                </div>
+                <input id="brightness" class="slider" type="range" min="1" max="255" value="128" aria-label="Brightness">
+              </div>
+              <div class="row">
+                <span class="row-label">Display</span>
+                <div class="seg" role="group" aria-label="Wake or sleep">
+                  <button id="wake-now" type="button" class="seg-btn"><svg><use href="#i-sun"/></svg>Awake</button>
+                  <button id="sleep-now" type="button" class="seg-btn"><svg><use href="#i-moon"/></svg>Sleep</button>
+                </div>
+              </div>
+              <p id="home-message" class="status inset" role="status"></p>
+            </div>
+
+            <div id="now-playing" class="group now-playing hidden">
+              <div class="row">
+                <div class="row-main">
+                  <span class="row-kicker">Now playing</span>
+                  <span id="np-title" class="row-label">—</span>
+                  <span id="np-state" class="row-sub">—</span>
+                </div>
+                <div class="icon-row">
+                  <button id="media-pause" type="button" class="icon-btn" aria-label="Pause"><svg><use href="#i-pause"/></svg></button>
+                  <button id="media-resume" type="button" class="icon-btn" aria-label="Resume"><svg><use href="#i-play"/></svg></button>
+                  <button id="media-stop" type="button" class="icon-btn" aria-label="Stop"><svg><use href="#i-stop"/></svg></button>
+                </div>
+              </div>
+            </div>
+
+            <details class="group disclosure">
+              <summary><span class="row-label">Play a link on the mirror</span><span class="chevron" aria-hidden="true"></span></summary>
+              <form id="media-form" class="form">
+                <label class="field"><span>Video or stream URL</span><input id="media-url" type="url" inputmode="url" placeholder="https://…  (HLS, DASH, RTSP, MP4)" required></label>
+                <label class="field"><span>Title <em>optional</em></span><input id="media-title" maxlength="120"></label>
+                <label class="row"><span class="row-label">Start muted</span><input id="media-muted" class="switch" type="checkbox" checked></label>
+                <div class="actions"><button type="submit" class="btn primary">Play on mirror</button></div>
+                <p id="media-message" class="status" role="status"></p>
+              </form>
+            </details>
+          </div>
+        </div>
       </section>
 
+      <!-- DISPLAY -->
       <section id="display" class="panel">
-        <article class="card">
-          <p class="eyebrow">What the Mirror shows</p>
-          <h2>Dashboard</h2>
-          <form id="dashboard-form" class="form-grid">
-            <label>
-              <span>Mode</span>
-              <select id="dashboard-mode">
-                <option value="native">Built-in mirror dashboard</option>
-                <option value="aurora">Aurora clock</option>
-                <option value="gallery">Local photo gallery</option>
-                <option value="custom">Custom or Home Assistant URL</option>
-              </select>
-            </label>
-            <label id="dashboard-url-row">
-              <span>Dashboard URL</span>
-              <input id="dashboard-url" type="url" inputmode="url" placeholder="http://home-assistant.local:8123/dashboard-mirror">
-            </label>
-            <button type="submit">Apply dashboard</button>
+        <h2 class="section-title">What the mirror shows</h2>
+        <div class="choice-grid" role="radiogroup" aria-label="Dashboard source">
+          <label class="choice"><input type="radio" name="source" value="native"><span class="choice-body"><span class="choice-glyph glyph-native" aria-hidden="true"></span><strong>Mirror</strong><small>Clock, weather, and your layout</small></span></label>
+          <label class="choice"><input type="radio" name="source" value="aurora"><span class="choice-body"><span class="choice-glyph glyph-aurora" aria-hidden="true"></span><strong>Aurora</strong><small>Ambient light and a clock</small></span></label>
+          <label class="choice"><input type="radio" name="source" value="gallery"><span class="choice-body"><span class="choice-glyph glyph-gallery" aria-hidden="true"></span><strong>Photos</strong><small>Slow slideshow of your library</small></span></label>
+          <label class="choice"><input type="radio" name="source" value="custom"><span class="choice-body"><span class="choice-glyph glyph-web" aria-hidden="true"></span><strong>Web page</strong><small>Home Assistant or any URL</small></span></label>
+        </div>
+        <div id="dashboard-url-row" class="group hidden">
+          <form id="dashboard-form" class="form inset-form">
+            <label class="field"><span>Page URL</span><input id="dashboard-url" type="url" inputmode="url" placeholder="http://homeassistant.local:8123/dashboard-mirror"></label>
+            <div class="actions"><button type="submit" class="btn primary">Show this page</button></div>
           </form>
-          <p id="dashboard-message" class="message" role="status"></p>
-        </article>
+        </div>
+        <p id="dashboard-message" class="status" role="status"></p>
 
-        <article class="card">
-          <p class="eyebrow">Local forecast</p>
-          <h2>Weather</h2>
-          <form id="weather-form" class="form-grid">
-            <label class="check"><input id="weather-enabled" type="checkbox"><span>Show weather on the built-in dashboard</span></label>
-            <div class="inline-form weather-search">
-              <label><span>Find a city or postal code</span><input id="weather-place-search" autocomplete="off" placeholder="City or postal code"></label>
-              <button id="weather-search" type="button" class="secondary">Search</button>
+        <h2 class="section-title">Arrange the mirror</h2>
+        <div class="editor">
+          <div class="editor-canvas-column">
+            <div class="editor-toolbar">
+              <div class="tool-cluster">
+                <button id="layout-undo" type="button" class="icon-btn" aria-label="Undo" disabled><svg><use href="#i-undo"/></svg></button>
+                <button id="layout-redo" type="button" class="icon-btn" aria-label="Redo" disabled><svg><use href="#i-redo"/></svg></button>
+              </div>
+              <div class="tool-cluster">
+                <label class="tool-toggle"><input id="layout-snap-enabled" type="checkbox" checked><span>Snap</span></label>
+                <select id="layout-grid-size" class="tool-select" aria-label="Grid size">
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                </select>
+                <label class="tool-toggle"><input id="layout-safe-zone" type="checkbox" checked><span>Face zone</span></label>
+              </div>
+              <details class="menu">
+                <summary class="icon-btn" aria-label="More"><svg><use href="#i-more"/></svg></summary>
+                <div class="menu-sheet">
+                  <button id="layout-export" type="button">Export layout…</button>
+                  <button id="layout-import" type="button">Import layout…</button>
+                  <button id="reset-dashboard-layout" type="button" class="menu-danger">Reset to default</button>
+                </div>
+              </details>
+              <input id="layout-import-file" class="hidden" type="file" accept="application/json,.json">
             </div>
-            <label id="weather-search-results-row" class="hidden">
-              <span>Search result</span>
-              <select id="weather-search-results"></select>
-            </label>
-            <label><span>Location label</span><input id="weather-location-name" maxlength="80" placeholder="Home"></label>
-            <div class="coordinate-row">
-              <label><span>Latitude</span><input id="weather-latitude" type="number" min="-90" max="90" step="0.00001"></label>
-              <label><span>Longitude</span><input id="weather-longitude" type="number" min="-180" max="180" step="0.00001"></label>
+            <div class="canvas-frame">
+              <div id="layout-preview" class="canvas" aria-label="Mirror layout canvas"></div>
             </div>
-            <label>
-              <span>Units</span>
-              <select id="weather-units">
-                <option value="us">US (°F, mph, inches)</option>
-                <option value="metric">Metric (°C, km/h, mm)</option>
-              </select>
-            </label>
-            <div class="button-row">
-              <button type="submit">Save weather</button>
-              <button id="weather-use-location" type="button" class="secondary">Use this browser's location</button>
-              <button id="weather-refresh" type="button" class="secondary">Refresh now</button>
-            </div>
-          </form>
-          <p class="privacy-note">Coordinates are stored privately on the Mirror and sent over HTTPS to Open-Meteo to request the forecast. Forecast results are cached locally for outages.</p>
-          <p id="weather-message" class="message" role="status"></p>
-        </article>
+            <p class="hint">Drag to move. Drag the corner to resize. Arrow keys nudge; Shift + arrows resize.</p>
+          </div>
 
-        <article class="card layout-editor-card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Visual editor</p>
-              <h2>Arrange the mirror</h2>
-              <p>Drag widgets to move them. Use the corner handle to resize. Hidden widgets remain selectable from the menu.</p>
+          <div class="editor-side">
+            <div class="group">
+              <div class="group-head"><span class="row-kicker">Widgets</span></div>
+              <ul id="layout-layers" class="layers" aria-label="Widgets"></ul>
             </div>
-            <div class="button-row compact">
-              <button id="layout-undo" type="button" class="secondary" disabled>Undo</button>
-              <button id="layout-redo" type="button" class="secondary" disabled>Redo</button>
-              <button id="save-dashboard-layout" type="button">Save &amp; use</button>
-              <button id="reset-dashboard-layout" type="button" class="secondary">Reset subtle layout</button>
-            </div>
-          </div>
-          <div class="editor-toolbar">
-            <label class="check"><input id="layout-snap-enabled" type="checkbox" checked><span>Snap</span></label>
-            <label>
-              <span>Grid</span>
-              <select id="layout-grid-size">
-                <option value="5">5</option>
-                <option value="10">10</option>
-                <option value="20" selected>20</option>
-                <option value="25">25</option>
-                <option value="50">50</option>
-              </select>
-            </label>
-            <label class="check"><input id="layout-safe-zone" type="checkbox" checked><span>Reflection safe zone</span></label>
-            <button id="layout-export" type="button" class="secondary">Export JSON</button>
-            <button id="layout-import" type="button" class="secondary">Import JSON</button>
-            <input id="layout-import-file" class="hidden" type="file" accept="application/json,.json">
-          </div>
-          <div class="layout-editor">
-            <div class="layout-preview-wrap">
-              <div id="layout-preview" class="layout-preview" aria-label="Dashboard layout preview"></div>
-            </div>
-            <div class="layout-controls">
-              <label>
-                <span>Background</span>
-                <select id="layout-background-mode">
-                  <option value="gradient">Subtle gradient</option>
-                  <option value="solid">Solid color</option>
-                  <option value="photo">Gallery photo</option>
-                </select>
-              </label>
-              <div class="color-row">
-                <label><span>Primary</span><input id="layout-primary-color" type="color"></label>
-                <label><span>Secondary</span><input id="layout-secondary-color" type="color"></label>
+
+            <div class="group inspector">
+              <div class="group-head">
+                <strong id="layout-widget-title" class="inspector-title">Clock</strong>
+                <div class="icon-row">
+                  <button id="layout-duplicate-widget" type="button" class="btn small">Duplicate</button>
+                  <button id="layout-delete-widget" type="button" class="btn small danger" disabled>Delete</button>
+                </div>
               </div>
-              <label id="layout-background-photo-row">
-                <span>Background photo</span>
-                <select id="layout-background-photo"></select>
-              </label>
-              <label>
-                <span>Background dim <output id="layout-dim-output">58%</output></span>
-                <input id="layout-background-dim" type="range" min="0" max="90" value="58">
-              </label>
-              <div class="color-row">
-                <label><span>Text</span><input id="layout-text-color" type="color"></label>
-                <label><span>Metrics</span><input id="layout-accent-color" type="color"></label>
+              <label class="row"><span class="row-label">Visible</span><input id="layout-widget-visible" class="switch" type="checkbox"></label>
+              <label class="row"><span class="row-label">Locked</span><input id="layout-widget-locked" class="switch" type="checkbox"></label>
+              <div class="row">
+                <span class="row-label">Align</span>
+                <div class="seg" role="radiogroup" aria-label="Alignment">
+                  <label class="seg-opt"><input type="radio" name="widget-align" value="start"><span>Left</span></label>
+                  <label class="seg-opt"><input type="radio" name="widget-align" value="center"><span>Center</span></label>
+                  <label class="seg-opt"><input type="radio" name="widget-align" value="end"><span>Right</span></label>
+                </div>
               </div>
-              <hr>
-              <label>
-                <span>Widget</span>
-                <select id="layout-widget-select"></select>
-              </label>
-              <label class="check"><input id="layout-widget-visible" type="checkbox"><span>Visible</span></label>
-              <label class="check"><input id="layout-widget-locked" type="checkbox"><span>Lock position and size</span></label>
-              <label>
-                <span>Alignment</span>
-                <select id="layout-widget-align">
-                  <option value="start">Left</option>
-                  <option value="center">Center</option>
-                  <option value="end">Right</option>
-                </select>
-              </label>
-              <label>
-                <span>Opacity <output id="layout-opacity-output">100%</output></span>
-                <input id="layout-widget-opacity" type="range" min="10" max="100" value="100">
-              </label>
-              <div class="geometry-row">
+              <div class="row">
+                <div class="row-main"><span class="row-label">Opacity</span><output id="layout-opacity-output" class="row-value">100%</output></div>
+                <input id="layout-widget-opacity" class="slider" type="range" min="10" max="100" value="100" aria-label="Opacity">
+              </div>
+              <div class="row">
+                <span class="row-label">Layer</span>
+                <div class="stepper">
+                  <button id="layout-send-backward" type="button" aria-label="Send backward">−</button>
+                  <input id="layout-widget-layer" type="number" min="0" max="99" aria-label="Layer">
+                  <button id="layout-bring-forward" type="button" aria-label="Bring forward">+</button>
+                </div>
+              </div>
+              <div class="row geometry">
                 <label><span>X</span><input id="layout-widget-x" type="number" min="0" max="1000"></label>
                 <label><span>Y</span><input id="layout-widget-y" type="number" min="0" max="1000"></label>
-                <label><span>Width</span><input id="layout-widget-width" type="number" min="24" max="1000"></label>
-                <label><span>Height</span><input id="layout-widget-height" type="number" min="24" max="1000"></label>
+                <label><span>W</span><input id="layout-widget-width" type="number" min="24" max="1000"></label>
+                <label><span>H</span><input id="layout-widget-height" type="number" min="24" max="1000"></label>
               </div>
-              <label>
-                <span>Layer</span>
-                <input id="layout-widget-layer" type="number" min="0" max="99">
-              </label>
-              <div class="button-row compact widget-actions">
-                <button id="layout-send-backward" type="button" class="secondary">Backward</button>
-                <button id="layout-bring-forward" type="button" class="secondary">Forward</button>
-                <button id="layout-duplicate-widget" type="button" class="secondary">Duplicate</button>
-                <button id="layout-delete-widget" type="button" class="danger">Delete</button>
-              </div>
-              <label id="layout-note-row">
-                <span>Custom note</span>
-                <textarea id="layout-note-text" maxlength="120" rows="3"></textarea>
+              <label id="layout-note-row" class="row stacked hidden">
+                <span class="row-label">Note</span>
+                <textarea id="layout-note-text" maxlength="120" rows="2" placeholder="A few words for the mirror"></textarea>
               </label>
             </div>
-          </div>
-          <p class="privacy-note">Arrow keys move the selected widget by one grid step; Shift + arrow resizes it. Alignment guides appear near edges and centers.</p>
-          <p id="layout-message" class="message" role="status"></p>
-        </article>
 
-        <article class="card">
-          <p class="eyebrow">Private and device-local</p>
-          <h2>Photo gallery</h2>
-          <form id="photo-form" class="inline-form">
-            <label><span>JPEG, PNG, WebP, or GIF · 20 MB maximum</span><input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required></label>
-            <button type="submit">Add photo</button>
-          </form>
-          <ul id="photo-list" class="client-list"></ul>
-          <p id="photo-message" class="message" role="status"></p>
-        </article>
-
-        <article class="card">
-          <p class="eyebrow">Appearance</p>
-          <h2>Name and brightness</h2>
-          <form id="name-form" class="inline-form">
-            <label><span>Mirror name</span><input id="display-name" maxlength="64" required></label>
-            <button type="submit">Save</button>
-          </form>
-          <form id="brightness-form" class="slider-form">
-            <label for="brightness">Brightness <output id="brightness-output">128</output></label>
-            <input id="brightness" type="range" min="1" max="255" value="128">
-            <button type="submit">Set brightness</button>
-          </form>
-          <p id="display-message" class="message" role="status"></p>
-        </article>
-
-        <article class="card">
-          <p class="eyebrow">Local time</p>
-          <h2>Clock</h2>
-          <form id="clock-form" class="form-grid">
-            <label><span>IANA time zone</span><input id="time-zone" placeholder="America/Los_Angeles" required></label>
-            <label class="check"><input id="clock-24-hour" type="checkbox"><span>Use 24-hour time</span></label>
-            <button type="submit">Save clock settings</button>
-          </form>
-          <p id="clock-message" class="message" role="status"></p>
-        </article>
-      </section>
-
-      <section id="automation" class="panel">
-        <article class="card">
-          <p class="eyebrow">Daily rhythm</p>
-          <h2>Sleep, wake, brightness, and presence</h2>
-          <form id="automation-form" class="form-grid">
-            <label class="check"><input id="automation-enabled" type="checkbox"><span>Enable schedule</span></label>
-            <label><span>Wake time</span><input id="wake-time" type="time" required></label>
-            <label><span>Sleep time</span><input id="sleep-time" type="time" required></label>
-            <label><span>Wake brightness</span><input id="wake-brightness" type="range" min="1" max="255" value="180"></label>
-            <label class="check"><input id="ambient-enabled" type="checkbox"><span>Adjust to ambient light when a sensor is available</span></label>
-            <fieldset class="form-section">
-              <legend>Presence sensing</legend>
-              <label class="check"><input id="motion-enabled" type="checkbox"><span>Wake on movement and sleep after inactivity</span></label>
-              <label>
-                <span>Inactivity timeout (minutes)</span>
-                <input id="motion-timeout-minutes" type="number" min="0.5" max="60" step="0.5" value="5">
+            <div class="group">
+              <div class="group-head"><span class="row-kicker">Background</span></div>
+              <div class="row">
+                <span class="row-label">Style</span>
+                <div class="seg" role="radiogroup" aria-label="Background style">
+                  <label class="seg-opt"><input type="radio" name="bg-mode" value="solid"><span>Solid</span></label>
+                  <label class="seg-opt"><input type="radio" name="bg-mode" value="gradient"><span>Gradient</span></label>
+                  <label class="seg-opt"><input type="radio" name="bg-mode" value="photo"><span>Photo</span></label>
+                </div>
+              </div>
+              <div class="row swatches">
+                <label class="swatch"><input id="layout-primary-color" type="color"><span>Color</span></label>
+                <label id="layout-secondary-row" class="swatch"><input id="layout-secondary-color" type="color"><span>Second color</span></label>
+                <label class="swatch"><input id="layout-text-color" type="color"><span>Text</span></label>
+                <label class="swatch"><input id="layout-accent-color" type="color"><span>Details</span></label>
+              </div>
+              <label id="layout-background-photo-row" class="row hidden">
+                <span class="row-label">Photo</span>
+                <select id="layout-background-photo" class="select"></select>
               </label>
-              <label>
-                <span>Motion sensitivity: <output id="motion-sensitivity-output">6</output> / 10</span>
-                <input id="motion-sensitivity" type="range" min="1" max="10" value="6">
-              </label>
-              <p class="privacy-note">Frames are compared locally at low resolution and immediately discarded. No recording, face recognition, or upload is performed.</p>
-              <p id="motion-status" class="message">Motion sensing is off.</p>
-            </fieldset>
-            <button type="submit">Save automation</button>
-          </form>
-          <div class="button-row">
-            <button id="wake-now" class="secondary">Wake now</button>
-            <button id="sleep-now" class="danger">Sleep now</button>
-          </div>
-          <p id="automation-capability" class="message"></p>
-          <p id="automation-message" class="message" role="status"></p>
-        </article>
-      </section>
-
-      <section id="media" class="panel">
-        <article class="card">
-          <p class="eyebrow">Direct playback</p>
-          <h2>Play a media URL</h2>
-          <form id="media-form" class="form-grid">
-            <label><span>HTTP, HLS, DASH, or RTSP URL</span><input id="media-url" type="url" inputmode="url" required></label>
-            <label><span>Title</span><input id="media-title" maxlength="120"></label>
-            <label class="check"><input id="media-muted" type="checkbox" checked><span>Start muted</span></label>
-            <button type="submit">Play on Mirror</button>
-          </form>
-          <div class="button-row">
-            <button id="media-pause" class="secondary">Pause</button>
-            <button id="media-resume" class="secondary">Resume</button>
-            <button id="media-stop" class="danger">Stop</button>
-          </div>
-          <p id="media-message" class="message" role="status"></p>
-        </article>
-      </section>
-
-      <section id="network" class="panel">
-        <article class="card">
-          <p class="eyebrow">Local network</p>
-          <h2>Wi-Fi</h2>
-          <p>The passphrase goes directly to Android and is never returned by the Mirror.</p>
-          <form id="wifi-form" class="form-grid">
-            <label><span>Network name</span><input id="wifi-ssid" maxlength="32" autocomplete="off" required></label>
-            <label><span>Passphrase</span><input id="wifi-passphrase" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
-            <label class="check"><input id="wifi-hidden" type="checkbox"><span>Hidden network</span></label>
-            <button type="submit">Connect</button>
-          </form>
-          <div class="button-row">
-            <button id="start-setup-network" class="secondary">Start recovery setup network</button>
-            <button id="stop-setup-network" class="secondary">Stop setup network</button>
-          </div>
-          <p id="onboarding-message" class="message" role="status"></p>
-          <p id="wifi-message" class="message" role="status"></p>
-        </article>
-      </section>
-
-      <section id="access" class="panel">
-        <article class="card">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Revocable credentials</p>
-              <h2>Paired devices</h2>
+              <div id="layout-dim-row" class="row">
+                <div class="row-main"><span class="row-label">Dim photo</span><output id="layout-dim-output" class="row-value">0%</output></div>
+                <input id="layout-background-dim" class="slider" type="range" min="0" max="90" value="0" aria-label="Background dim">
+              </div>
             </div>
-            <button id="refresh-clients" class="secondary">Refresh</button>
-          </div>
-          <ul id="client-list" class="client-list"></ul>
-          <button id="forget-this-device" class="danger">Forget this browser</button>
-          <p id="access-message" class="message" role="status"></p>
-        </article>
-      </section>
-    </div>
-  </main>
 
-  <footer>Local-first control · no cloud account required</footer>
+            <div class="save-bar">
+              <button id="save-dashboard-layout" type="button" class="btn primary wide">Save &amp; show on mirror</button>
+              <p id="layout-message" class="status" role="status"></p>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="section-title">Weather</h2>
+        <form id="weather-form" class="group">
+          <label class="row"><span class="row-label">Show weather on the mirror</span><input id="weather-enabled" class="switch" type="checkbox"></label>
+          <div class="row stacked">
+            <span class="row-label">Location</span>
+            <div class="search">
+              <input id="weather-place-search" autocomplete="off" placeholder="City or postal code">
+              <button id="weather-search" type="button" class="btn">Search</button>
+            </div>
+            <select id="weather-search-results" class="select hidden" aria-label="Search results"></select>
+            <input id="weather-location-name" class="hidden" maxlength="80" aria-label="Location label">
+          </div>
+          <div class="row">
+            <span class="row-label">Units</span>
+            <div class="seg" role="radiogroup" aria-label="Units">
+              <label class="seg-opt"><input type="radio" name="weather-units" value="us"><span>°F</span></label>
+              <label class="seg-opt"><input type="radio" name="weather-units" value="metric"><span>°C</span></label>
+            </div>
+          </div>
+          <details class="row stacked subtle">
+            <summary>Coordinates</summary>
+            <div class="coordinates">
+              <label><span>Latitude</span><input id="weather-latitude" type="number" min="-90" max="90" step="0.00001"></label>
+              <label><span>Longitude</span><input id="weather-longitude" type="number" min="-180" max="180" step="0.00001"></label>
+              <button id="weather-use-location" type="button" class="btn small">Use this device's location</button>
+            </div>
+          </details>
+          <div class="row actions-row">
+            <button type="submit" class="btn primary">Save weather</button>
+            <button id="weather-refresh" type="button" class="btn">Refresh now</button>
+          </div>
+          <p id="weather-message" class="status inset" role="status"></p>
+          <p class="hint inset">Coordinates stay on the mirror and are sent only to Open‑Meteo over HTTPS. Forecasts are cached for outages.</p>
+        </form>
+
+        <h2 class="section-title">Photos</h2>
+        <div class="group">
+          <div id="photo-grid" class="photo-grid">
+            <button id="photo-add" type="button" class="photo-add" aria-label="Add photo"><svg><use href="#i-plus"/></svg><span>Add</span></button>
+          </div>
+          <input id="photo-file" class="hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+          <p id="photo-message" class="status inset" role="status"></p>
+          <p class="hint inset">JPEG, PNG, WebP, or GIF up to 20 MB. Photos never leave this mirror.</p>
+        </div>
+      </section>
+
+      <!-- SCHEDULE -->
+      <section id="schedule" class="panel">
+        <form id="automation-form">
+          <h2 class="section-title">Sleep schedule</h2>
+          <div class="group">
+            <label class="row"><span class="row-label">Sleep on a schedule</span><input id="automation-enabled" class="switch" type="checkbox"></label>
+            <label class="row"><span class="row-label">Wake at</span><input id="wake-time" class="time" type="time" required></label>
+            <label class="row"><span class="row-label">Sleep at</span><input id="sleep-time" class="time" type="time" required></label>
+            <div class="row">
+              <div class="row-main"><span class="row-label">Brightness when awake</span><output id="wake-brightness-output" class="row-value">—</output></div>
+              <input id="wake-brightness" class="slider" type="range" min="1" max="255" value="180" aria-label="Wake brightness">
+            </div>
+            <label class="row"><div class="row-main"><span class="row-label">Follow room light</span><span id="ambient-hint" class="row-sub">Needs an ambient‑light sensor</span></div><input id="ambient-enabled" class="switch" type="checkbox"></label>
+          </div>
+
+          <h2 class="section-title">Presence</h2>
+          <div class="group">
+            <label class="row"><div class="row-main"><span class="row-label">Wake when someone is near</span><span class="row-sub">Uses the camera locally. Nothing is recorded or sent anywhere.</span></div><input id="motion-enabled" class="switch" type="checkbox"></label>
+            <label class="row"><span class="row-label">Sleep after</span><span class="row-input-unit"><input id="motion-timeout-minutes" type="number" min="0.5" max="60" step="0.5" value="5"><span>min</span></span></label>
+            <div class="row">
+              <div class="row-main"><span class="row-label">Sensitivity</span><output id="motion-sensitivity-output" class="row-value">6</output></div>
+              <input id="motion-sensitivity" class="slider" type="range" min="1" max="10" value="6" aria-label="Motion sensitivity">
+            </div>
+            <p id="motion-status" class="status inset quiet">Motion sensing is off.</p>
+          </div>
+
+          <div class="save-bar">
+            <button type="submit" class="btn primary wide">Save schedule</button>
+            <p id="automation-message" class="status" role="status"></p>
+          </div>
+        </form>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="settings" class="panel">
+        <h2 class="section-title">Mirror</h2>
+        <form id="name-form" class="group">
+          <label class="row"><span class="row-label">Name</span><span class="row-input-action"><input id="display-name" maxlength="64" required><button type="submit" class="btn small">Save</button></span></label>
+          <p id="display-message" class="status inset" role="status"></p>
+        </form>
+
+        <h2 class="section-title">Clock</h2>
+        <form id="clock-form" class="group">
+          <label class="row"><span class="row-label">Time zone</span><input id="time-zone" class="row-input" placeholder="America/Los_Angeles" required></label>
+          <label class="row"><span class="row-label">24‑hour time</span><input id="clock-24-hour" class="switch" type="checkbox"></label>
+          <div class="row actions-row"><button type="submit" class="btn primary">Save clock</button></div>
+          <p id="clock-message" class="status inset" role="status"></p>
+        </form>
+
+        <h2 class="section-title">Wi‑Fi</h2>
+        <form id="wifi-form" class="group">
+          <label class="row"><span class="row-label">Network</span><input id="wifi-ssid" class="row-input" maxlength="32" autocomplete="off" required></label>
+          <label class="row"><span class="row-label">Password</span><input id="wifi-passphrase" class="row-input" type="password" minlength="8" maxlength="64" autocomplete="new-password" required></label>
+          <label class="row"><span class="row-label">Hidden network</span><input id="wifi-hidden" class="switch" type="checkbox"></label>
+          <div class="row actions-row"><button type="submit" class="btn primary">Connect</button></div>
+          <p id="wifi-message" class="status inset" role="status"></p>
+          <p class="hint inset">The password goes straight to the mirror's Wi‑Fi settings and is never shown again.</p>
+        </form>
+        <div class="group">
+          <div class="row"><div class="row-main"><span class="row-label">Setup network</span><span id="onboarding-status" class="row-sub">—</span></div><span class="icon-row"><button id="start-setup-network" type="button" class="btn small">Start</button><button id="stop-setup-network" type="button" class="btn small">Stop</button></span></div>
+          <p id="onboarding-message" class="status inset" role="status"></p>
+        </div>
+
+        <h2 class="section-title">Paired devices</h2>
+        <div class="group">
+          <ul id="client-list" class="clients"></ul>
+          <div class="row actions-row"><button id="forget-this-device" type="button" class="btn danger">Forget this browser</button><button id="refresh-clients" type="button" class="btn small">Refresh</button></div>
+          <p id="access-message" class="status inset" role="status"></p>
+        </div>
+
+        <h2 class="section-title">About</h2>
+        <div class="group about">
+          <div class="row"><span class="row-label">Mirror Home</span><span id="about-version" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Address</span><span id="about-address" class="row-value mono">—</span></div>
+          <div class="row"><span class="row-label">Mirror services</span><span id="about-binder" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">System helper</span><span id="about-helper" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Bluetooth setup</span><span id="about-ble" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Casting</span><span class="row-value">FCast, port 46899</span></div>
+          <div class="row"><span class="row-label">Uptime</span><span id="about-uptime" class="row-value">—</span></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/dashboard/mirror.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
