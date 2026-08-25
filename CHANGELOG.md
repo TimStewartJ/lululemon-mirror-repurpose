@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.9.1 - 2026-08-25
+
+- Fix the note text areas in the control app: a one-line note no longer
+  carries a blank second row (the `rows="2"` floor leaked into the autosize
+  measurement), the autosize accounts for the border so the last line is not
+  clipped, and long notes scroll inside the box instead of being cut off at a
+  fixed height.
+
 ## 1.9.0 - 2026-08-25
 
 - Add notes as content, separate from the layout. **Home > Leave a note on the
