@@ -93,7 +93,7 @@ through `tools\mirror.ps1`.
 
 Start with the [User guide](docs/user-guide.md). See
 [Streaming](docs/streaming.md) for sender compatibility and recommended
-media formats and [Provisioning](docs/provisioning.md) for USB, BLE, and LAN
+media formats and [Provisioning](docs/provisioning.md) for QR, USB, and LAN
 setup. See [Automation](docs/automation.md) for REST examples,
 [LAN OTA updates](docs/ota-updates.md), [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).

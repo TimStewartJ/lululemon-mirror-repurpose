@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.8.0 - 2026-08-24
+
+- Remove Bluetooth LE provisioning: the GATT advertising service, its
+  Bluetooth permissions, the `bleProvisioning` status field, the Bluetooth
+  dashboard widget, and the companion's Web Bluetooth flow. Wi-Fi setup is the
+  on-glass QR + Wi-Fi Direct flow (or USB), which works from any phone camera
+  and browser. Saved layouts that still contain a Bluetooth widget load with it
+  dropped rather than resetting to defaults.
+
 ## 1.7.0 - 2026-08-24
 
 - Add a Photo widget: a framed library photo, or a slow crossfading rotation
