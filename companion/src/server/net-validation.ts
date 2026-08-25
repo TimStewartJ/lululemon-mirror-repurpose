@@ -1,14 +1,14 @@
 /**
  * Validates host strings supplied for the LAN device-connection path (the
- * IP address reported back over BLE after provisioning). This is the only
+ * Mirror's private IP address supplied by the caller). This is the only
  * gate between a user/device-controlled string and an outbound fetch() the
  * companion makes on the browser's behalf, so it is deliberately strict:
  * only a literal IPv4 dotted-quad is ever accepted (no DNS resolution, no
  * hostnames -- both of which could be used for DNS-rebinding SSRF), and
  * only RFC1918 private ranges plus link-local addresses are allowed. This
- * intentionally excludes 127.0.0.0/8 (loopback): a BLE-provisioned device
- * always reports a real LAN address, and accepting loopback here would
- * reopen an SSRF-to-localhost vector via a spoofed BLE response.
+ * intentionally excludes 127.0.0.0/8 (loopback): a Mirror on the household
+ * network always has a real LAN address, and accepting loopback here would
+ * reopen an SSRF-to-localhost vector via an attacker-supplied address.
  */
 
 /**

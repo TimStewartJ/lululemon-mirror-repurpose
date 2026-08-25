@@ -16,9 +16,9 @@ fs.cpSync(srcPublic, destDir, { recursive: true });
 // browser loads it via <script type="module">, which doesn't care about
 // this file). This package.json exists so Node's own module loader also
 // treats these .js files as ESM when a server-side test dynamically
-// imports one directly (see src/server/__tests__/ble-protocol.test.ts,
-// which imports the compiled client ble-protocol.js to test its pure
-// functions without duplicating the logic server-side).
+// imports one directly (see src/server/__tests__/client-api-delete-media.test.ts,
+// which imports the compiled client api.js to test its fetch-wrapping
+// behavior without duplicating the logic server-side).
 fs.writeFileSync(path.join(destDir, 'package.json'), JSON.stringify({ type: 'module' }, null, 2) + '\n');
 
 console.log(`Copied static client assets from ${srcPublic} to ${destDir}`);

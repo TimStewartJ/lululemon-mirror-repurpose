@@ -141,11 +141,11 @@ export class DeviceManager implements DeviceManagerPort {
 
   /**
    * Establishes a LAN connection using an IP address and pairing token
-   * obtained out-of-band (currently: BLE provisioning from the browser).
-   * The host is validated as a private/link-local IPv4 literal before it is
-   * ever used to build an outbound URL, to prevent SSRF via a spoofed BLE
-   * response. Only the pairing token is persisted; the Wi-Fi passphrase
-   * never reaches this method or ConfigStore.
+   * obtained out-of-band (for example, from the Mirror's on-glass QR and
+   * pairing-code flow). The host is validated as a private/link-local IPv4
+   * literal before it is ever used to build an outbound URL, to prevent SSRF
+   * via an attacker-supplied address. Only the pairing token is persisted;
+   * the Wi-Fi passphrase never reaches this method or ConfigStore.
    */
   async connectLan(host: string, token: string): Promise<LanConnectionState> {
     if (!isPrivateIPv4Host(host)) {

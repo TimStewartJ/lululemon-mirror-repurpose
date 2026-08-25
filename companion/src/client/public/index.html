@@ -138,21 +138,6 @@
           <p id="device-media-status" class="status status-line"></p>
         </section>
 
-        <section class="group" id="ble-provision-card">
-          <details>
-            <summary><h2>Provision over Bluetooth</h2><span class="chev" aria-hidden="true"></span></summary>
-            <p class="hint">Uses Web Bluetooth (Chrome or Edge). The mirror must be advertising setup; the button has to be clicked directly because browsers require a user gesture to scan.</p>
-            <form id="ble-form" autocomplete="off" class="form">
-              <label class="field"><span>Pairing code</span><input id="ble-code" name="code" inputmode="numeric" required /></label>
-              <label class="field"><span>Network</span><input id="ble-ssid" name="ssid" required /></label>
-              <label class="field"><span>Password</span><input id="ble-passphrase" name="passphrase" type="password" autocomplete="new-password" /></label>
-              <label class="toggle-row"><span>Hidden network</span><input id="ble-hidden" name="hidden" type="checkbox" class="switch" /></label>
-              <div class="actions"><button type="submit" class="btn primary">Provision over Bluetooth</button></div>
-            </form>
-            <p id="ble-status" class="status status-line"></p>
-          </details>
-        </section>
-
         <section class="group danger-zone" id="system-card">
           <details>
             <summary><h2>System helper</h2><span class="chev" aria-hidden="true"></span></summary>

@@ -47,11 +47,12 @@ export function createDevicesRouter(deviceManager: DeviceManagerPort): Router {
     }
   });
 
-  // BLE provisioning (see client/ble.ts) reports back the device's own
-  // private IPv4 address and pairing token after a successful Wi-Fi
-  // provisioning exchange. The host is validated (RFC1918/link-local IPv4
-  // only) inside deviceManager.connectLan(); this route never sees or
-  // forwards a Wi-Fi passphrase, and never logs the token.
+  // Connects to a Mirror that is already on the household LAN using its
+  // private IPv4 address and an existing pairing token (for example, one
+  // issued through the on-glass QR + pairing-code flow). The host is
+  // validated (RFC1918/link-local IPv4 only) inside
+  // deviceManager.connectLan(); this route never sees or forwards a Wi-Fi
+  // passphrase, and never logs the token.
   router.post('/devices/lan/connect', async (req, res) => {
     const ipAddress = typeof req.body?.ipAddress === 'string' ? req.body.ipAddress : undefined;
     const token = typeof req.body?.token === 'string' ? req.body.token : undefined;

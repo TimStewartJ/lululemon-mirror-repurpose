@@ -8,9 +8,9 @@ import { pathToFileURL } from 'node:url';
 // and `window.sessionStorage` (guarded by a try/catch in token.ts, so it is
 // harmless to import from plain Node), so we exercise the *compiled* module
 // directly via a dynamic import rather than duplicating its fetch-wrapping
-// logic in a server-side helper just to make it unit-testable. See
-// ble-protocol.test.ts for the same pattern and the reason a `new Function`
-// wrapper is needed to force a genuine dynamic import under CommonJS.
+// logic in a server-side helper just to make it unit-testable.
+// dist/client/package.json (written by scripts/copy-assets.mjs) marks that
+// directory as "type": "module" so Node's loader parses it as ESM.
 const moduleUrl = pathToFileURL(path.join(__dirname, '..', '..', 'client', 'api.js')).href;
 
 interface CompanionApiModule {
@@ -20,6 +20,11 @@ interface CompanionApiModule {
 }
 
 async function loadModule(): Promise<CompanionApiModule> {
+  // TypeScript, when compiling to CommonJS, rewrites a literal `import(...)`
+  // expression into `require(...)`, which cannot load a real ES module (and
+  // require() doesn't accept file:// URLs anyway). Wrapping the import in a
+  // `new Function(...)` body hides it from TypeScript's downlevel
+  // transform, so this performs a genuine dynamic import at runtime.
   const dynamicImport = new Function('specifier', 'return import(specifier);') as (
     specifier: string,
   ) => Promise<CompanionApiModule>;

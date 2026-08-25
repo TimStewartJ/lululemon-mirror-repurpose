@@ -44,11 +44,6 @@ export const companionApi = {
     }),
   disconnectDevice: () =>
     requestJson<{ connected: boolean }>('/api/companion/devices/disconnect', { method: 'POST' }),
-  connectDeviceLan: (token: string, ipAddress: string) =>
-    requestJson<{ connected: boolean; mode: string; host: string }>('/api/companion/devices/lan/connect', {
-      method: 'POST',
-      body: JSON.stringify({ token, ipAddress }),
-    }),
 
   deviceStatus: () => requestJson<Record<string, unknown>>('/api/device/status'),
   pair: (code: string) =>

@@ -171,7 +171,7 @@ describe('devices-router POST /devices/lan/connect', () => {
       const response = await fetch(`${baseUrl}/devices/lan/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ipAddress: '192.168.1.20', token: 'ble-token' }),
+        body: JSON.stringify({ ipAddress: '192.168.1.20', token: 'lan-token' }),
       });
       assert.equal(response.status, 200);
       const body = (await response.json()) as Record<string, unknown>;
@@ -179,7 +179,7 @@ describe('devices-router POST /devices/lan/connect', () => {
       assert.equal(body.mode, 'lan');
       assert.equal(body.host, '192.168.1.20');
       assert.equal(Object.prototype.hasOwnProperty.call(body, 'token'), false);
-      assert.deepEqual(receivedArgs, ['192.168.1.20', 'ble-token']);
+      assert.deepEqual(receivedArgs, ['192.168.1.20', 'lan-token']);
     } finally {
       await close();
     }
@@ -213,7 +213,7 @@ describe('devices-router POST /devices/lan/connect', () => {
       const missingIp = await fetch(`${baseUrl}/devices/lan/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: 'ble-token' }),
+        body: JSON.stringify({ token: 'lan-token' }),
       });
       assert.equal(missingIp.status, 400);
     } finally {
@@ -242,7 +242,7 @@ describe('devices-router POST /devices/lan/connect', () => {
       const response = await fetch(`${baseUrl}/devices/lan/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ipAddress: '8.8.8.8', token: 'ble-token' }),
+        body: JSON.stringify({ ipAddress: '8.8.8.8', token: 'lan-token' }),
       });
       assert.equal(response.status, 400);
       const body = (await response.json()) as { error: string };

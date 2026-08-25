@@ -56,14 +56,11 @@ loopback port or a validated LAN connection, attaching the bearer token itself.
   actually reach (USB via `adb reverse`, LAN via `COMPANION_PUBLIC_URL` or
   an auto-selected private interface address -- never a browser-supplied
   `Host` header).
-- **BLE provisioning (Web Bluetooth)**: a user-gesture-triggered browser
-  flow that connects to the Mirror's provisioning GATT service, writes a
-  chunked Wi-Fi provisioning request, assembles the chunked response, and
-  hands the returned token + private IP to a validated LAN connection mode.
 - **LAN connection mode**: connects to the device directly over the
   network using an IPv4 host validated as RFC1918/link-local only (no
-  hostnames, no DNS resolution, no loopback) to prevent SSRF via a spoofed
-  BLE response; persists only the pairing token, never the Wi-Fi passphrase.
+  hostnames, no DNS resolution, no loopback) to prevent SSRF via an
+  attacker-supplied address; persists only the pairing token, never the
+  Wi-Fi passphrase.
 
 ## Requirements
 
@@ -98,11 +95,11 @@ npm run typecheck       # type-check both server and client without emitting
 ```
 
 `npm test`'s `pretest` step builds the client too (not just the server)
-because one test file (`ble-protocol.test.ts`) dynamically imports the
-*compiled* `dist/client/ble-protocol.js` as a real ES module, to unit-test
-the browser-side BLE chunking/framing/parsing logic without duplicating it
-server-side. `scripts/copy-assets.mjs` writes a `dist/client/package.json`
-with `{"type": "module"}` so Node's loader treats that directory as ESM.
+because one test file (`client-api-delete-media.test.ts`) dynamically imports
+the *compiled* `dist/client/api.js` as a real ES module, to unit-test the
+browser-side fetch wrapper without duplicating it server-side.
+`scripts/copy-assets.mjs` writes a `dist/client/package.json` with
+`{"type": "module"}` so Node's loader treats that directory as ESM.
 
 Tests use Node's built-in test runner (`node:test`) against the compiled
 server output and cover:
@@ -138,15 +135,10 @@ server output and cover:
   system-helper routes.
 - Private/RFC1918/link-local IPv4 host validation (`net-validation.ts`),
   including leading-zero and boundary-of-range rejection and the deliberate
-  loopback exclusion (an SSRF guard against a spoofed BLE response).
+  loopback exclusion (an SSRF guard against an attacker-supplied address).
 - LAN connection mode (`DeviceManager.connectLan`): accepts valid private
   hosts, rejects public/loopback/hostname values, persists only the token,
   and its `disconnect()`/`getClient()` branches.
-- BLE protocol pure functions (`ble-protocol.ts`, dynamically imported from
-  compiled `dist/client/`): byte chunking, provisioning-request framing
-  (including a multi-byte UTF-8 sequence split across chunk boundaries), and
-  response assembly (partial chunks, malformed JSON, a missing `ok` field,
-  and reuse/discard-on-reuse behavior).
 - Media URL generation (`media-url.ts`): USB loopback URLs, LAN URLs via
   `COMPANION_PUBLIC_URL` and via auto-selected private interfaces (with
   injectable `os.networkInterfaces()` data), and the "no reachable address"
@@ -199,7 +191,7 @@ Companion-only endpoints:
 | `GET /api/companion/devices` | List connected ADB devices with profile validation results |
 | `POST /api/companion/devices/connect` | Set up (or reuse) an `adb forward` and mark it active |
 | `POST /api/companion/devices/disconnect` | Remove the active `adb forward` (or clear LAN state) |
-| `POST /api/companion/devices/lan/connect` | Connect over LAN using a validated RFC1918/link-local IPv4 host + pairing token (from the BLE flow) |
+| `POST /api/companion/devices/lan/connect` | Connect over LAN using a validated RFC1918/link-local IPv4 host + an existing pairing token |
 | `GET /api/companion/devices/connection` | Current connection state |
 | `GET /api/companion/media` | List uploaded media files |
 | `PUT /api/companion/media/:name` | Upload a file (raw body) |
@@ -272,46 +264,16 @@ location with `COMPANION_DATA_DIR` / `COMPANION_MEDIA_ROOT` in `.env`.
   `multipart/form-data` is explicitly rejected (`415`), since it isn't
   supported yet.
 
-## BLE provisioning (Web Bluetooth)
-
-The UI has a "BLE provisioning (Web Bluetooth)" card that connects directly
-from the browser to the Mirror's Bluetooth Low Energy provisioning service --
-the companion server is not in the data path for this exchange at all. This
-requires a browser with Web Bluetooth support (Chrome/Edge, desktop or
-Android) served over HTTPS or from `localhost`/loopback.
-
-Flow:
-
-1. On form submit (a user gesture, required by `navigator.bluetooth
-   .requestDevice()`), the browser scans for and connects to a device
-   advertising service UUID `7d7a0001-6d69-7272-6f72-726570757270`.
-2. It writes a compact JSON provisioning request
-   (`{type:'provision',code,ssid,passphrase,hidden}`) to the write
-   characteristic (`...0002...`) in chunks of at most 18 bytes, terminated by
-   a newline -- multi-byte UTF-8 sequences may safely split across chunks,
-   since the device buffers raw bytes until it sees the newline.
-3. It reads back a chunked, newline-terminated JSON response from the notify
-   characteristic (`...0003...`): `{ok, token?, message?, ipAddress?,
-   apiPort?, error?}`.
-4. On success, the browser calls `POST /api/companion/devices/lan/connect`
-   with the returned token and private IP address -- this is the only point
-   where the companion server gets involved, and it never sees the Wi-Fi
-   passphrase.
-
-`src/client/ble-protocol.ts` contains the pure chunking/framing/parsing
-logic (dependency-free beyond `TextEncoder`/`TextDecoder`), and
-`src/client/ble.ts` layers the actual `navigator.bluetooth` GATT calls on
-top of it.
-
 ## LAN connection mode
 
 `POST /api/companion/devices/lan/connect` (body `{ipAddress, token}`)
 connects to the device directly over the network instead of through an `adb
-forward`. The host is validated as an RFC1918 (`10/8`, `172.16/12`,
-`192.168/16`) or link-local (`169.254/16`) IPv4 literal -- hostnames, IPv6,
-and loopback addresses are all rejected, since the value ultimately comes
-from an untrusted BLE peripheral and accepting anything else would be an
-SSRF vector (e.g. a spoofed response pointing at `127.0.0.1` or an internal
+forward`, using a pairing token the browser already holds (for example, one
+issued through the Mirror's on-glass QR + pairing-code flow). The host is
+validated as an RFC1918 (`10/8`, `172.16/12`, `192.168/16`) or link-local
+(`169.254/16`) IPv4 literal -- hostnames, IPv6, and loopback addresses are all
+rejected, since the value is caller-supplied and accepting anything else would
+be an SSRF vector (e.g. an address pointing at `127.0.0.1` or an internal
 service). No DNS resolution is ever performed. Only the pairing token is
 persisted (via the same `ConfigStore` used for USB pairing); the Wi-Fi
 passphrase never reaches this endpoint.

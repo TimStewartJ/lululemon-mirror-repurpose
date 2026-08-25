@@ -1,6 +1,5 @@
 import { companionApi, type DiscoveredDevice } from './api.js';
 import { getStoredToken, setStoredToken } from './token.js';
-import { provisionOverBluetooth, isWebBluetoothSupported } from './ble.js';
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -327,40 +326,6 @@ byId<HTMLButtonElement>('restore-stock-home').addEventListener('click', () =>
       : 'The stock launcher was already the default.';
   }),
 );
-
-// --- BLE provisioning (Web Bluetooth) ---------------------------------------
-
-const bleStatusEl = byId<HTMLParagraphElement>('ble-status');
-
-if (!isWebBluetoothSupported()) {
-  setStatus(bleStatusEl, 'Web Bluetooth is not available in this browser.', true);
-}
-
-byId<HTMLFormElement>('ble-form').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const code = byId<HTMLInputElement>('ble-code').value.trim();
-  const ssid = byId<HTMLInputElement>('ble-ssid').value.trim();
-  const passphraseInput = byId<HTMLInputElement>('ble-passphrase');
-  const passphrase = passphraseInput.value;
-  const hidden = byId<HTMLInputElement>('ble-hidden').checked;
-
-  // provisionOverBluetooth() is called synchronously from this user-gesture
-  // handler (no `await` precedes it) so navigator.bluetooth.requestDevice()
-  // sees the click's transient activation.
-  void guard(bleStatusEl, async () => {
-    const response = await provisionOverBluetooth({ code, ssid, passphrase, hidden });
-    // The passphrase is never retained client-side once submitted.
-    passphraseInput.value = '';
-    if (!response.ok) {
-      throw new Error(response.error ?? response.message ?? 'Provisioning failed on the device.');
-    }
-    if (response.token && response.ipAddress) {
-      await companionApi.connectDeviceLan(response.token, response.ipAddress);
-      return `Provisioned and connected over LAN at ${response.ipAddress}.`;
-    }
-    return response.message ?? 'Provisioned, but the device has no Wi-Fi IP address yet.';
-  });
-});
 
 // --- Device media playback ---------------------------------------------------
 
