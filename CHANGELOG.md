@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.8.2 - 2026-08-25
+
+- Remove the Aurora dashboard source. The Mirror layout and a web page are
+  the two remaining sources; a Mirror still pointed at Aurora falls back to
+  the built-in dashboard.
+- Remove the editor's "Face zone" reflection overlay and its toggle.
+
 ## 1.8.1 - 2026-08-25
 
 - Fix photo frames stretching to the frame's aspect ratio for the length of
