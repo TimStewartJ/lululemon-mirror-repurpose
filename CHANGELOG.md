@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.8.1 - 2026-08-25
+
+- Fix photo frames stretching to the frame's aspect ratio for the length of
+  each crossfade on the Mirror. The WebView's Chromium 44 hands an animating
+  `<img>` straight to the GPU and ignores `object-fit` (crbug.com/369020,
+  fixed in Chromium 48), so the fade now runs on a wrapper layer while the
+  image itself is never composited on its own.
+- Remove the full-screen Photos dashboard source. Photo widgets cover the same
+  ground inside the Mirror layout, including a full-bleed rotating frame. A
+  Mirror still pointed at the retired page falls back to the built-in
+  dashboard instead of the offline screen.
+
 ## 1.8.0 - 2026-08-24
 
 - Remove Bluetooth LE provisioning: the GATT advertising service, its
