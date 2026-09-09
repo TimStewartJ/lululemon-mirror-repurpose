@@ -11,6 +11,7 @@ Mirror Home (ordinary APK, default HOME)
   | dashboard renderer
   | Wi-Fi provisioning
   | media player
+  | content-addressed background-video library
   | pairing/authentication
   | MIRROR Binder bridge
   v
@@ -88,6 +89,13 @@ The primary media path is HTTP(S), HLS, DASH, or RTSP playback through pinned
 Media3 1.9.0, whose minimum API is 23. The companion can expose a selected local
 file through a range-capable HTTP endpoint and instruct the Mirror to play its
 LAN URL.
+
+Background videos take a separate ingest path into app-private,
+content-addressed storage. Android validates each MP4 and hardware decoder before
+atomic promotion. A single Media3 player switches serially between the ambient
+file and presentation media, attaching to the appropriate native surface under
+or over the transparent widget WebView. See
+[Background videos](background-videos.md).
 
 Chromecast receiver compatibility is not assumed: the proprietary Cast receiver
 stack depends on Google services unavailable on this firmware. Mirror Home

@@ -39,7 +39,7 @@ The project intentionally separates:
   restores the local known-good release after failure.
 - **Device-hosted controls**: a responsive local web application served by
   Mirror Home itself for phone/desktop pairing, dashboards, schedules, photos,
-  Wi-Fi, media, and client revocation.
+  Wi-Fi, media, private background-video libraries, and client revocation.
 - **Companion**: an optional desktop application for ADB recovery, USB media,
   and development workflows.
 
@@ -82,7 +82,8 @@ network when no managed Wi-Fi exists, supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
 sensing, cached local weather, precision dashboard editing, signed LAN OTA
-updates with automatic rollback, and watchdog recovery. Media3
+updates with automatic rollback, content-addressed background videos stored
+outside the APK, and watchdog recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
 The desktop companion remains available but is no longer required for daily
 operation.
@@ -117,6 +118,7 @@ Start with the [User guide](docs/user-guide.md). See
 [Streaming](docs/streaming.md) for sender compatibility and recommended
 media formats and [Provisioning](docs/provisioning.md) for QR, USB, and LAN
 setup. See [Automation](docs/automation.md) for REST examples,
+[Background videos](docs/background-videos.md),
 [LAN OTA updates](docs/ota-updates.md), [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 
@@ -132,6 +134,8 @@ Common development commands:
 .\tools\mirror.ps1 restore-helper
 .\tools\ota.ps1 status
 .\tools\ota.ps1 push .\android\mirror-home\build\outputs\apk\release\mirror-home-release.apk
+.\tools\background-video.ps1 status
+.\tools\background-video.ps1 push .\generated\background-videos\four-seasons-cinematic.mp4
 ```
 
 `install-helper` refuses unknown firmware and APK hashes, backs up the factory

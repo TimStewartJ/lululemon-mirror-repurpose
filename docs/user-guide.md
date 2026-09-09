@@ -36,6 +36,7 @@ The control application has four sections:
   brightness slider (applies when released), wake/sleep, what is playing, and a
   way to play a media link.
 - **Display**: what the mirror shows, the layout editor, weather, and photos.
+  It also manages private background videos stored separately from the app.
 - **Schedule**: sleep/wake times, wake brightness, and presence sensing.
 - **Settings**: name, clock, Wi-Fi, the recovery setup network, paired
   devices, and version/address details.
@@ -117,6 +118,7 @@ glass shows:
 - tap a widget chip to select it, or its eye to show or hide it,
 - change visibility, lock, alignment, opacity, layer, and exact geometry,
 - choose a solid color, gradient, or library photo background,
+- choose an uploaded H.264 video background, Fill/Whole fitting, and dimming,
 - adjust photo dimming and the text/detail colors,
 - choose what each Note widget shows and how large and heavy its type is,
 - select **Save & show on mirror** to apply the layout immediately.
@@ -130,6 +132,22 @@ The photo library accepts JPEG, PNG, WebP, and GIF images up to 20 MB each,
 with a 250 MB total library limit. Photo bytes are served only to the Mirror's
 loopback interface; remote browsers can list, upload, and delete them only with
 an authenticated API request.
+
+### Background videos
+
+**Display > Background videos** accepts H.264 MP4 files up to 256 MiB. Uploads
+are validated against the Mirror's hardware decoder and stored privately outside
+the APK, so app updates remain small. The library keeps up to 12 videos and
+768 MiB while reserving at least 512 MiB of free device storage.
+
+Choose **Use** on a library card or select **Video** in the background editor.
+The previous active video remains available through **Use previous video**.
+Active videos cannot be deleted. Audio tracks are ignored, display sleep pauses
+the loop, and full-screen casting temporarily takes over the same decoder before
+the background resumes.
+
+See [Background videos](background-videos.md) for storage, CLI, validation, and
+recovery details.
 
 ## Clock and schedules
 

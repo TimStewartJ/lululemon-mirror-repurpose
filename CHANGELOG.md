@@ -1,6 +1,33 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 - 2026-09-04
+
+- Add a production background-video library stored separately from the APK.
+  Authenticated clients can stream H.264 MP4 files up to 256 MiB into private,
+  content-addressed storage; Mirror Home validates the exact SHA-256, duration,
+  resolution, full-timeline frame rate, AVC profile/level, and on-device
+  hardware decoder before atomically installing a video. The library supports
+  12 videos / 768 MiB, preserves a 512 MiB free-space reserve, and retains
+  active/previous selections for one-click rollback.
+- Add **Display > Background videos** with upload progress, generated posters,
+  metadata, Use/Delete/Rollback actions, Fill/Whole fitting, and background
+  dimming. Add matching authenticated APIs and a streaming
+  `tools/background-video.ps1` CLI with pairing and one-time build-scoped
+  bootstrap provisioning.
+- Keep exactly one Media3 player for background and presentation playback.
+  Video backgrounds run beneath the transparent widget WebView, disable audio
+  tracks and audio focus, pause with display sleep, release outside the
+  foreground, and switch serially to casting/presentation media. Decoder,
+  first-frame, loop, season, and dropped-frame telemetry remain available.
+- Provide an optional deterministic offline seasonal-film renderer that writes to ignored
+  `generated/background-videos/four-seasons-cinematic.mp4`; the resulting video
+  can be uploaded as an ordinary first library item while the release APK stays
+  small.
+- Relaunch the HOME activity after Mirror Home replaces its own package so an
+  OTA cannot leave the final frame of the previous dashboard frozen on-screen
+  while only the background control service is running. Cold service starts
+  do this only while Mirror Home is still Android's selected HOME, preserving
+  an intentional return to the stock launcher.
 
 ## 1.9.1 - 2026-08-25
 

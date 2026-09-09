@@ -10,6 +10,7 @@ Never commit:
 - ADB private keys
 - pairing tokens
 - OTA active and bootstrap tokens
+- background-video client and bootstrap tokens
 - Android release keystores and their passwords
 - device certificates or private keys
 - proprietary APKs, firmware, or partition dumps
@@ -52,6 +53,17 @@ The device API does not enable cross-origin browser access. The companion
 proxies browser requests over the same origin. NanoHTTPD temporary storage is
 redirected into the application's private cache, request bodies are bounded,
 and the server does not use NanoHTTPD's general-purpose file handler.
+
+Background-video uploads require a normal revocable bearer credential, are
+bounded before parsing, and remain inside app-private storage. A deployment may
+inject only the SHA-256 of a random one-time bootstrap capability; the secret
+stays in `.secrets`, provisions one revocable client, and is consumed only after
+that client authenticates a confirmation. Retries before confirmation return
+the same pending credential rather than creating clients or stranding access.
+Consumed hashes are retained independently so rolling back an APK cannot reopen
+an older bootstrap.
+Media filenames never become filesystem paths: stored objects use validated
+lowercase SHA-256 identifiers.
 
 ## Local transport limitations
 

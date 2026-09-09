@@ -48,6 +48,16 @@ GET  /api/v1/photos/{name}/thumbnail
 GET  /api/v1/photos/{name}/display
 PUT  /api/v1/photos/{name}
 DELETE /api/v1/photos/{name}
+GET  /api/v1/background-videos/bootstrap
+POST /api/v1/background-videos/bootstrap
+POST /api/v1/background-videos/bootstrap/confirm
+GET  /api/v1/background-videos
+PUT  /api/v1/background-videos/upload/{name}
+GET  /api/v1/background-videos/{id}/poster
+POST /api/v1/background-videos/{id}/activate
+POST /api/v1/background-videos/rollback
+DELETE /api/v1/background-videos/{id}
+GET  /api/v1/dashboard/ambient-video
 POST /api/v1/control/brightness
 POST /api/v1/control/name
 POST /api/v1/media/play
@@ -66,6 +76,15 @@ Only bootstrap, pairing, static controls, and loopback-only dashboard resources
 are public. Full status and all state changes require authentication for LAN
 clients. ADB-forwarded and on-device loopback status remains available for
 recovery and local templates.
+
+Background video list, upload, activation, rollback, deletion, and poster routes
+require an ordinary bearer credential. The bootstrap availability route is
+public; its POST exchanges an independently generated build-scoped capability
+for one normal revocable client credential. Repeating the exchange returns the
+same pending credential until the authenticated confirmation succeeds, so a
+lost response cannot strand the bootstrap. Uploaded bytes are content-addressed
+by SHA-256 and validated on the Mirror before they become selectable. See
+[Background videos](background-videos.md).
 
 Notes are content, not layout. `GET /api/v1/notes` returns
 `{notes: [{id, text, createdAt, updatedAt}], version, maxLength, maxNotes}`
