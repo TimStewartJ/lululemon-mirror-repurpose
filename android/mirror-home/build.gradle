@@ -23,6 +23,15 @@ def otaHealthFailureTest = providers
         .gradleProperty("mirrorOtaHealthFailureTest")
         .orElse("false")
         .get()
+def backgroundVideoBootstrapHash = providers
+        .gradleProperty("mirrorBackgroundVideoBootstrapTokenSha256")
+        .orElse("")
+        .get()
+if (!backgroundVideoBootstrapHash.isEmpty()
+        && !backgroundVideoBootstrapHash.matches("[0-9a-f]{64}")) {
+    throw new GradleException(
+            "mirrorBackgroundVideoBootstrapTokenSha256 must be empty or 64 lowercase hex characters")
+}
 
 android {
     namespace "dev.mirror.repurpose"
@@ -34,14 +43,18 @@ android {
         targetSdk 35
         versionCode configuredVersionCode.isPresent()
                 ? configuredVersionCode.get().toInteger()
-                : 33
+                : 69
         versionName configuredVersionName.isPresent()
                 ? configuredVersionName.get()
-                : "1.9.1"
+                : "2.0.0"
         buildConfigField(
                 "boolean",
                 "OTA_HEALTH_FAILURE_TEST",
                 otaHealthFailureTest.equalsIgnoreCase("true") ? "true" : "false")
+        buildConfigField(
+                "String",
+                "BACKGROUND_VIDEO_BOOTSTRAP_TOKEN_SHA256",
+                "\"${backgroundVideoBootstrapHash}\"")
     }
 
     buildFeatures {

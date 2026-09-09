@@ -3,7 +3,7 @@
   'use strict';
 
   var stage = document.getElementById('dashboard');
-  var renderer = window.MirrorRenderer.create(stage);
+  var renderer = window.MirrorRenderer.create(stage, { nativeVideo: true });
   var layout = null;
   var runtime = null;
   var notes = [];

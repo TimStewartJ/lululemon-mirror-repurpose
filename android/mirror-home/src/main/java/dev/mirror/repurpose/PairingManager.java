@@ -20,7 +20,7 @@ public final class PairingManager {
         public final String clientName;
         public final String token;
 
-        private PairingResult(String clientId, String clientName, String token) {
+        PairingResult(String clientId, String clientName, String token) {
             this.clientId = clientId;
             this.clientName = clientName;
             this.token = token;
@@ -95,11 +95,20 @@ public final class PairingManager {
             return null;
         }
 
+        PairingResult result = issueTrustedClient(requestedName);
+        if (result == null) {
+            return null;
+        }
+        code = null;
+        return result;
+    }
+
+    synchronized PairingResult issueTrustedClient(String requestedName) {
         JSONArray clients = readClients();
         if (clients.length() >= MAX_CLIENTS) {
             return null;
         }
-
+        long now = System.currentTimeMillis();
         String token = randomValue(32);
         String clientId = randomValue(12);
         String clientName = normalizeClientName(requestedName);
@@ -115,7 +124,6 @@ public final class PairingManager {
             throw new IllegalStateException("Unable to create paired client", impossible);
         }
         writeClients(clients);
-        code = null;
         return new PairingResult(clientId, clientName, token);
     }
 
@@ -271,7 +279,9 @@ public final class PairingManager {
     }
 
     private void writeClients(JSONArray clients) {
-        preferences.edit().putString(KEY_CLIENTS, clients.toString()).apply();
+        if (!preferences.edit().putString(KEY_CLIENTS, clients.toString()).commit()) {
+            throw new IllegalStateException("Unable to persist paired clients");
+        }
     }
 
     private String randomValue(int byteCount) {

@@ -57,6 +57,7 @@ public final class MainActivity extends Activity {
             if (webDashboard != null
                     && dashboardOffline
                     && !loadedDashboardUrl.isEmpty()) {
+                DashboardDiagnostics.record("retrying", loadedDashboardUrl, "");
                 webDashboard.loadUrl(loadedDashboardUrl);
             }
         }
@@ -94,11 +95,13 @@ public final class MainActivity extends Activity {
 
     private ConfigStore configStore;
     private AutomationManager automation;
+    private BackgroundVideoLibrary backgroundVideos;
     private PairingManager pairingManager;
     private MediaPlaybackManager media;
     private FrameLayout root;
     private View dashboardView;
     private WebView webDashboard;
+    private PlayerView ambientVideoView;
     private PlayerView playerView;
     private View sleepOverlay;
     private TextView nativeStatus;
@@ -106,11 +109,16 @@ public final class MainActivity extends Activity {
     private String loadedDashboardUrl = "";
     private boolean dashboardOffline;
     private boolean cameraPermissionRequested;
+    private boolean ambientDashboardSelected;
+    private boolean renderedAmbientDashboardSelected;
+    private String ambientBackgroundFit = "cover";
+    private boolean activityResumed;
 
     @Override
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        DashboardDiagnostics.record("activity-create", "", "");
         getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
                         | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -121,11 +129,23 @@ public final class MainActivity extends Activity {
 
         configStore = new ConfigStore(this);
         automation = AutomationManager.getInstance(this);
+        backgroundVideos = BackgroundVideoLibrary.getInstance(this);
         pairingManager = PairingManager.getInstance(this);
         media = MediaPlaybackManager.getInstance(this);
 
         root = new FrameLayout(this);
         setContentView(root);
+
+        ambientVideoView = new PlayerView(this);
+        ambientVideoView.setBackgroundColor(Color.BLACK);
+        ambientVideoView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        ambientVideoView.setVisibility(View.GONE);
+        root.addView(
+                ambientVideoView,
+                new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        media.attachAmbient(ambientVideoView);
 
         playerView = new PlayerView(this);
         playerView.setBackgroundColor(Color.BLACK);
@@ -170,6 +190,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        activityResumed = true;
         if (root != null) {
             renderDashboard();
         }
@@ -180,6 +201,7 @@ public final class MainActivity extends Activity {
             dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
         }
         updateSleepVisibility();
+        updateAmbientVideoState();
         requestCameraPermissionIfNeeded();
     }
 
@@ -196,6 +218,8 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        activityResumed = false;
+        updateAmbientVideoState();
         statusHandler.removeCallbacks(statusRefresh);
         dashboardHandler.removeCallbacks(dashboardRetry);
         super.onPause();
@@ -206,6 +230,7 @@ public final class MainActivity extends Activity {
         statusHandler.removeCallbacks(statusRefresh);
         dashboardHandler.removeCallbacks(dashboardRetry);
         unregisterReceiver(stateReceiver);
+        media.detachAmbient(ambientVideoView);
         media.detach(playerView);
         destroyWebDashboard();
         super.onDestroy();
@@ -214,15 +239,23 @@ public final class MainActivity extends Activity {
     private void renderDashboard() {
         String dashboardUrl = configStore.getDashboardUrl();
         if (!dashboardUrl.isEmpty()) {
+            ambientDashboardSelected = false;
             renderWebDashboard(dashboardUrl);
         } else if (pairingManager.isPaired() && !currentIpAddress().isEmpty()) {
+            DashboardLayoutConfig layout = configStore.getDashboardLayout();
+            ambientDashboardSelected = "video".equals(layout.backgroundMode())
+                    && backgroundVideos.activeFile() != null;
+            ambientBackgroundFit = layout.backgroundFit();
             renderWebDashboard(BUILT_IN_DASHBOARD_URL);
         } else {
+            ambientDashboardSelected = false;
             renderNativeDashboard();
         }
+        updateAmbientVideoState();
     }
 
     private void renderNativeDashboard() {
+        DashboardDiagnostics.record("native", "", "");
         if (dashboardView != null && webDashboard == null) {
             if (dashboardView instanceof LinearLayout) {
                 refreshNativeDashboard((LinearLayout) dashboardView);
@@ -459,9 +492,18 @@ public final class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     private void renderWebDashboard(String dashboardUrl) {
         if (webDashboard != null && dashboardUrl.equals(loadedDashboardUrl)) {
+            boolean backgroundModeChanged =
+                    renderedAmbientDashboardSelected != ambientDashboardSelected;
+            renderedAmbientDashboardSelected = ambientDashboardSelected;
+            webDashboard.setBackgroundColor(
+                    ambientDashboardSelected ? Color.TRANSPARENT : Color.BLACK);
+            if (backgroundModeChanged) {
+                webDashboard.reload();
+            }
             return;
         }
         removeDashboardView();
+        DashboardDiagnostics.record("loading", dashboardUrl, "");
 
         webDashboard = new WebView(this);
         WebSettings settings = webDashboard.getSettings();
@@ -473,6 +515,11 @@ public final class MainActivity extends Activity {
         webDashboard.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                DashboardDiagnostics.record("page-finished", url, "");
+                view.evaluateJavascript(
+                        "(function(){return [document.readyState,location.href,"
+                                + "typeof window.MirrorRenderer].join('|');}())",
+                        DashboardDiagnostics::recordPageProbe);
                 if (loadedDashboardUrl.equals(url)) {
                     dashboardOffline = false;
                     dashboardHandler.removeCallbacks(dashboardRetry);
@@ -485,6 +532,10 @@ public final class MainActivity extends Activity {
                     WebResourceRequest request,
                     WebResourceError error) {
                 if (request.isForMainFrame()) {
+                    DashboardDiagnostics.recordFailure(
+                            "load-error",
+                            String.valueOf(request.getUrl()),
+                            String.valueOf(error.getDescription()));
                     showOfflineDashboard();
                 }
             }
@@ -496,11 +547,17 @@ public final class MainActivity extends Activity {
                     WebResourceResponse errorResponse) {
                 if (request.isForMainFrame()
                         && errorResponse.getStatusCode() >= 400) {
+                    DashboardDiagnostics.recordFailure(
+                            "http-error",
+                            String.valueOf(request.getUrl()),
+                            String.valueOf(errorResponse.getStatusCode()));
                     showOfflineDashboard();
                 }
             }
         });
-        webDashboard.setBackgroundColor(Color.BLACK);
+        webDashboard.setBackgroundColor(
+                ambientDashboardSelected ? Color.TRANSPARENT : Color.BLACK);
+        renderedAmbientDashboardSelected = ambientDashboardSelected;
         loadedDashboardUrl = dashboardUrl;
         setDashboardView(webDashboard);
         webDashboard.loadUrl(dashboardUrl);
@@ -510,7 +567,7 @@ public final class MainActivity extends Activity {
         dashboardView = view;
         root.addView(
                 view,
-                0,
+                Math.min(1, root.getChildCount()),
                 new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
@@ -527,6 +584,7 @@ public final class MainActivity extends Activity {
         }
         destroyWebDashboard();
         loadedDashboardUrl = "";
+        renderedAmbientDashboardSelected = false;
     }
 
     private void destroyWebDashboard() {
@@ -542,6 +600,7 @@ public final class MainActivity extends Activity {
             return;
         }
         dashboardOffline = true;
+        DashboardDiagnostics.record("offline", loadedDashboardUrl, "");
         webDashboard.loadUrl(OFFLINE_DASHBOARD_URL);
         dashboardHandler.removeCallbacks(dashboardRetry);
         dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
@@ -549,6 +608,7 @@ public final class MainActivity extends Activity {
 
     private void updateMediaVisibility() {
         playerView.setVisibility(media.isPresentationActive() ? View.VISIBLE : View.GONE);
+        updateAmbientVideoState();
     }
 
     private void updateSleepVisibility() {
@@ -564,6 +624,28 @@ public final class MainActivity extends Activity {
             attributes.screenBrightness = brightness;
             getWindow().setAttributes(attributes);
         }
+        updateAmbientVideoState();
+    }
+
+    private void updateAmbientVideoState() {
+        if (ambientVideoView == null || automation == null || media == null) {
+            return;
+        }
+        AmbientVideoPolicy.State state = AmbientVideoPolicy.desiredState(
+                ambientDashboardSelected,
+                media.isPresentationActive(),
+                activityResumed,
+                automation.isSleeping());
+        ambientVideoView.setResizeMode(
+                "contain".equals(ambientBackgroundFit)
+                        ? AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+        ambientVideoView.setVisibility(state.enabled ? View.VISIBLE : View.GONE);
+        media.setAmbientState(
+                backgroundVideos.activeFile(),
+                backgroundVideos.activeId(),
+                state.enabled,
+                state.playing);
     }
 
     private void requestCameraPermissionIfNeeded() {

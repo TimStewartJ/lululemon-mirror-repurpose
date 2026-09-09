@@ -25,6 +25,8 @@ public final class ControlServer extends NanoHTTPD {
     private static final int MAX_BODY_BYTES = 64 * 1024;
 
     private final Context context;
+    private final BackgroundVideoLibrary backgroundVideos;
+    private final BackgroundVideoProvisioner backgroundVideoProvisioner;
     private final ConfigStore configStore;
     private final AutomationManager automation;
     private final MediaPlaybackManager media;
@@ -40,12 +42,14 @@ public final class ControlServer extends NanoHTTPD {
     public ControlServer(Context context, int port) {
         super(port);
         this.context = context.getApplicationContext();
+        backgroundVideos = BackgroundVideoLibrary.getInstance(context);
         configStore = new ConfigStore(context);
         automation = AutomationManager.getInstance(context);
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
         notes = NoteStore.getInstance(context);
         pairing = PairingManager.getInstance(context);
+        backgroundVideoProvisioner = new BackgroundVideoProvisioner(context, pairing);
         photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
         weather = WeatherProvider.getInstance(context);
@@ -101,6 +105,24 @@ public final class ControlServer extends NanoHTTPD {
                     && isLoopback(session)) {
                 return response(Response.Status.OK, notesDocument());
             }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/dashboard/ambient-video".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        ambientVideoStatus(isLoopback(session) || authorized(session)));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/background-videos/bootstrap".equals(uri)) {
+                return response(
+                        Response.Status.OK,
+                        new JSONObject().put(
+                                "available",
+                                backgroundVideoProvisioner.available()));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/background-videos/bootstrap".equals(uri)) {
+                return provisionBackgroundVideoClient(session);
+            }
             if (Method.GET.equals(session.getMethod())) {
                 Response asset = controlAsset(uri);
                 if (asset != null) {
@@ -120,6 +142,55 @@ public final class ControlServer extends NanoHTTPD {
             }
             if (!authorized(session)) {
                 return error(Response.Status.UNAUTHORIZED, "Authentication required");
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/background-videos/bootstrap/confirm".equals(uri)) {
+                try {
+                    boolean confirmed =
+                            backgroundVideoProvisioner.confirm(bearerToken(session));
+                    return confirmed
+                            ? response(
+                                    Response.Status.OK,
+                                    new JSONObject().put("confirmed", true))
+                            : error(
+                                    Response.Status.FORBIDDEN,
+                                    "Background video bootstrap confirmation failed");
+                } catch (IllegalStateException error) {
+                    return error(Response.Status.INTERNAL_ERROR, error.getMessage());
+                }
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/background-videos".equals(uri)) {
+                return response(Response.Status.OK, backgroundVideos.document());
+            }
+            if (Method.PUT.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/background-videos/upload/")) {
+                return uploadBackgroundVideo(
+                        session,
+                        uri.substring("/api/v1/background-videos/upload/".length()));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/background-videos/rollback".equals(uri)) {
+                return rollbackBackgroundVideo();
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/background-videos/")
+                    && uri.endsWith("/activate")) {
+                return activateBackgroundVideo(uri.substring(
+                        "/api/v1/background-videos/".length(),
+                        uri.length() - "/activate".length()));
+            }
+            if (Method.DELETE.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/background-videos/")) {
+                return deleteBackgroundVideo(
+                        uri.substring("/api/v1/background-videos/".length()));
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/background-videos/")
+                    && uri.endsWith("/poster")) {
+                return serveBackgroundVideoPoster(uri.substring(
+                        "/api/v1/background-videos/".length(),
+                        uri.length() - "/poster".length()));
             }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/dashboard".equals(uri)) {
                 return response(
@@ -359,6 +430,8 @@ public final class ControlServer extends NanoHTTPD {
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
         result.put("media", media.snapshot());
+        result.put("ambientVideo", media.ambientSnapshot());
+        result.put("backgroundVideos", backgroundVideos.selectionSnapshot());
         result.put("automation", automation.snapshot());
         result.put("weather", weather.snapshot(false));
         result.put("notesVersion", notes.version());
@@ -378,6 +451,61 @@ public final class ControlServer extends NanoHTTPD {
         runtime.put("pairingCode", pairing.currentCode());
         runtime.put("controlUrl", controlUrl());
         return runtime;
+    }
+
+    private JSONObject ambientVideoStatus(boolean fullDiagnostics) throws JSONException {
+        JSONObject video = media.ambientSnapshot();
+        if (!fullDiagnostics) {
+            video = new JSONObject()
+                    .put("enabled", video.optBoolean("enabled"))
+                    .put("state", video.optString("state"))
+                    .put("playing", video.optBoolean("playing"))
+                    .put("firstFrameRendered", video.optBoolean("firstFrameRendered"))
+                    .put("width", video.optInt("width"))
+                    .put("height", video.optInt("height"))
+                    .put("frameRate", video.optDouble("frameRate"))
+                    .put("droppedFrames", video.optInt("droppedFrames"))
+                    .put("droppedFramePercent", video.optDouble("droppedFramePercent"));
+        }
+        return new JSONObject()
+                .put("video", video)
+                .put(
+                        "selection",
+                        fullDiagnostics
+                                ? backgroundVideos.selectionSnapshot()
+                                : backgroundVideos.publicSelectionSnapshot())
+                .put(
+                        "dashboard",
+                        fullDiagnostics
+                                ? DashboardDiagnostics.snapshot()
+                                : DashboardDiagnostics.publicSnapshot());
+    }
+
+    private Response provisionBackgroundVideoClient(IHTTPSession session)
+            throws JSONException {
+        if (!backgroundVideoProvisioner.available()) {
+            return error(
+                    Response.Status.CONFLICT,
+                    "Background video bootstrap is unavailable or already used");
+        }
+        PairingManager.PairingResult result;
+        try {
+            result = backgroundVideoProvisioner.provision(
+                    session.getHeaders().get("x-background-video-bootstrap"));
+        } catch (IllegalStateException error) {
+            return error(Response.Status.INTERNAL_ERROR, error.getMessage());
+        }
+        if (result == null) {
+            return error(
+                    Response.Status.UNAUTHORIZED,
+                    "Invalid background video bootstrap token");
+        }
+        return response(
+                Response.Status.OK,
+                new JSONObject()
+                        .put("token", result.token)
+                        .put("clientId", result.clientId)
+                        .put("clientName", result.clientName));
     }
 
     private Response pair(JSONObject body) throws JSONException {
@@ -552,6 +680,111 @@ public final class ControlServer extends NanoHTTPD {
         return response(
                 Response.Status.CREATED,
                 new JSONObject().put("name", storedName));
+    }
+
+    private Response uploadBackgroundVideo(IHTTPSession session, String encodedName)
+            throws IOException, ResponseException, JSONException {
+        long contentLength = contentLength(session);
+        if (contentLength < 1 || contentLength > BackgroundVideoLibrary.MAX_VIDEO_BYTES) {
+            return error(
+                    Response.Status.BAD_REQUEST,
+                    "Background video exceeds the 256 MiB limit");
+        }
+        String contentType = session.getHeaders().get("content-type");
+        if (contentType == null
+                || !contentType.toLowerCase(java.util.Locale.US).startsWith("video/mp4")) {
+            return error(
+                    Response.Status.UNSUPPORTED_MEDIA_TYPE,
+                    "An MP4 video Content-Type is required");
+        }
+        try {
+            BackgroundVideoLibrary.StoreResult stored = backgroundVideos.store(
+                    encodedName,
+                    session.getInputStream(),
+                    contentLength);
+            boolean posterAvailable = backgroundVideos.poster(stored.video.id) != null;
+            return response(
+                    stored.duplicate ? Response.Status.OK : Response.Status.CREATED,
+                    new JSONObject()
+                            .put(
+                                    "video",
+                                    stored.video.toJson(false, false, posterAvailable))
+                            .put("duplicate", stored.duplicate));
+        } catch (IOException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
+        }
+    }
+
+    private Response activateBackgroundVideo(String id) throws JSONException {
+        try {
+            if (!backgroundVideos.activate(id)) {
+                return error(Response.Status.NOT_FOUND, "Background video not found");
+            }
+            configStore.setDashboardLayout(
+                    configStore.getDashboardLayout().withBackgroundMode("video"));
+            configStore.setDashboardUrl("");
+            notifyConfigurationChanged();
+            return response(Response.Status.OK, backgroundVideos.document());
+        } catch (IOException | IllegalArgumentException error) {
+            return error(Response.Status.CONFLICT, error.getMessage());
+        }
+    }
+
+    private Response rollbackBackgroundVideo() throws JSONException {
+        try {
+            if (!backgroundVideos.rollback()) {
+                return error(
+                        Response.Status.CONFLICT,
+                        "No previous background video is available");
+            }
+            configStore.setDashboardLayout(
+                    configStore.getDashboardLayout().withBackgroundMode("video"));
+            configStore.setDashboardUrl("");
+            notifyConfigurationChanged();
+            return response(Response.Status.OK, backgroundVideos.document());
+        } catch (IOException | IllegalArgumentException error) {
+            return error(Response.Status.CONFLICT, error.getMessage());
+        }
+    }
+
+    private Response deleteBackgroundVideo(String id) throws JSONException {
+        try {
+            BackgroundVideoLibrary.DeleteResult result = backgroundVideos.delete(id);
+            switch (result) {
+                case ACTIVE:
+                    return error(
+                            Response.Status.CONFLICT,
+                            "Activate another background before deleting this one");
+                case NOT_FOUND:
+                    return error(Response.Status.NOT_FOUND, "Background video not found");
+                default:
+                    notifyConfigurationChanged();
+                    return response(
+                            Response.Status.OK,
+                            new JSONObject().put("deleted", true).put("id", id));
+            }
+        } catch (IOException error) {
+            return error(Response.Status.CONFLICT, error.getMessage());
+        }
+    }
+
+    private Response serveBackgroundVideoPoster(String id) {
+        File poster = backgroundVideos.poster(id);
+        if (poster == null) {
+            return error(Response.Status.NOT_FOUND, "Background video poster not found");
+        }
+        try {
+            Response result = newFixedLengthResponse(
+                    Response.Status.OK,
+                    "image/jpeg",
+                    new FileInputStream(poster),
+                    poster.length());
+            result.addHeader("Cache-Control", "private, max-age=86400");
+            result.addHeader("X-Content-Type-Options", "nosniff");
+            return result;
+        } catch (IOException error) {
+            return error(Response.Status.NOT_FOUND, "Background video poster not found");
+        }
     }
 
     private Response servePhoto(String encodedName) throws IOException {
@@ -772,6 +1005,22 @@ public final class ControlServer extends NanoHTTPD {
                 }
             }
             return new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+    }
+
+    private static long contentLength(IHTTPSession session) throws ResponseException {
+        String value = session.getHeaders().get("content-length");
+        if (value == null) {
+            throw new ResponseException(
+                    Response.Status.LENGTH_REQUIRED,
+                    "Content-Length is required");
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException error) {
+            throw new ResponseException(
+                    Response.Status.BAD_REQUEST,
+                    "Invalid Content-Length header");
         }
     }
 

@@ -131,6 +131,7 @@
   function create(container, options) {
     var settings = options || {};
     var editing = Boolean(settings.editing);
+    var nativeVideo = Boolean(settings.nativeVideo);
     var selectedId = '';
     var layout = null;
     var runtime = null;
@@ -149,6 +150,9 @@
       var edge = box ? Math.max(box.width, box.height) * pixelRatio : Infinity;
       var variant = edge <= 320 ? '/thumbnail' : '/display';
       done('/photos/' + encodeURIComponent(name) + variant);
+    };
+    var resolveVideoPoster = settings.resolveVideoPoster || function (id, done) {
+      done('');
     };
     var listPhotos = settings.listPhotos || function (done) {
       fetch('/api/v1/photos/slideshow', { cache: 'no-store' }).then(function (response) {
@@ -640,20 +644,37 @@
 
     function applyBackground() {
       var background = layout.background;
+      var videoSelection = runtime && runtime.backgroundVideos;
+      var activeVideo = videoSelection && videoSelection.active;
+      var activeVideoId = activeVideo && activeVideo.id ? activeVideo.id : '';
       var key = [background.mode, background.primary, background.secondary,
-        background.photo, background.dim].join('|');
+        background.photo, background.fit, background.dim, activeVideoId, nativeVideo].join('|');
       if (key === backgroundKey) return;
       backgroundKey = key;
-      container.style.background = background.mode === 'gradient'
-        ? 'linear-gradient(155deg, ' + background.primary + ' 0%, ' + background.secondary + ' 100%)'
-        : background.primary;
+      if (background.mode === 'video' && nativeVideo && activeVideoId) {
+        container.style.background = 'transparent';
+      } else {
+        container.style.background = background.mode === 'gradient'
+          ? 'linear-gradient(155deg, ' + background.primary + ' 0%, '
+            + background.secondary + ' 100%)'
+          : background.mode === 'video' ? '#000' : background.primary;
+      }
       shadeLayer.style.background = 'rgba(0, 0, 0, ' + (Number(background.dim || 0) / 100) + ')';
       photoToken += 1;
       var token = photoToken;
       photoLayer.className = 'mr-layer mr-backdrop';
       photoLayer.style.backgroundImage = '';
+      photoLayer.style.backgroundSize = 'cover';
       if (background.mode === 'photo' && background.photo) {
         resolvePhoto(background.photo, function (url) {
+          if (token !== photoToken || !url) return;
+          photoLayer.style.backgroundImage = 'url("' + url + '")';
+          photoLayer.className = 'mr-layer mr-backdrop mr-ready';
+        }, stageSize());
+      } else if (background.mode === 'video' && activeVideoId && !nativeVideo) {
+        photoLayer.style.backgroundSize =
+          background.fit === 'contain' ? 'contain' : 'cover';
+        resolveVideoPoster(activeVideoId, function (url) {
           if (token !== photoToken || !url) return;
           photoLayer.style.backgroundImage = 'url("' + url + '")';
           photoLayer.className = 'mr-layer mr-backdrop mr-ready';

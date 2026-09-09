@@ -30,6 +30,7 @@ public final class DashboardLayoutConfig {
             "photo"
     };
     private static final String DEFAULT_PHOTO_FIT = "cover";
+    private static final String DEFAULT_BACKGROUND_FIT = "cover";
     /* Other widgets carry an unused text field; only notes hold real prose. */
     private static final int MAX_WIDGET_TEXT = 120;
     /* Where a note widget gets its words: its own text, or the NoteBook. */
@@ -61,6 +62,7 @@ public final class DashboardLayoutConfig {
                             .put("primary", "#000000")
                             .put("secondary", "#000000")
                             .put("photo", "")
+                            .put("fit", DEFAULT_BACKGROUND_FIT)
                             .put("dim", 0));
             root.put("textColor", "#f5f2ec");
             root.put("accentColor", "#c2ced3");
@@ -153,14 +155,39 @@ public final class DashboardLayoutConfig {
         return value.toString();
     }
 
+    public String backgroundMode() {
+        return background().optString("mode", "solid");
+    }
+
+    public String backgroundFit() {
+        return background().optString("fit", DEFAULT_BACKGROUND_FIT);
+    }
+
+    public DashboardLayoutConfig withBackgroundMode(String mode) {
+        JSONObject copy = toJson();
+        try {
+            copy.getJSONObject("background").put("mode", mode);
+            return parse(copy);
+        } catch (JSONException error) {
+            throw new IllegalArgumentException("Invalid dashboard background mode", error);
+        }
+    }
+
     private static JSONObject normalizeBackground(JSONObject source, JSONObject fallback)
             throws JSONException {
         JSONObject value = source == null ? fallback : source;
         String mode = value.optString("mode", fallback.getString("mode"));
-        if (!"solid".equals(mode) && !"gradient".equals(mode) && !"photo".equals(mode)) {
+        if (!"solid".equals(mode)
+                && !"gradient".equals(mode)
+                && !"photo".equals(mode)
+                && !"video".equals(mode)) {
             throw new JSONException("Unknown dashboard background mode");
         }
         String photo = normalizePhotoName(value.optString("photo", ""));
+        String fit = value.optString("fit", fallback.optString("fit", DEFAULT_BACKGROUND_FIT));
+        if (!"cover".equals(fit) && !"contain".equals(fit)) {
+            throw new JSONException("Dashboard background fit must be cover or contain");
+        }
         int dim = value.optInt("dim", fallback.getInt("dim"));
         if (dim < 0 || dim > 90) {
             throw new JSONException("Dashboard background dim must be 0-90");
@@ -174,7 +201,16 @@ public final class DashboardLayoutConfig {
                         "secondary",
                         fallback.getString("secondary"))))
                 .put("photo", photo)
+                .put("fit", fit)
                 .put("dim", dim);
+    }
+
+    private JSONObject background() {
+        JSONObject background = value.optJSONObject("background");
+        if (background == null) {
+            throw new IllegalStateException("Dashboard background is missing");
+        }
+        return background;
     }
 
     private static JSONArray migrateVersionOne(

@@ -15,6 +15,7 @@ public final class DashboardLayoutConfigTest {
         assertEquals(2, value.getInt("version"));
         assertEquals("solid", value.getJSONObject("background").getString("mode"));
         assertEquals("#000000", value.getJSONObject("background").getString("primary"));
+        assertEquals("cover", value.getJSONObject("background").getString("fit"));
         assertEquals(15, value.getJSONArray("widgets").length());
         assertEquals(0, value.getJSONObject("background").getInt("dim"));
         assertEquals(15, DashboardLayoutConfig.parse(value).toJson()
@@ -170,6 +171,38 @@ public final class DashboardLayoutConfigTest {
     public void rejectsUnknownPhotoFit() throws JSONException {
         JSONObject value = DashboardLayoutConfig.defaults().toJson();
         find(value, "photo").put("fit", "stretch");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test
+    public void videoBackgroundKeepsValidatedFit() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        value.getJSONObject("background")
+                .put("mode", "video")
+                .put("fit", "contain")
+                .put("dim", 24);
+
+        DashboardLayoutConfig parsed = DashboardLayoutConfig.parse(value);
+
+        assertEquals("video", parsed.backgroundMode());
+        assertEquals("contain", parsed.backgroundFit());
+        assertEquals(24, parsed.toJson().getJSONObject("background").getInt("dim"));
+    }
+
+    @Test
+    public void canSwitchAnExistingLayoutToVideo() {
+        DashboardLayoutConfig parsed =
+                DashboardLayoutConfig.defaults().withBackgroundMode("video");
+
+        assertEquals("video", parsed.backgroundMode());
+        assertEquals("cover", parsed.backgroundFit());
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownBackgroundFit() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        value.getJSONObject("background").put("fit", "stretch");
+
         DashboardLayoutConfig.parse(value);
     }
 
