@@ -429,6 +429,39 @@ textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-heig
 .photo-add:hover { border-color: var(--text-3); color: var(--text); }
 .photo-add svg { width: 22px; height: 22px; }
 
+/* ---------- Background videos ---------- */
+
+.video-list { display: grid; gap: 8px; padding: 8px 12px 4px; }
+.video-card {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  min-height: 92px; padding: 10px; border-top: 1px solid var(--line);
+}
+.video-card:first-child { border-top: 0; }
+.video-poster {
+  width: 72px; height: 72px; border-radius: 9px; overflow: hidden; background: #050506;
+  border: 1px solid var(--line); display: grid; place-items: center; color: var(--text-3);
+}
+.video-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video-card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.video-card small { display: block; margin-top: 4px; color: var(--text-3); font-size: 12px; line-height: 1.35; }
+.video-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.video-badge {
+  padding: 2px 7px; border-radius: 999px; background: var(--surface-3);
+  color: var(--text-2); font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+}
+.video-badge.active { background: var(--accent-soft); color: var(--accent); }
+.video-card-actions { display: grid; gap: 6px; justify-items: stretch; }
+.video-card-actions .btn { min-width: 64px; padding-left: 10px; padding-right: 10px; }
+.upload-progress { height: 4px; margin: 8px 12px 2px; border-radius: 2px; overflow: hidden; background: var(--surface-3); }
+.upload-progress span { display: block; width: 0; height: 100%; background: var(--accent); transition: width .15s linear; }
+.video-empty { padding: 18px 16px; color: var(--text-3); font-size: 13px; text-align: center; }
+
+@media (max-width: 430px) {
+  .video-card { grid-template-columns: 64px minmax(0, 1fr); }
+  .video-poster { width: 64px; height: 64px; }
+  .video-card-actions { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
+}
+
 /* ---------- Settings ---------- */
 
 .clients { list-style: none; margin: 0; padding: 0; }

@@ -283,6 +283,7 @@
                   <label class="seg-opt"><input type="radio" name="bg-mode" value="solid"><span>Solid</span></label>
                   <label class="seg-opt"><input type="radio" name="bg-mode" value="gradient"><span>Gradient</span></label>
                   <label class="seg-opt"><input type="radio" name="bg-mode" value="photo"><span>Photo</span></label>
+                  <label class="seg-opt"><input type="radio" name="bg-mode" value="video"><span>Video</span></label>
                 </div>
               </div>
               <div class="row swatches">
@@ -295,8 +296,19 @@
                 <span class="row-label">Photo</span>
                 <select id="layout-background-photo" class="select"></select>
               </label>
+              <label id="layout-background-video-row" class="row hidden">
+                <span class="row-label">Video</span>
+                <select id="layout-background-video" class="select"></select>
+              </label>
+              <div id="layout-background-fit-row" class="row hidden">
+                <span class="row-label">Fit</span>
+                <div class="seg" role="radiogroup" aria-label="Background video fit">
+                  <label class="seg-opt"><input type="radio" name="background-fit" value="cover"><span>Fill</span></label>
+                  <label class="seg-opt"><input type="radio" name="background-fit" value="contain"><span>Whole</span></label>
+                </div>
+              </div>
               <div id="layout-dim-row" class="row">
-                <div class="row-main"><span class="row-label">Dim photo</span><output id="layout-dim-output" class="row-value">0%</output></div>
+                <div class="row-main"><span class="row-label">Dim background</span><output id="layout-dim-output" class="row-value">0%</output></div>
                 <input id="layout-background-dim" class="slider" type="range" min="0" max="90" value="0" aria-label="Background dim">
               </div>
             </div>
@@ -342,6 +354,25 @@
           <p id="weather-message" class="status inset" role="status"></p>
           <p class="hint inset">Coordinates stay on the mirror and are sent only to Open‑Meteo over HTTPS. Forecasts are cached for outages.</p>
         </form>
+
+        <h2 class="section-title">Background videos</h2>
+        <div class="group">
+          <div class="row">
+            <div class="row-main">
+              <span class="row-label">Video library</span>
+              <span id="background-video-storage" class="row-sub">No videos uploaded</span>
+            </div>
+            <button id="background-video-add" type="button" class="btn">Upload MP4</button>
+          </div>
+          <div id="background-video-progress" class="upload-progress hidden"><span></span></div>
+          <div id="background-video-list" class="video-list"></div>
+          <div class="row actions-row">
+            <button id="background-video-rollback" type="button" class="btn" disabled>Use previous video</button>
+          </div>
+          <input id="background-video-file" class="hidden" type="file" accept="video/mp4,.mp4">
+          <p id="background-video-message" class="status inset" role="status"></p>
+          <p class="hint inset">H.264 MP4, up to 256 MiB and 1080p at 30 FPS. Uploads stay private on this mirror. Audio tracks are ignored.</p>
+        </div>
 
         <h2 class="section-title">Photos</h2>
         <div class="group">

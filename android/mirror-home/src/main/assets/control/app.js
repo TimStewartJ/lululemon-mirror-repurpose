@@ -23,10 +23,17 @@
   var dashboardLayout = null;
   var weatherSnapshot = null;
   var photoList = [];
+  var backgroundVideoCatalog = {
+    videos: [],
+    activeId: '',
+    previousId: '',
+    canRollback: false
+  };
   var noteList = [];
   var notesVersion = null;
   var noteLimit = 1000;
   var editingNoteId = '';
+  var pendingBackgroundVideoId = '';
   var selectedWidgetId = 'clock';
   var layoutHistory = [];
   var layoutFuture = [];
@@ -35,6 +42,7 @@
   var weatherPollTimer = null;
   var toastTimer = null;
   var photoUrlCache = {};
+  var videoPosterUrlCache = {};
   var layoutSettings = {
     snap: window.localStorage.getItem('mirror-layout-snap') !== 'false',
     grid: Number(window.localStorage.getItem('mirror-layout-grid') || 20)
@@ -135,6 +143,21 @@
     return minutes + 'm';
   }
 
+  function formatBytes(value) {
+    var bytes = Math.max(0, Number(value || 0));
+    if (bytes < 1024) return Math.round(bytes) + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KiB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GiB';
+  }
+
+  function formatDuration(milliseconds) {
+    var seconds = Math.max(0, Math.round(Number(milliseconds || 0) / 1000));
+    var minutes = Math.floor(seconds / 60);
+    var remainder = seconds % 60;
+    return minutes + ':' + (remainder < 10 ? '0' : '') + remainder;
+  }
+
   function formatClockTime(value) {
     if (!value) return '';
     var pieces = String(value).split(':');
@@ -167,12 +190,31 @@
     done(photoList.map(function (photo) { return photo.name; }));
   }
 
-  var rendererOptions = { resolvePhoto: resolvePhoto, listPhotos: listPhotos };
+  function resolveVideoPoster(id, done) {
+    if (!id) { done(''); return; }
+    if (videoPosterUrlCache[id]) { done(videoPosterUrlCache[id]); return; }
+    fetch('/api/v1/background-videos/' + encodeURIComponent(id) + '/poster', {
+      headers: { Authorization: 'Bearer ' + token }
+    }).then(function (response) {
+      if (!response.ok) throw new Error('Video poster unavailable');
+      return response.blob();
+    }).then(function (blob) {
+      videoPosterUrlCache[id] = URL.createObjectURL(blob);
+      done(videoPosterUrlCache[id]);
+    }).catch(function () { done(''); });
+  }
+
+  var rendererOptions = {
+    resolvePhoto: resolvePhoto,
+    listPhotos: listPhotos,
+    resolveVideoPoster: resolveVideoPoster
+  };
   var homeRenderer = window.MirrorRenderer.create(byId('home-preview'), rendererOptions);
   var editor = window.MirrorRenderer.create(byId('layout-preview'), {
     editing: true,
     resolvePhoto: resolvePhoto,
-    listPhotos: listPhotos
+    listPhotos: listPhotos,
+    resolveVideoPoster: resolveVideoPoster
   });
 
   function previewRuntime() {
@@ -445,9 +487,16 @@
     byId('layout-text-color').value = dashboardLayout.textColor;
     byId('layout-accent-color').value = dashboardLayout.accentColor;
     byId('layout-background-photo').value = dashboardLayout.background.photo || '';
+    byId('layout-background-video').value =
+      pendingBackgroundVideoId || backgroundVideoCatalog.activeId || '';
+    setRadio('background-fit', dashboardLayout.background.fit || 'cover');
     byId('layout-secondary-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'gradient');
     byId('layout-background-photo-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'photo');
-    byId('layout-dim-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'photo');
+    byId('layout-background-video-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'video');
+    byId('layout-background-fit-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'video');
+    byId('layout-dim-row').classList.toggle(
+      'hidden',
+      dashboardLayout.background.mode !== 'photo' && dashboardLayout.background.mode !== 'video');
     renderLayers();
     updateWidgetControls();
     byId('layout-snap-enabled').checked = layoutSettings.snap;
@@ -827,6 +876,183 @@
     });
   }
 
+  function findBackgroundVideo(id) {
+    var videos = backgroundVideoCatalog.videos || [];
+    for (var index = 0; index < videos.length; index++) {
+      if (videos[index].id === id) return videos[index];
+    }
+    return null;
+  }
+
+  function syncBackgroundVideoStatus() {
+    if (!status) return;
+    status.backgroundVideos = {
+      active: findBackgroundVideo(backgroundVideoCatalog.activeId),
+      previous: findBackgroundVideo(backgroundVideoCatalog.previousId),
+      canRollback: Boolean(backgroundVideoCatalog.canRollback)
+    };
+  }
+
+  function refreshBackgroundVideos() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/background-videos').then(function (catalog) {
+      backgroundVideoCatalog = catalog || backgroundVideoCatalog;
+      syncBackgroundVideoStatus();
+
+      var videos = backgroundVideoCatalog.videos || [];
+      var select = byId('layout-background-video');
+      select.textContent = '';
+      var emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = videos.length ? 'Choose a video' : 'Upload a video first';
+      select.appendChild(emptyOption);
+      videos.forEach(function (video) {
+        var option = document.createElement('option');
+        option.value = video.id;
+        option.textContent = video.name;
+        select.appendChild(option);
+      });
+      if (pendingBackgroundVideoId && !findBackgroundVideo(pendingBackgroundVideoId)) {
+        pendingBackgroundVideoId = '';
+      }
+      select.value = pendingBackgroundVideoId || backgroundVideoCatalog.activeId || '';
+
+      var list = byId('background-video-list');
+      list.textContent = '';
+      if (!videos.length) {
+        var empty = document.createElement('p');
+        empty.className = 'video-empty';
+        empty.textContent = 'No background videos yet.';
+        list.appendChild(empty);
+      }
+      videos.forEach(function (video) {
+        var card = document.createElement('article');
+        card.className = 'video-card';
+
+        var poster = document.createElement('div');
+        poster.className = 'video-poster';
+        poster.textContent = 'MP4';
+        if (video.posterAvailable) {
+          resolveVideoPoster(video.id, function (url) {
+            if (!url) return;
+            var image = document.createElement('img');
+            image.alt = '';
+            image.src = url;
+            poster.textContent = '';
+            poster.appendChild(image);
+          });
+        }
+
+        var details = document.createElement('div');
+        var name = document.createElement('strong');
+        name.textContent = video.name;
+        name.title = video.name;
+        var metadata = document.createElement('small');
+        var orientedWidth = video.rotation === 90 || video.rotation === 270
+          ? video.height : video.width;
+        var orientedHeight = video.rotation === 90 || video.rotation === 270
+          ? video.width : video.height;
+        metadata.textContent = orientedWidth + '\u00d7' + orientedHeight
+          + ' \u00b7 ' + Math.round(Number(video.frameRate || 0)) + ' FPS'
+          + ' \u00b7 ' + formatDuration(video.durationMs)
+          + ' \u00b7 ' + formatBytes(video.sizeBytes);
+        var badges = document.createElement('div');
+        badges.className = 'video-badges';
+        if (video.active) {
+          var active = document.createElement('span');
+          active.className = 'video-badge active';
+          active.textContent = 'On mirror';
+          badges.appendChild(active);
+        }
+        if (video.previous) {
+          var previous = document.createElement('span');
+          previous.className = 'video-badge';
+          previous.textContent = 'Rollback';
+          badges.appendChild(previous);
+        }
+        details.appendChild(name);
+        details.appendChild(metadata);
+        details.appendChild(badges);
+
+        var actions = document.createElement('div');
+        actions.className = 'video-card-actions';
+        var use = document.createElement('button');
+        use.type = 'button';
+        use.className = 'btn';
+        use.textContent = video.active ? 'Using' : 'Use';
+        use.disabled = Boolean(video.active);
+        use.addEventListener('click', function () {
+          activateBackgroundVideo(video.id).catch(function () {});
+        });
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn' + (video.active ? '' : ' danger');
+        remove.textContent = 'Delete';
+        remove.disabled = Boolean(video.active);
+        remove.addEventListener('click', function () {
+          var warning = video.previous
+            ? ' This also removes the current rollback copy.'
+            : '';
+          if (!window.confirm('Delete ' + video.name + '?' + warning)) return;
+          request('/api/v1/background-videos/' + encodeURIComponent(video.id), {
+            method: 'DELETE'
+          }).then(function () {
+            toast('Background video deleted');
+            return refreshBackgroundVideos();
+          }).catch(function (error) {
+            setMessage('background-video-message', error.message, true);
+          });
+        });
+        actions.appendChild(use);
+        actions.appendChild(remove);
+
+        card.appendChild(poster);
+        card.appendChild(details);
+        card.appendChild(actions);
+        list.appendChild(card);
+      });
+
+      byId('background-video-rollback').disabled =
+        !backgroundVideoCatalog.canRollback;
+      var limit = formatBytes(backgroundVideoCatalog.maxLibraryBytes);
+      byId('background-video-storage').textContent = videos.length
+        ? formatBytes(backgroundVideoCatalog.totalBytes) + ' of ' + limit
+          + ' \u00b7 ' + videos.length + (videos.length === 1 ? ' video' : ' videos')
+        : 'No videos uploaded \u00b7 ' + limit + ' available';
+      if (dashboardLayout) renderLayoutEditor();
+      renderHomePreview();
+      return catalog;
+    });
+  }
+
+  function activateBackgroundVideo(id) {
+    if (!id) {
+      setMessage('background-video-message', 'Choose a video first.', true);
+      return Promise.reject(new Error('Choose a video first.'));
+    }
+    pendingBackgroundVideoId = id;
+    setMessage('background-video-message', 'Switching background\u2026');
+    return request(
+      '/api/v1/background-videos/' + encodeURIComponent(id) + '/activate',
+      json('POST', {}))
+      .then(function () {
+        return Promise.all([
+          refreshBackgroundVideos(),
+          refreshDashboardLayout(),
+          refreshStatus()
+        ]);
+      })
+      .then(function () {
+        pendingBackgroundVideoId = '';
+        setMessage('background-video-message', '');
+        toast('Background video is on the mirror');
+      })
+      .catch(function (error) {
+        setMessage('background-video-message', error.message, true);
+        throw error;
+      });
+  }
+
   function refreshOnboarding() {
     if (!token) return Promise.resolve();
     return request('/api/v1/onboarding').then(function (onboarding) {
@@ -1018,6 +1244,7 @@
           refreshAutomation(),
           refreshWeather(),
           refreshOnboarding(),
+          refreshBackgroundVideos(),
           refreshPhotos(),
           refreshNotes()
         ]);
@@ -1169,6 +1396,8 @@
     dashboardLayout.background.primary = byId('layout-primary-color').value;
     dashboardLayout.background.secondary = byId('layout-secondary-color').value;
     dashboardLayout.background.photo = byId('layout-background-photo').value;
+    dashboardLayout.background.fit =
+      radioValue('background-fit') || dashboardLayout.background.fit || 'cover';
     dashboardLayout.background.dim = Number(byId('layout-background-dim').value);
     dashboardLayout.textColor = byId('layout-text-color').value;
     dashboardLayout.accentColor = byId('layout-accent-color').value;
@@ -1184,6 +1413,13 @@
   });
   Array.from(document.querySelectorAll('input[name="bg-mode"]')).forEach(function (input) {
     input.addEventListener('change', updateLayoutBackground);
+  });
+  Array.from(document.querySelectorAll('input[name="background-fit"]')).forEach(function (input) {
+    input.addEventListener('change', updateLayoutBackground);
+  });
+  byId('layout-background-video').addEventListener('change', function () {
+    pendingBackgroundVideoId = byId('layout-background-video').value;
+    renderLayoutEditor();
   });
 
   byId('layout-widget-visible').addEventListener('change', function () {
@@ -1455,8 +1691,26 @@
 
   byId('save-dashboard-layout').addEventListener('click', function () {
     if (!dashboardLayout) return;
+    var selectedVideoId = byId('layout-background-video').value;
+    if (dashboardLayout.background.mode === 'video' && !selectedVideoId) {
+      setMessage(
+        'layout-message',
+        'Upload or choose a background video before saving.',
+        true);
+      return;
+    }
     setMessage('layout-message', 'Saving…');
-    request('/api/v1/dashboard/layout', json('PUT', dashboardLayout))
+    var activate = dashboardLayout.background.mode === 'video'
+      && selectedVideoId !== backgroundVideoCatalog.activeId
+      ? request(
+        '/api/v1/background-videos/' + encodeURIComponent(selectedVideoId) + '/activate',
+        json('POST', {}))
+      : Promise.resolve();
+    activate
+      .then(function () {
+        pendingBackgroundVideoId = '';
+        return request('/api/v1/dashboard/layout', json('PUT', dashboardLayout));
+      })
       .then(function (saved) {
         dashboardLayout = saved;
         savedLayout = cloneValue(saved);
@@ -1469,6 +1723,7 @@
         byId('dashboard-url-row').classList.add('hidden');
         renderLayoutEditor();
         renderHomePreview();
+        refreshBackgroundVideos().catch(function () {});
         setMessage('layout-message', '');
         toast('Saved. The mirror is showing your layout.');
       })
@@ -1838,6 +2093,131 @@
       toast('Photo added');
       return refreshPhotos();
     }).catch(function (error) { setMessage('photo-message', error.message, true); });
+  });
+
+  /* ---------- Display: background videos ---------- */
+
+  byId('background-video-add').addEventListener('click', function () {
+    byId('background-video-file').click();
+  });
+
+  byId('background-video-file').addEventListener('change', function () {
+    var input = byId('background-video-file');
+    var file = input.files[0];
+    if (!file) return;
+    var maxBytes = Number(backgroundVideoCatalog.maxVideoBytes || 256 * 1024 * 1024);
+    if (!/\.mp4$/i.test(file.name)) {
+      setMessage('background-video-message', 'Choose an MP4 file.', true);
+      input.value = '';
+      return;
+    }
+    if (file.size < 1 || file.size > maxBytes) {
+      setMessage(
+        'background-video-message',
+        'Video must be no larger than ' + formatBytes(maxBytes) + '.',
+        true);
+      input.value = '';
+      return;
+    }
+
+    var progress = byId('background-video-progress');
+    var bar = progress.querySelector('span');
+    var uploadButton = byId('background-video-add');
+    uploadButton.disabled = true;
+    progress.classList.remove('hidden');
+    bar.style.width = '0%';
+    setMessage('background-video-message', 'Uploading ' + file.name + '\u2026');
+
+    var xhr = new XMLHttpRequest();
+    xhr.open(
+      'PUT',
+      '/api/v1/background-videos/upload/' + encodeURIComponent(file.name));
+    xhr.timeout = 15 * 60 * 1000;
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.setRequestHeader('Content-Type', 'video/mp4');
+    xhr.upload.addEventListener('progress', function (event) {
+      if (!event.lengthComputable) return;
+      var percent = Math.min(100, Math.round(event.loaded * 100 / event.total));
+      bar.style.width = percent + '%';
+      setMessage(
+        'background-video-message',
+        'Uploading ' + file.name + '\u2026 ' + percent + '%');
+    });
+    xhr.addEventListener('load', function () {
+      var body = {};
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (error) {
+        body = {};
+      }
+      if (xhr.status < 200 || xhr.status >= 300 || !body.video || !body.video.id) {
+        progress.classList.add('hidden');
+        uploadButton.disabled = false;
+        input.value = '';
+        setMessage(
+          'background-video-message',
+          body.error || 'Upload failed (' + xhr.status + ')',
+          true);
+        return;
+      }
+      bar.style.width = '100%';
+      setMessage('background-video-message', 'Validating and switching background\u2026');
+      activateBackgroundVideo(body.video.id)
+        .then(function () {
+          progress.classList.add('hidden');
+          uploadButton.disabled = false;
+          input.value = '';
+        })
+        .catch(function () {
+          progress.classList.add('hidden');
+          uploadButton.disabled = false;
+          input.value = '';
+          refreshBackgroundVideos().catch(function () {});
+        });
+    });
+    xhr.addEventListener('error', function () {
+      progress.classList.add('hidden');
+      uploadButton.disabled = false;
+      input.value = '';
+      setMessage('background-video-message', 'Upload connection failed.', true);
+    });
+    xhr.addEventListener('timeout', function () {
+      progress.classList.add('hidden');
+      uploadButton.disabled = false;
+      input.value = '';
+      setMessage('background-video-message', 'Upload timed out.', true);
+    });
+    xhr.addEventListener('abort', function () {
+      progress.classList.add('hidden');
+      uploadButton.disabled = false;
+      input.value = '';
+      setMessage('background-video-message', 'Upload cancelled.', true);
+    });
+    xhr.send(file);
+  });
+
+  byId('background-video-rollback').addEventListener('click', function () {
+    var button = byId('background-video-rollback');
+    button.disabled = true;
+    setMessage('background-video-message', 'Restoring previous background\u2026');
+    request('/api/v1/background-videos/rollback', json('POST', {}))
+      .then(function () {
+        pendingBackgroundVideoId = '';
+        return Promise.all([
+          refreshBackgroundVideos(),
+          refreshDashboardLayout(),
+          refreshStatus()
+        ]);
+      })
+      .then(function () {
+        setMessage('background-video-message', '');
+        toast('Previous background restored');
+      })
+      .catch(function (error) {
+        button.disabled = !backgroundVideoCatalog.canRollback;
+        setMessage('background-video-message', error.message, true);
+      });
   });
 
   /* ---------- Schedule ---------- */
