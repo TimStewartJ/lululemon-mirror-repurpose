@@ -1,18 +1,31 @@
 # User guide
 
-## First run without a computer
+This guide assumes Mirror Home is installed, selected as default HOME, and
+verified after reboot. For a stock unit, use
+[Getting started: stock Mirror to working appliance](getting-started.md)
+first. A QR code is Wi-Fi/browser onboarding, not a stock-device installer.
 
-When Mirror Home has no saved network, it creates a private WPA2 Wi-Fi Direct
-group and displays two QR codes:
+## First run after installation
+
+When Mirror Home has neither an app-managed SSID nor an active Wi-Fi
+connection, it attempts a private WPA2 Wi-Fi Direct group and, if ready,
+displays two QR codes:
 
 1. scan **Join Mirror Setup Wi-Fi**,
 2. scan **Open setup**,
 3. enter the six-digit pairing code shown on the Mirror,
-4. choose the household Wi-Fi network and name the Mirror.
+4. in **Settings > Wi-Fi**, type the household SSID and password and select
+   **Connect**; name the Mirror in **Settings**.
+
+The form configures a WPA-PSK personal network; it has no network scan picker.
+Keep USB recovery available until the household SSID/IP and LAN controls work.
+See [Provisioning](provisioning.md#browser-wi-fi-configuration) if the setup
+group or connection fails.
 
 The browser transfers its new credential to the Mirror's LAN address in a URL
 fragment. Fragments are not sent in HTTP requests and are removed from browser
-history immediately after the destination page loads.
+history after the destination page loads. A phone on setup Wi-Fi must rejoin
+the household network to reach that destination.
 
 If Wi-Fi is already configured, scan the single control QR code. The control
 application is hosted by the Mirror itself on port `8787`; the desktop
@@ -20,8 +33,12 @@ companion is optional.
 
 ## Pairing additional devices
 
-Open the setup/status dashboard on the Mirror, scan its QR code, and enter the
-current pairing code. Every browser receives an independent random credential.
+If the native setup screen is visible, scan its control QR and enter the code.
+On an already configured built-in dashboard, use a paired browser's
+**Display > Arrange the mirror** to show the **Pairing code** widget and save;
+open the Mirror's LAN control address on the new client and enter the current
+code. If a custom web page is active, temporarily select **Mirror** first.
+Every browser receives an independent random credential.
 Use **Settings > Paired devices** to review or revoke one device without
 signing out the others.
 
@@ -125,8 +142,9 @@ glass shows:
 
 The **…** menu exports or imports a layout file and offers **Reset to
 default**, which restores the reflection-first composition without changing
-Wi-Fi, pairings, photos, or schedules. First-run and disconnected states
-continue to use the native setup screen regardless of the saved layout.
+Wi-Fi, pairings, photos, or schedules. With no custom web URL selected, unpaired or disconnected states use the native
+setup screen instead of the saved layout. A configured custom URL takes
+precedence and uses its offline fallback on load failure.
 
 The photo library accepts JPEG, PNG, WebP, and GIF images up to 20 MB each,
 with a 250 MB total library limit. Photo bytes are served only to the Mirror's
@@ -140,7 +158,9 @@ are validated against the Mirror's hardware decoder and stored privately outside
 the APK, so app updates remain small. The library keeps up to 12 videos and
 768 MiB while reserving at least 512 MiB of free device storage.
 
-Choose **Use** on a library card or select **Video** in the background editor.
+**Upload MP4** automatically activates a successfully uploaded video. Choose
+**Use** on an existing library card or select **Video** in the background editor.
+Activation switches a custom web dashboard back to the built-in Mirror layout.
 The previous active video remains available through **Use previous video**.
 Active videos cannot be deleted. Audio tracks are ignored, display sleep pauses
 the loop, and full-screen casting temporarily takes over the same decoder before
@@ -184,15 +204,20 @@ selected brightness.
 ## Media
 
 FCast v3 senders discover the Mirror automatically on TCP `46899`. Direct
-HTTP(S), HLS, DASH, and RTSP URLs can also be played from the **Media** tab.
+HTTP(S), HLS, DASH, and RTSP URLs can also be played from **Home**.
 Direct-UI playback starts muted by default.
 
 See [Streaming](streaming.md) and [Casting roadmap](casting-roadmap.md).
 
 ## Software updates
 
-Mirror Home can be updated from a trusted computer over the LAN after one-time
-OTA supervisor provisioning:
+Mirror Home can be updated over USB with the same release key using
+`.\tools\mirror.ps1 install-home --variant release`. This does not require
+the helper or device-owner enrollment. See
+[installation and signing](getting-started.md#4-sign-and-install-mirror-home).
+
+For optional LAN updates, complete the separate
+[OTA supervisor enrollment](ota-updates.md#one-time-provisioning) first:
 
 ```powershell
 .\tools\ota.ps1 status
@@ -206,9 +231,12 @@ healthy. See [LAN OTA updates](ota-updates.md).
 
 ## Recovery
 
-If normal Wi-Fi is unavailable, use the **Start recovery setup network** action
-while connected through USB, or restart with no managed Wi-Fi on a newly
-provisioned installation. The Mirror displays Wi-Fi Direct setup QR codes.
+If normal Wi-Fi is unavailable, use **Settings > Setup network > Start** in
+the paired page while connected through USB. Automatic group creation at
+startup requires both no managed SSID and no active Wi-Fi connection; reboot
+alone does not start it for an unreachable saved network. QR codes also
+depend on the native setup screen being visible. See
+[Provisioning](provisioning.md#qr-and-wi-fi-direct) for limitations.
 
 The stock launcher and factory system APKs remain installed. See
 [Recovery](recovery.md) before using the transient privileged helper.

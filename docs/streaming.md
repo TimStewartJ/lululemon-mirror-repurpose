@@ -1,5 +1,9 @@
 # Streaming
 
+For installation and browser pairing, start with
+[Getting started](getting-started.md). This page covers playback on an already
+working appliance.
+
 ## Recommended path
 
 Mirror Home is an FCast v3 receiver on TCP port `46899`. Compatible FCast
@@ -42,7 +46,8 @@ transcoding. For progressive MP4, place `moov` before `mdat` (`ffmpeg
 -movflags +faststart`).
 
 For an interim desktop-screen stream, publish H.264 as RTSP or low-latency HLS
-from OBS/FFmpeg and submit that URL through the Mirror-hosted Media page.
+from OBS/FFmpeg and submit that URL through **Home** in the Mirror-hosted
+controls.
 
 ## Why not Chromecast
 

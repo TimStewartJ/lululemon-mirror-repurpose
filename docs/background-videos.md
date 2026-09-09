@@ -3,6 +3,10 @@
 Mirror Home stores background videos separately from the APK so large media does
 not inflate application updates.
 
+For a stock device, complete [Getting started](getting-started.md) first.
+Browser upload needs only installed Mirror Home and a paired browser; neither
+the companion nor the optional artwork renderer is required.
+
 ## Storage
 
 Files live in Mirror Home's private application data:
@@ -44,7 +48,11 @@ path only after every check passes.
 ## Control application
 
 Open **Display > Background videos** to upload, activate, delete, or roll back a
-video. **Arrange the mirror > Background > Video** selects video mode; **Fill**
+video. **Upload MP4** uploads and then automatically activates the result;
+activation clears a custom web dashboard URL and selects the built-in layout.
+An upload that succeeds before activation fails can leave an inactive library
+card; choose **Use** to retry. **Arrange the mirror > Background > Video**
+selects video mode; **Fill**
 crops to the panel and **Whole** letterboxes. Background dimming remains
 available for text legibility.
 
@@ -54,22 +62,24 @@ after an explicit confirmation.
 
 ## Command line
 
-Pair with the six-digit code on the glass:
+Pair with the current six-digit code on the glass. Replace `MIRROR_IP` with
+the Mirror's actual private IPv4 address and `PAIRING_CODE` with that code:
 
 ```powershell
-.\tools\background-video.ps1 --host 192.168.1.50 pair --code 123456 --name "Studio laptop"
+.\tools\background-video.ps1 --host MIRROR_IP pair --code PAIRING_CODE --name "Video upload client"
 ```
 
 Then manage the library:
 
 ```powershell
 .\tools\background-video.ps1 status
-.\tools\background-video.ps1 push .\generated\background-videos\four-seasons-cinematic.mp4
+.\tools\background-video.ps1 push 'C:\path\to\background.mp4'
 .\tools\background-video.ps1 activate SHA256_ID
 .\tools\background-video.ps1 rollback
 .\tools\background-video.ps1 delete SHA256_ID
 ```
 
+Replace the example file path and `SHA256_ID` with your file and a catalog ID.
 `push` streams 1 MiB chunks without loading the video into memory, verifies the
 returned content ID against a local streaming SHA-256, and activates the video
 unless `--no-activate` is supplied. The revocable client credential is stored in
@@ -83,7 +93,7 @@ client credential before sending its authenticated confirmation; repeating it
 after a lost response safely returns the same pending credential:
 
 ```powershell
-.\tools\background-video.ps1 --host 192.168.1.50 provision
+.\tools\background-video.ps1 --host MIRROR_IP provision
 ```
 
 After confirmation that bootstrap hash remains permanently marked consumed,

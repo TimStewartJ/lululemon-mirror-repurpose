@@ -1,37 +1,61 @@
 # Recovery
 
-Read this before installing the optional system helper. The helper is
-**transient**: do not reboot while its `/data/app` update is installed.
+Read this before the first write in [Getting started](getting-started.md).
+Keep authorized USB access, verified factory APK backups, and the release key
+available. Factory APK backups are not partition or user-data backups. Do not
+factory-reset, clear app data, or uninstall Home to fix a signing error.
 
-## Normal rollback
+The optional helper is **transient**: do not reboot while its `/data/app`
+update is installed. No helper is needed for ordinary Home APK updates.
 
-The helper is installed as an update to a factory system APK. Removing the
-update reveals the untouched copy under `/system`:
+Examples assume only the intended Android device is connected; otherwise use
+`adb -s DEVICE_SERIAL ...` and
+`.\tools\mirror.ps1 --serial DEVICE_SERIAL ...` with your actual identifier.
+Keep that identifier out of Git and shared logs.
+
+## Helper restoration before reboot
+
+The helper is installed as an update to a factory system APK. Prefer the
+guarded tool to remove it and verify the factory path:
 
 ```powershell
-adb shell am force-stop co.mirror.datacap
-adb shell pm uninstall -k co.mirror.datacap
-adb reboot
+.\tools\mirror.ps1 restore-helper
 adb shell pm path co.mirror.datacap
 ```
 
-The final path must be:
+Before considering a reboot, the path must be:
 
 ```text
 package:/system/app/co.mirror.datacap/co.mirror.datacap.apk
 ```
 
-`mirrorctl restore-helper` also restores the kiosk-related settings captured
+`restore-helper` also restores the three kiosk-related settings captured
 before the first helper installation. Pass `--keep-kiosk-settings` only when
-those changes are intentional; preferred-HOME selection remains independently
-reversible through the companion.
+those changes are intentional. **Neither variant resets preferred HOME.**
+It can be reversed with Android's HOME selection UI or with the helper's
+separate stock-HOME operation while the helper is installed and connected.
 
-If a reboot occurs before rollback, ADB remains available but boot-time
-`dex2oat` may repeatedly fail while processing the compatibility wrapper. Run
-`restore-helper` as soon as ADB returns, then reboot once more.
+If the tool cannot finish but authorized ADB works, removing the update
+manually exposes the untouched `/system` APK:
 
-If removal leaves the package unavailable, reinstall the locally backed-up
-original APK, reboot, and investigate before continuing.
+```powershell
+adb shell am force-stop co.mirror.datacap
+adb shell pm uninstall -k co.mirror.datacap
+adb shell pm path co.mirror.datacap
+```
+
+Require uninstall `Success` and the exact factory path above. This manual
+fallback does not restore saved kiosk settings. Do not reboot while the path
+is absent or still under `/data/app`. Resolve restoration first.
+
+In the project's observed premature-reboot failure, ADB remained available but
+boot-time `dex2oat` repeatedly failed while processing the compatibility wrapper.
+Do not assume ADB will always recover. If it returns, run `restore-helper`,
+verify the factory path, and only then reboot once more.
+
+If removal leaves the package unavailable, stop: investigate the verified local
+backup and package state rather than blindly reinstalling or rebooting. An
+APK restored under `/data/app` is not proof of factory restoration.
 
 ## Stock launcher
 
@@ -39,12 +63,34 @@ Never remove `com.mirror.launcher`. If Mirror Home fails:
 
 ```powershell
 adb shell am force-stop dev.mirror.repurpose
+adb shell am start -n com.mirror.launcher/.SplashActivity
+```
+
+This explicitly opens stock HOME for recovery; it does not change the default.
+A generic HOME intent would relaunch Mirror Home if it is still preferred.
+To change the preference, try the visible Android HOME settings UI:
+
+```powershell
+adb shell am start -a android.settings.HOME_SETTINGS
+```
+
+Choose the stock launcher if that vendor screen is usable. Otherwise the
+[helper transaction](getting-started.md#optional-transient-helper) can set
+stock HOME: use `POST /api/v1/system/home` with `{"enabled":false}` and the
+paired client's bearer header, or the companion's **Restore stock HOME**
+button. This requires a working Mirror Home API and a connected helper; it
+is not available merely because the stock APK exists. Restore the factory
+helper afterward. If Home cannot serve its API, first recover Home with a
+same-key APK or use an accessible Android Settings UI.
+
+Before reboot, check the factory helper path, then request generic HOME and
+visually verify the stock launcher opens without a chooser:
+
+```powershell
 adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
 ```
 
-The companion's **Restore stock HOME** action changes the preferred activity
-back to `com.mirror.launcher/.SplashActivity`. The stock package is never
-disabled or removed.
+Do not clear Home data as a substitute for resetting the preferred activity.
 
 ## Mirror Home update rollback
 
@@ -55,8 +101,15 @@ disabled or removed.
 3. refuses a signing-certificate mismatch,
 4. pulls the currently installed APK into the ignored backup directory,
 5. installs the candidate,
-6. starts HOME and verifies its reported version and resumed activity,
-7. automatically reinstalls the previous APK if the health check fails.
+6. explicitly starts Mirror Home and checks its reported version and activity,
+7. attempts to reinstall the previous APK if the health check fails.
+
+It does not select default HOME or verify a cold boot. On a failed first install,
+there is no previous Home APK; it attempts to remove the candidate. If device
+state cannot be verified after an ADB error, the tool reports unknown state
+rather than blindly rolling back. Stop on that error and inspect the device.
+An APK backup does not restore deleted settings or media; Home disables Android
+application backup.
 
 Manual rollback uses the latest backup unless an explicit APK is supplied:
 
@@ -70,8 +123,10 @@ service and reconnects the stock Binder after process loss.
 
 ## OTA recovery
 
-The device-owner OTA supervisor on TCP `8791` keeps the last healthy Home APK
-in its private storage. Check and restore it without ADB:
+If separately enrolled, the device-owner OTA supervisor on TCP `8791` keeps
+the pre-update healthy Home APK in private storage. A fresh enrollment has
+no known-good backup until an update prepares one. With saved OTA credentials,
+check and restore an available backup without ADB:
 
 ```powershell
 .\tools\ota.ps1 status
@@ -89,6 +144,16 @@ and a local ADB connection:
 ```
 
 See [LAN OTA updates](ota-updates.md) before changing device-owner state.
+
+## Wi-Fi and pairing recovery
+
+Use the [USB reference](provisioning.md#usb-access-and-recovery) to reach the
+installed Home over `http://127.0.0.1:18787/`. A previously paired browser still
+needs its own credential; ADB authorization is not browser pairing. Use
+**Settings > Setup network > Start** if needed. A failed saved network does
+not automatically trigger Wi-Fi Direct, and missing setup QR/code UI must be
+investigated rather than bypassed. See
+[browser Wi-Fi configuration](provisioning.md#browser-wi-fi-configuration).
 
 ## Fastboot
 

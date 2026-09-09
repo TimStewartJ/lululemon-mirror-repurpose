@@ -1,5 +1,10 @@
 # LAN OTA updates
 
+**Optional:** first complete [Getting started](getting-started.md), including a
+release-signed Home, default HOME selection, and a successful reboot/LAN check.
+USB Home updates, Wi-Fi setup, and video upload do not require device-owner
+enrollment. The supervisor does not select default HOME.
+
 Mirror OTA Supervisor is a small, separate Android device-owner application.
 It remains alive while Mirror Home is replaced, so a broken HOME release cannot
 remove the update or rollback channel.
@@ -25,32 +30,86 @@ Mirror.
 
 ## One-time provisioning
 
-Provision while physical or temporary wireless ADB recovery is still available:
+Provision with physical USB ADB recovery available. Run these PowerShell
+commands from the repository root, one stage at a time; stop on any failure.
+Replace `DEVICE_SERIAL` with the intended authorized ADB identifier and
+`MIRROR_IP` with its actual private LAN IPv4 address. These are placeholders,
+not literal values. Do not commit real serials, credentials, or local logs.
 
-```powershell
-.\tools\ota.ps1 build-supervisor
+1. Verify the device, working LAN connection, and existing release signing
+   configuration. The supervisor and Home must use the **same** private key.
+   Do not overwrite an existing key, supervisor bootstrap file, or active
+   credential. Check for existing device-owner management before attempting
+   enrollment:
 
-adb -s bebf077 install -r `
-  .\android\ota-updater\build\outputs\apk\release\ota-updater-release.apk
+   ```powershell
+   .\tools\mirror.ps1 --serial DEVICE_SERIAL status
+   adb -s DEVICE_SERIAL shell dumpsys device_policy
+   ```
 
-adb -s bebf077 shell dpm set-device-owner `
-  dev.mirror.repurpose.updater/.OtaDeviceAdminReceiver
+   **Expected:** profile `ifc6309-mirror-329` and no conflicting owner.
+   If already enrolled, use the existing supervisor/credentials or the
+   authentication recovery flow below; do not repeat ownership setup.
 
-.\tools\ota.ps1 --host 10.0.0.196 provision --serial bebf077
-```
+2. Build the signed supervisor with an independent bootstrap capability:
 
-Android 6 permits shell provisioning after setup only when the primary user is
-the sole user and has no accounts. Stop if `dpm set-device-owner` rejects the
-device; do not clear setup state or remove accounts to force enrollment.
+   ```powershell
+   .\tools\ota.ps1 build-supervisor
+   ```
 
-Provisioning creates two ignored files:
+   **Expected:** a JSON result naming the release APK and bootstrap file
+   after a successful build. The first build creates
+   `.secrets\mirror-ota-bootstrap.txt`; later builds reuse it. Back it up
+   privately before installation. Only its hash goes into the build.
 
-- `.secrets/mirror-ota-bootstrap.txt`: independent one-time/recovery capability
-- `.secrets/mirror-ota.json`: active LAN HMAC credential and default host
+3. Install that release APK:
 
-Back up both files privately. Neither belongs in source control, an APK, or a
-URL. A fresh supervisor build embeds only the SHA-256 hash of the bootstrap
-secret.
+   ```powershell
+   adb -s DEVICE_SERIAL install -r `
+     .\android\ota-updater\build\outputs\apk\release\ota-updater-release.apk
+   ```
+
+   **Expected:** `Success`. Stop for certificate mismatch or installation
+   failure; do not uninstall an existing recovery supervisor to work around it.
+
+4. Explicitly enroll the supervisor as device owner:
+
+   ```powershell
+   adb -s DEVICE_SERIAL shell dpm set-device-owner `
+     dev.mirror.repurpose.updater/.OtaDeviceAdminReceiver
+   ```
+
+   **Expected:** Android reports successful device-owner enrollment.
+   Android 6's shell path after setup requires a sole primary user with no
+   accounts, as enforced in the
+   [Android 6.0.1 device-policy source](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-6.0.1_r1/services/devicepolicy/java/com/android/server/devicepolicy/DevicePolicyManagerService.java).
+   These conditions are not a guarantee of vendor acceptance. **Stop** if
+   rejected; do not clear setup state, remove accounts/users, or factory-reset
+   to force enrollment. Continue using USB updates instead.
+
+5. Provision through the tool's temporary ADB forward, then test LAN status:
+
+   ```powershell
+   .\tools\ota.ps1 --host MIRROR_IP provision --serial DEVICE_SERIAL
+   .\tools\ota.ps1 status
+   ```
+
+   **Expected:** `provisioned: true`, a privately saved active credential, and
+   an authenticated status response over LAN. The host selects the saved LAN
+   destination; bootstrap exchange still occurs through USB loopback. If it
+   fails, retain USB and both secrets and investigate; ownership alone does
+   not mean LAN updates work.
+
+The build/provision sequence creates two ignored files:
+
+- `.secrets\mirror-ota-bootstrap.txt`: independent one-time/recovery capability
+- `.secrets\mirror-ota.json`: active LAN HMAC credential and default host
+
+Back up both files privately and restrict access to your account; Git-ignore
+is not an access control. Neither plaintext secret belongs in source control,
+an APK, or a URL. After enrollment, verify status again after an intentional
+reboot with the factory helper restored. Initial status does not test failed
+update rollback; the known-good Home backup is created on the first update.
 
 ## Normal update workflow
 
@@ -63,7 +122,7 @@ Increment Mirror Home's `versionCode` and `versionName`, then:
   .\android\mirror-home\build\outputs\apk\release\mirror-home-release.apk
 ```
 
-Use `--host PRIVATE_IPV4` before the command when the Mirror's DHCP address has
+Use `--host MIRROR_IP` before the command when the Mirror's DHCP address has
 changed. A DHCP reservation is recommended.
 
 `push` exits successfully only after the expected Home version serves a healthy
@@ -103,7 +162,7 @@ If the active OTA token file is lost but the bootstrap secret remains, reconnect
 ADB locally and rotate the token:
 
 ```powershell
-.\tools\ota.ps1 --host 10.0.0.196 recover-token --serial bebf077
+.\tools\ota.ps1 --host MIRROR_IP recover-token --serial DEVICE_SERIAL
 ```
 
 The bootstrap secret is accepted only by an ADB-forwarded loopback request. The
@@ -112,7 +171,7 @@ new active token is durably saved before confirmation.
 To intentionally remove device-owner status:
 
 ```powershell
-.\tools\ota.ps1 deprovision --serial bebf077
+.\tools\ota.ps1 deprovision --serial DEVICE_SERIAL
 ```
 
 Do not deprovision during an update. Removing the supervisor afterward also

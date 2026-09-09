@@ -54,8 +54,10 @@ the physical display and stores its own revocable credential. Tokens are stored
 hashed on the Mirror.
 
 The app advertises `_http._tcp` and `_mirror-home._tcp` through Android NSD.
-When no managed Wi-Fi exists, it creates a WPA2 Wi-Fi Direct group and displays
-join/open QR codes.
+When neither an app-managed SSID nor a current Wi-Fi connection exists, it
+attempts a WPA2 Wi-Fi Direct group. The native setup screen displays join/open
+QR codes once that group is ready. See [Getting started](getting-started.md)
+for the installation sequence and onboarding limitations.
 
 ## Optional companion
 

@@ -6,8 +6,20 @@ lululemon after its 2020 acquisition, and as the *lululemon Studio Mirror* from
 late 2022 until it was discontinued in 2023). It turns the original
 Qualcomm-based unit into a configurable smart mirror, dashboard, and
 home-network media renderer without replacing the display electronics: the
-stock Android home app is replaced over ADB, and updates then arrive over the
-LAN.
+Mirror Home app is installed over ADB and selected as Android's default HOME,
+while the factory launcher remains installed. Updates can use USB or an
+optionally enrolled LAN OTA supervisor.
+
+## Start here
+
+**[Getting started: stock Mirror to working appliance](docs/getting-started.md)**
+is the authoritative installation sequence: prerequisites, no-touchscreen ADB
+authorization, exact firmware checks, backups, release signing, default HOME,
+Wi-Fi, reboot verification, and browser video upload. Start there before
+running installation commands. It documents safe stops and optional helper/OTA
+branches; it is not a claim of clean-room stock-device validation.
+
+Already installed? Use the [User guide](docs/user-guide.md).
 
 This is an independent project with no affiliation to, or endorsement by,
 lululemon athletica, Mirror, or Curiouser Products. MIRROR and lululemon are
@@ -34,7 +46,7 @@ The project intentionally separates:
   installed through a device-specific signature-verification flaw. It applies
   persistent kiosk/default-HOME settings and must be restored to the factory APK
   before reboot. It is not required for normal dashboard operation.
-- **OTA Supervisor**: a boot-persistent Android device-owner app that accepts
+- **OTA Supervisor**: an optional boot-persistent Android device-owner app that accepts
   only authenticated, release-signed Mirror Home APKs, health-checks them, and
   restores the local known-good release after failure.
 - **Device-hosted controls**: a responsive local web application served by
@@ -63,7 +75,9 @@ not match.
 ## Safety model
 
 - Proprietary MIRROR APKs and firmware are never distributed.
-- Device APKs are pulled locally and backed up before any update is installed.
+- The installation guide requires hash-verified factory APK backups before
+  installation. Home updates separately back up the installed Home APK;
+  neither operation is a full firmware or application-data backup.
 - Wi-Fi passwords, pairing tokens, certificates, and device serials are never
   committed.
 - The stock launcher remains recoverable through ADB.
@@ -72,13 +86,15 @@ not match.
 - Qualcomm EDL and the hardware force-USB switch are recovery mechanisms, not
   routine installation paths.
 
-See [Recovery](docs/recovery.md) before installing anything.
+The [getting-started guide](docs/getting-started.md) includes the required
+[recovery precautions](docs/recovery.md) before installation.
 
 ## Project status
 
 Mirror Home is a device-validated standalone appliance. It serves its own
-phone/desktop control UI, displays QR onboarding, creates a Wi-Fi Direct setup
-network when no managed Wi-Fi exists, supports named revocable clients,
+phone/desktop control UI, displays QR onboarding, attempts a Wi-Fi Direct setup
+network when neither a managed SSID nor an active Wi-Fi connection exists,
+supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
 sensing, cached local weather, precision dashboard editing, signed LAN OTA
@@ -90,87 +106,55 @@ operation.
 
 ## Development
 
-Requirements:
+The [prerequisites](docs/getting-started.md#1-confirm-scope-and-prepare-the-computer)
+distinguish the Android build/USB tools from optional Node.js companion tools.
+Use JDK 17, SDK Platform 35, Build Tools 35.0.0, and the checked-in Gradle
+wrapper. Python 3.9+ runs the repository tooling; Node.js 22+ is needed only
+for companion development or the full repository validation gate.
 
-- Windows, macOS, or Linux
-- JDK 17 or newer
-- Android SDK Platform 35 and current Android Build Tools
-- Node.js 22 or newer
-- Python 3.9 or newer
-- ADB authorization on the owned Mirror
-
-Create `local.properties` without committing it:
-
-```properties
-sdk.dir=C:\\Users\\you\\AppData\\Local\\Android\\Sdk
-```
-
-Build:
+Build a debug APK for development (this does not install or select HOME):
 
 ```powershell
 .\gradlew.bat :android:mirror-home:assembleDebug
 ```
 
-The one-command build, installation, rollback, and recovery workflow is exposed
-through `tools\mirror.ps1`.
+Use the [installation sequence](docs/getting-started.md) rather than treating
+the CLI commands as an unattended setup script. `install-home` defaults to a
+signed release and does not select default HOME. Do not switch a deployed app
+between debug and release keys.
 
-Start with the [User guide](docs/user-guide.md). See
-[Streaming](docs/streaming.md) for sender compatibility and recommended
-media formats and [Provisioning](docs/provisioning.md) for QR, USB, and LAN
-setup. See [Automation](docs/automation.md) for REST examples,
+References: [User guide](docs/user-guide.md),
+[Streaming](docs/streaming.md),
+[Provisioning](docs/provisioning.md) (including
+[no-touchscreen ADB authorization](docs/provisioning.md#initial-adb-authorization-without-a-touchscreen)),
+[Automation](docs/automation.md),
 [Background videos](docs/background-videos.md),
 [LAN OTA updates](docs/ota-updates.md), [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 
-Common development commands:
+Status and USB forwarding, after authorization and profile checks:
 
 ```powershell
 .\tools\mirror.ps1 status
-.\tools\mirror.ps1 backup
-.\tools\mirror.ps1 install-home
-.\tools\mirror.ps1 rollback-home
-.\tools\mirror.ps1 install-helper
 .\tools\mirror.ps1 forward
-.\tools\mirror.ps1 restore-helper
-.\tools\ota.ps1 status
-.\tools\ota.ps1 push .\android\mirror-home\build\outputs\apk\release\mirror-home-release.apk
-.\tools\background-video.ps1 status
-.\tools\background-video.ps1 push .\generated\background-videos\four-seasons-cinematic.mp4
 ```
 
-`install-helper` refuses unknown firmware and APK hashes, backs up the factory
-APKs, binds the helper to the current Mirror Home signing certificate, verifies
-the stock manifest contract, and checks that the helper process starts. Run
-`restore-helper` before rebooting: Android 6's boot-time dex optimizer cannot
-safely process the compatibility wrapper.
-
-Use `restore-helper --keep-kiosk-settings` after intentionally applying the
-preferred HOME/kiosk configuration; omit the flag for a full settings rollback.
+The [optional helper transaction](docs/getting-started.md#optional-transient-helper)
+must include explicit HOME/kiosk API actions and verified factory restoration
+before reboot. `restore-helper` restores captured kiosk settings unless
+`--keep-kiosk-settings` is passed; neither form reverses preferred HOME.
 
 ### Release signing
 
-Debug builds are suitable while developing, but a deployed appliance should use
-a private, backed-up release key. Generate one with the JDK `keytool`, copy
-`keystore.properties.example` to the ignored `keystore.properties`, and replace
-all placeholder values:
-
-```powershell
-New-Item -ItemType Directory -Force .secrets
-keytool -genkeypair -v -keystore .secrets\mirror-home.jks `
-  -alias mirror-home -keyalg RSA -keysize 4096 -validity 10000
-Copy-Item keystore.properties.example keystore.properties
-.\tools\mirror.ps1 install-home --variant release
-```
-
-Keep the keystore and its passwords private and backed up. Android accepts
-future in-place updates only when they are signed by the same key. The transient
-helper reads the certificate from the app actually installed on the Mirror, so
-the same workflow supports both debug and release installations.
+Follow [Sign and install Mirror Home](docs/getting-started.md#4-sign-and-install-mirror-home)
+for first-time key creation and configuration. Preserve existing signing
+material; keep it private and backed up. Future in-place updates must use the
+same certificate. The optional OTA supervisor must use that certificate too.
 
 Run every build, test, lint, and dependency-audit lane with:
 
 ```powershell
-python tools/check.py
+python .\tools\check.py
 ```
 
 ## License
