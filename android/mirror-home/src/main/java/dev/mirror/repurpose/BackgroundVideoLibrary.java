@@ -31,6 +31,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.UUID;
 
 public final class BackgroundVideoLibrary {
@@ -43,6 +44,9 @@ public final class BackgroundVideoLibrary {
     private static final String PREFERENCES = "mirror_home_background_videos";
     private static final String KEY_ACTIVE = "active_id";
     private static final String KEY_PREVIOUS = "previous_id";
+    private static final String KEY_SCHEDULE = "schedule_v1";
+    private static final String KEY_HOLD_ID = "hold_id";
+    private static final String KEY_HOLD_UNTIL = "hold_until_ms";
     private static final int MAX_METADATA_BYTES = 64 * 1024;
     private static final long MAX_DURATION_MS = 6L * 60L * 60L * 1000L;
     private static final int MAX_DIMENSION = 1920;
@@ -82,6 +86,7 @@ public final class BackgroundVideoLibrary {
     public enum DeleteResult {
         DELETED,
         ACTIVE,
+        SCHEDULED,
         NOT_FOUND
     }
 
@@ -98,6 +103,7 @@ public final class BackgroundVideoLibrary {
     private static volatile BackgroundVideoLibrary instance;
 
     private final SharedPreferences preferences;
+    private final ConfigStore configStore;
     private final File root;
     private final File objects;
     private final File posters;
@@ -107,6 +113,7 @@ public final class BackgroundVideoLibrary {
     private BackgroundVideoLibrary(Context context) {
         Context appContext = context.getApplicationContext();
         preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
+        configStore = new ConfigStore(appContext);
         root = new File(appContext.getFilesDir(), "background-videos");
         objects = new File(root, "objects");
         posters = new File(root, "posters");
@@ -215,6 +222,7 @@ public final class BackgroundVideoLibrary {
         }
         BackgroundVideoSelection next = selection().activate(id);
         persistSelection(next);
+        holdUntilNextChange(id);
         return true;
     }
 
@@ -225,14 +233,19 @@ public final class BackgroundVideoLibrary {
                 || !objectFile(current.previousId).isFile()) {
             return false;
         }
-        persistSelection(current.rollback());
+        BackgroundVideoSelection next = current.rollback();
+        persistSelection(next);
+        holdUntilNextChange(next.activeId);
         return true;
     }
 
     public synchronized DeleteResult delete(String id) throws IOException {
         BackgroundVideoSelection current = selection();
-        if (id != null && id.equals(current.activeId)) {
+        if (id != null && (id.equals(current.activeId) || id.equals(effectiveId()))) {
             return DeleteResult.ACTIVE;
+        }
+        if (id != null && schedule().videoIds().contains(id)) {
+            return DeleteResult.SCHEDULED;
         }
         BackgroundVideoMetadata metadata = readMetadata(id);
         File object = objectFile(id);
@@ -242,6 +255,9 @@ public final class BackgroundVideoLibrary {
         if (!current.previousId.isEmpty() && current.previousId.equals(id)) {
             persistSelection(current.remove(id));
         }
+        if (id.equals(holdId())) {
+            persistHold("", 0L);
+        }
         if (object.isFile() && !object.delete()) {
             throw new IOException("Unable to delete background video bytes");
         }
@@ -250,14 +266,54 @@ public final class BackgroundVideoLibrary {
         return DeleteResult.DELETED;
     }
 
-    public synchronized File activeFile() {
-        String id = selection().activeId;
-        File file = objectFile(id);
-        return BackgroundVideoSelection.validId(id) && file.isFile() ? file : null;
+    /** Replaces the timetable; any manual hold ends so the new schedule shows at once. */
+    public synchronized void updateSchedule(BackgroundVideoSchedule schedule)
+            throws IOException, JSONException {
+        for (String id : schedule.videoIds()) {
+            if (!available(id) || readMetadata(id) == null) {
+                throw new IllegalArgumentException("A scheduled video is not in the library");
+            }
+        }
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(KEY_SCHEDULE, schedule.toJson().toString())
+                .remove(KEY_HOLD_ID)
+                .remove(KEY_HOLD_UNTIL);
+        if (!editor.commit()) {
+            throw new IOException("Unable to persist background video schedule");
+        }
     }
 
-    public synchronized String activeId() {
-        return selection().activeId;
+    public synchronized void resumeSchedule() throws IOException {
+        persistHold("", 0L);
+    }
+
+    /** The video the glass should show right now. */
+    public synchronized String effectiveId() {
+        String active = selection().activeId;
+        String id = BackgroundVideoSchedule.effectiveId(
+                schedule(),
+                active,
+                holdId(),
+                holdUntil(),
+                System.currentTimeMillis(),
+                zone());
+        if (available(id)) {
+            return id;
+        }
+        return available(active) ? active : "";
+    }
+
+    public synchronized File effectiveFile() {
+        String id = effectiveId();
+        return id.isEmpty() ? null : objectFile(id);
+    }
+
+    /** Epoch milliseconds of the next scheduled change, or -1 without a running schedule. */
+    public synchronized long nextScheduleChangeMillis() {
+        BackgroundVideoSchedule schedule = schedule();
+        return schedule.isActive()
+                ? schedule.nextChangeMillis(System.currentTimeMillis(), zone())
+                : -1L;
     }
 
     public synchronized File poster(String id) {
@@ -268,43 +324,126 @@ public final class BackgroundVideoLibrary {
         return poster.isFile() ? poster : null;
     }
 
+    /** "active" is what the glass shows now; "selectedId" is the manual choice. */
     public synchronized JSONObject selectionSnapshot() throws JSONException {
         BackgroundVideoSelection selection = selection();
         return new JSONObject()
-                .put("active", metadataJson(selection.activeId, selection))
+                .put("active", metadataJson(effectiveId(), selection))
+                .put("selectedId", selection.activeId)
                 .put("previous", metadataJson(selection.previousId, selection))
-                .put("canRollback", selection.canRollback());
+                .put("canRollback", selection.canRollback())
+                .put("schedule", scheduleJson(schedule()));
     }
 
     public synchronized JSONObject publicSelectionSnapshot() throws JSONException {
         BackgroundVideoSelection selection = selection();
         return new JSONObject()
-                .put("active", !selection.activeId.isEmpty())
+                .put("active", !effectiveId().isEmpty())
                 .put("previous", !selection.previousId.isEmpty())
-                .put("canRollback", selection.canRollback());
+                .put("canRollback", selection.canRollback())
+                .put("scheduled", schedule().isActive());
     }
 
     public synchronized JSONObject document() throws JSONException {
         List<BackgroundVideoMetadata> videos = records();
         BackgroundVideoSelection selection = selection();
+        BackgroundVideoSchedule schedule = schedule();
+        String showing = effectiveId();
         JSONArray items = new JSONArray();
         for (BackgroundVideoMetadata video : videos) {
+            JSONArray starts = new JSONArray();
+            for (String start : schedule.startsFor(video.id)) {
+                starts.put(start);
+            }
             items.put(video.toJson(
                     video.id.equals(selection.activeId),
                     video.id.equals(selection.previousId),
-                    posterFile(video.id).isFile()));
+                    posterFile(video.id).isFile())
+                    .put("showing", video.id.equals(showing))
+                    .put("scheduledStarts", starts));
         }
         return new JSONObject()
                 .put("videos", items)
                 .put("activeId", selection.activeId)
                 .put("previousId", selection.previousId)
+                .put("effectiveId", showing)
                 .put("canRollback", selection.canRollback())
+                .put("schedule", scheduleJson(schedule))
                 .put("totalBytes", totalBytes(videos))
                 .put("usableBytes", root.getUsableSpace())
                 .put("maxVideoBytes", MAX_VIDEO_BYTES)
                 .put("maxLibraryBytes", MAX_LIBRARY_BYTES)
                 .put("minFreeBytes", MIN_FREE_BYTES)
                 .put("maxVideos", MAX_VIDEOS);
+    }
+
+    private JSONObject scheduleJson(BackgroundVideoSchedule schedule) throws JSONException {
+        long now = System.currentTimeMillis();
+        TimeZone zone = zone();
+        JSONObject result = schedule.toJson()
+                .put("active", schedule.isActive())
+                .put("maxSlots", BackgroundVideoSchedule.MAX_SLOTS)
+                .put("utcOffsetMinutes", configStore.getUtcOffsetMinutes())
+                .put("current", JSONObject.NULL)
+                .put("next", JSONObject.NULL)
+                .put("nextChangeAt", JSONObject.NULL)
+                .put("hold", JSONObject.NULL);
+        if (schedule.isActive()) {
+            BackgroundVideoSchedule.Slot current = schedule.slotAt(now, zone);
+            result.put("current", current.toJson())
+                    .put("next", schedule.slotAfter(current).toJson())
+                    .put("nextChangeAt", schedule.nextChangeMillis(now, zone));
+            String hold = holdId();
+            long until = holdUntil();
+            if (BackgroundVideoSchedule.holdActive(hold, until, now) && available(hold)) {
+                result.put("hold", new JSONObject().put("videoId", hold).put("until", until));
+            }
+        }
+        return result;
+    }
+
+    /** While a schedule runs, a manual choice holds until the next scheduled change. */
+    private void holdUntilNextChange(String id) throws IOException {
+        BackgroundVideoSchedule schedule = schedule();
+        long now = System.currentTimeMillis();
+        TimeZone zone = zone();
+        if (!schedule.isActive() || id.equals(schedule.slotAt(now, zone).videoId)) {
+            persistHold("", 0L);
+            return;
+        }
+        persistHold(id, schedule.nextChangeMillis(now, zone));
+    }
+
+    private BackgroundVideoSchedule schedule() {
+        return BackgroundVideoSchedule.fromStorage(preferences.getString(KEY_SCHEDULE, ""));
+    }
+
+    private String holdId() {
+        return preferences.getString(KEY_HOLD_ID, "");
+    }
+
+    private long holdUntil() {
+        return preferences.getLong(KEY_HOLD_UNTIL, 0L);
+    }
+
+    private TimeZone zone() {
+        return TimeZone.getTimeZone(configStore.getEffectiveTimeZoneId());
+    }
+
+    private boolean available(String id) {
+        return BackgroundVideoSelection.validId(id) && objectFile(id).isFile();
+    }
+
+    private void persistHold(String id, long untilMillis) throws IOException {
+        SharedPreferences.Editor editor = preferences.edit();
+        if (BackgroundVideoSelection.validId(id) && untilMillis > 0) {
+            editor.putString(KEY_HOLD_ID, id).putLong(KEY_HOLD_UNTIL, untilMillis);
+        } else {
+            editor.remove(KEY_HOLD_ID).remove(KEY_HOLD_UNTIL);
+        }
+        if (!editor.commit()) {
+            throw new IOException("Unable to persist background video hold");
+        }
     }
 
     private BackgroundVideoMetadata inspect(

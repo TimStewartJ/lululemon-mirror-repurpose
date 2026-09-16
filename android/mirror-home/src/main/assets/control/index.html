@@ -374,6 +374,21 @@
           <p class="hint inset">H.264 MP4, up to 256 MiB and 1080p at 30 FPS. Uploads stay private on this mirror. Audio tracks are ignored.</p>
         </div>
 
+        <h2 class="section-title">Video schedule</h2>
+        <div class="group">
+          <label class="row"><div class="row-main"><span class="row-label">Change video by time of day</span><span id="video-schedule-summary" class="row-sub">Off</span></div><input id="video-schedule-enabled" class="switch" type="checkbox"></label>
+          <div id="video-schedule-slots"></div>
+          <div class="row actions-row">
+            <button id="video-schedule-add" type="button" class="btn">Add time</button>
+            <button id="video-schedule-resume" type="button" class="btn hidden">Resume schedule</button>
+          </div>
+          <div class="row">
+            <button id="video-schedule-save" type="button" class="btn primary wide">Save video schedule</button>
+          </div>
+          <p id="video-schedule-message" class="status inset" role="status"></p>
+          <p class="hint inset">Each time shows its video until the next time, even past midnight. Choosing another video while the schedule is on shows it until the next change.</p>
+        </div>
+
         <h2 class="section-title">Photos</h2>
         <div class="group">
           <div id="photo-grid" class="photo-grid">

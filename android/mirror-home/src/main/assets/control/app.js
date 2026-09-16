@@ -34,6 +34,8 @@
   var noteLimit = 1000;
   var editingNoteId = '';
   var pendingBackgroundVideoId = '';
+  var videoScheduleDraft = null;
+  var videoScheduleDirty = false;
   var selectedWidgetId = 'clock';
   var layoutHistory = [];
   var layoutFuture = [];
@@ -488,7 +490,7 @@
     byId('layout-accent-color').value = dashboardLayout.accentColor;
     byId('layout-background-photo').value = dashboardLayout.background.photo || '';
     byId('layout-background-video').value =
-      pendingBackgroundVideoId || backgroundVideoCatalog.activeId || '';
+      pendingBackgroundVideoId || showingVideoId();
     setRadio('background-fit', dashboardLayout.background.fit || 'cover');
     byId('layout-secondary-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'gradient');
     byId('layout-background-photo-row').classList.toggle('hidden', dashboardLayout.background.mode !== 'photo');
@@ -887,10 +889,128 @@
   function syncBackgroundVideoStatus() {
     if (!status) return;
     status.backgroundVideos = {
-      active: findBackgroundVideo(backgroundVideoCatalog.activeId),
+      active: findBackgroundVideo(showingVideoId()),
       previous: findBackgroundVideo(backgroundVideoCatalog.previousId),
       canRollback: Boolean(backgroundVideoCatalog.canRollback)
     };
+  }
+
+  function showingVideoId() {
+    return backgroundVideoCatalog.effectiveId || backgroundVideoCatalog.activeId || '';
+  }
+
+  function scheduleRunning() {
+    return Boolean(backgroundVideoCatalog.schedule && backgroundVideoCatalog.schedule.active);
+  }
+
+  function videoLabel(id) {
+    var video = findBackgroundVideo(id);
+    return video ? video.name.replace(/\.mp4$/i, '') : 'a removed video';
+  }
+
+  /* Times on the mirror follow its saved UTC offset, not this browser's zone. */
+  function formatMirrorTime(epoch) {
+    var offset = Number((backgroundVideoCatalog.schedule || {}).utcOffsetMinutes || 0);
+    var local = new Date(Number(epoch) + offset * 60000);
+    var hours = local.getUTCHours();
+    var minutes = local.getUTCMinutes();
+    return formatClockTime((hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes);
+  }
+
+  function videoScheduleSummary() {
+    var schedule = backgroundVideoCatalog.schedule;
+    if (!schedule || !schedule.active) {
+      return schedule && schedule.slots && schedule.slots.length ? 'Off \u00b7 times are kept' : 'Off';
+    }
+    if (schedule.hold) {
+      return 'Showing ' + videoLabel(schedule.hold.videoId) + ' until '
+        + formatMirrorTime(schedule.hold.until) + ', then the schedule resumes';
+    }
+    var current = schedule.current;
+    var next = schedule.next;
+    if (!current || !next || next.videoId === current.videoId) {
+      return 'Now: ' + videoLabel(current ? current.videoId : '');
+    }
+    return 'Now: ' + videoLabel(current.videoId) + ' \u00b7 ' + videoLabel(next.videoId)
+      + ' at ' + formatClockTime(next.start);
+  }
+
+  function draftFromCatalog() {
+    var schedule = backgroundVideoCatalog.schedule || {};
+    return {
+      enabled: Boolean(schedule.enabled),
+      slots: (schedule.slots || []).map(function (slot) {
+        return { start: slot.start, videoId: slot.videoId };
+      })
+    };
+  }
+
+  function currentScheduleDraft() {
+    if (!videoScheduleDraft) videoScheduleDraft = draftFromCatalog();
+    return videoScheduleDraft;
+  }
+
+  function renderVideoSchedule() {
+    if (!videoScheduleDirty) videoScheduleDraft = draftFromCatalog();
+    var draft = currentScheduleDraft();
+    var videos = backgroundVideoCatalog.videos || [];
+    var schedule = backgroundVideoCatalog.schedule || {};
+    byId('video-schedule-enabled').checked = draft.enabled;
+    var container = byId('video-schedule-slots');
+    container.textContent = '';
+    draft.slots.forEach(function (slot, index) {
+      var row = document.createElement('div');
+      row.className = 'row schedule-slot';
+
+      var time = document.createElement('input');
+      time.type = 'time';
+      time.className = 'time';
+      time.required = true;
+      time.value = slot.start || '';
+      time.setAttribute('aria-label', 'Starts at');
+      time.addEventListener('change', function () {
+        slot.start = time.value;
+        videoScheduleDirty = true;
+      });
+
+      var select = document.createElement('select');
+      select.className = 'select';
+      select.setAttribute('aria-label', 'Video from this time');
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = videos.length ? 'Choose a video' : 'Upload a video first';
+      select.appendChild(placeholder);
+      videos.forEach(function (video) {
+        var option = document.createElement('option');
+        option.value = video.id;
+        option.textContent = video.name;
+        select.appendChild(option);
+      });
+      select.value = findBackgroundVideo(slot.videoId) ? slot.videoId : '';
+      select.addEventListener('change', function () {
+        slot.videoId = select.value;
+        videoScheduleDirty = true;
+      });
+
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn small';
+      remove.textContent = 'Remove';
+      remove.addEventListener('click', function () {
+        draft.slots.splice(index, 1);
+        videoScheduleDirty = true;
+        renderVideoSchedule();
+      });
+
+      row.appendChild(time);
+      row.appendChild(select);
+      row.appendChild(remove);
+      container.appendChild(row);
+    });
+    byId('video-schedule-add').disabled =
+      !videos.length || draft.slots.length >= Number(schedule.maxSlots || 8);
+    byId('video-schedule-resume').classList.toggle('hidden', !schedule.hold);
+    byId('video-schedule-summary').textContent = videoScheduleSummary();
   }
 
   function refreshBackgroundVideos() {
@@ -915,7 +1035,7 @@
       if (pendingBackgroundVideoId && !findBackgroundVideo(pendingBackgroundVideoId)) {
         pendingBackgroundVideoId = '';
       }
-      select.value = pendingBackgroundVideoId || backgroundVideoCatalog.activeId || '';
+      select.value = pendingBackgroundVideoId || showingVideoId();
 
       var list = byId('background-video-list');
       list.textContent = '';
@@ -958,12 +1078,20 @@
           + ' \u00b7 ' + formatBytes(video.sizeBytes);
         var badges = document.createElement('div');
         badges.className = 'video-badges';
-        if (video.active) {
+        var showing = video.showing === undefined ? Boolean(video.active) : Boolean(video.showing);
+        var scheduledStarts = video.scheduledStarts || [];
+        if (showing) {
           var active = document.createElement('span');
           active.className = 'video-badge active';
           active.textContent = 'On mirror';
           badges.appendChild(active);
         }
+        scheduledStarts.forEach(function (start) {
+          var scheduled = document.createElement('span');
+          scheduled.className = 'video-badge';
+          scheduled.textContent = 'From ' + formatClockTime(start);
+          badges.appendChild(scheduled);
+        });
         if (video.previous) {
           var previous = document.createElement('span');
           previous.className = 'video-badge';
@@ -979,16 +1107,18 @@
         var use = document.createElement('button');
         use.type = 'button';
         use.className = 'btn';
-        use.textContent = video.active ? 'Using' : 'Use';
-        use.disabled = Boolean(video.active);
+        use.textContent = showing ? 'Showing' : (scheduleRunning() ? 'Show now' : 'Use');
+        use.disabled = showing;
         use.addEventListener('click', function () {
           activateBackgroundVideo(video.id).catch(function () {});
         });
+        var removable = !showing && !video.active && !scheduledStarts.length;
         var remove = document.createElement('button');
         remove.type = 'button';
-        remove.className = 'btn' + (video.active ? '' : ' danger');
+        remove.className = 'btn' + (removable ? ' danger' : '');
         remove.textContent = 'Delete';
-        remove.disabled = Boolean(video.active);
+        remove.disabled = !removable;
+        if (scheduledStarts.length) remove.title = 'Remove this video from the schedule first';
         remove.addEventListener('click', function () {
           var warning = video.previous
             ? ' This also removes the current rollback copy.'
@@ -1019,6 +1149,7 @@
         ? formatBytes(backgroundVideoCatalog.totalBytes) + ' of ' + limit
           + ' \u00b7 ' + videos.length + (videos.length === 1 ? ' video' : ' videos')
         : 'No videos uploaded \u00b7 ' + limit + ' available';
+      renderVideoSchedule();
       if (dashboardLayout) renderLayoutEditor();
       renderHomePreview();
       return catalog;
@@ -1045,7 +1176,10 @@
       .then(function () {
         pendingBackgroundVideoId = '';
         setMessage('background-video-message', '');
-        toast('Background video is on the mirror');
+        var hold = backgroundVideoCatalog.schedule && backgroundVideoCatalog.schedule.hold;
+        toast(hold && hold.videoId === id
+          ? 'Showing until ' + formatMirrorTime(hold.until) + ', then the schedule resumes'
+          : 'Background video is on the mirror');
       })
       .catch(function (error) {
         setMessage('background-video-message', error.message, true);
@@ -1701,7 +1835,7 @@
     }
     setMessage('layout-message', 'Saving…');
     var activate = dashboardLayout.background.mode === 'video'
-      && selectedVideoId !== backgroundVideoCatalog.activeId
+      && selectedVideoId !== showingVideoId()
       ? request(
         '/api/v1/background-videos/' + encodeURIComponent(selectedVideoId) + '/activate',
         json('POST', {}))
@@ -2217,6 +2351,97 @@
       .catch(function (error) {
         button.disabled = !backgroundVideoCatalog.canRollback;
         setMessage('background-video-message', error.message, true);
+      });
+  });
+
+  var SUGGESTED_SCHEDULE_TIMES = ['06:00', '19:00', '12:00', '22:00', '09:00', '15:00', '00:00', '03:00'];
+
+  byId('video-schedule-enabled').addEventListener('change', function () {
+    var draft = currentScheduleDraft();
+    draft.enabled = byId('video-schedule-enabled').checked;
+    if (draft.enabled && !draft.slots.length) {
+      var videos = backgroundVideoCatalog.videos || [];
+      var morning = showingVideoId() || (videos[0] ? videos[0].id : '');
+      var others = videos.filter(function (video) { return video.id !== morning; });
+      draft.slots = [
+        { start: '06:00', videoId: morning },
+        { start: '19:00', videoId: others.length ? others[0].id : morning }
+      ];
+    }
+    videoScheduleDirty = true;
+    renderVideoSchedule();
+  });
+
+  byId('video-schedule-add').addEventListener('click', function () {
+    var draft = currentScheduleDraft();
+    var used = draft.slots.map(function (slot) { return slot.start; });
+    var start = SUGGESTED_SCHEDULE_TIMES.filter(function (time) {
+      return used.indexOf(time) < 0;
+    })[0] || '';
+    draft.slots.push({ start: start, videoId: showingVideoId() });
+    videoScheduleDirty = true;
+    renderVideoSchedule();
+  });
+
+  byId('video-schedule-save').addEventListener('click', function () {
+    var draft = currentScheduleDraft();
+    var seen = {};
+    for (var index = 0; index < draft.slots.length; index++) {
+      var slot = draft.slots[index];
+      if (!/^\d{2}:\d{2}$/.test(slot.start || '')) {
+        setMessage('video-schedule-message', 'Enter a start time for every row.', true);
+        return;
+      }
+      if (!findBackgroundVideo(slot.videoId)) {
+        setMessage('video-schedule-message', 'Choose a video for every time.', true);
+        return;
+      }
+      if (seen[slot.start]) {
+        setMessage('video-schedule-message', 'Each time must be different.', true);
+        return;
+      }
+      seen[slot.start] = true;
+    }
+    if (draft.enabled && !draft.slots.length) {
+      setMessage('video-schedule-message', 'Add at least one time first.', true);
+      return;
+    }
+    var button = byId('video-schedule-save');
+    button.disabled = true;
+    setMessage('video-schedule-message', 'Saving schedule\u2026');
+    request('/api/v1/background-videos/schedule', json('PUT', {
+      enabled: draft.enabled,
+      slots: draft.slots
+    }))
+      .then(function () {
+        videoScheduleDirty = false;
+        videoScheduleDraft = null;
+        return Promise.all([
+          refreshBackgroundVideos(),
+          refreshDashboardLayout(),
+          refreshStatus()
+        ]);
+      })
+      .then(function () {
+        setMessage('video-schedule-message', '');
+        toast(scheduleRunning() ? 'Video schedule is on' : 'Video schedule is off');
+      })
+      .catch(function (error) {
+        setMessage('video-schedule-message', error.message, true);
+      })
+      .then(function () {
+        button.disabled = false;
+      });
+  });
+
+  byId('video-schedule-resume').addEventListener('click', function () {
+    request('/api/v1/background-videos/schedule/resume', json('POST', {}))
+      .then(function () {
+        return Promise.all([refreshBackgroundVideos(), refreshStatus()]);
+      })
+      .then(function () { toast('The schedule is back on the mirror'); })
+      .catch(function (error) {
+        setMessage('video-schedule-message', error.message, true);
       });
   });
 

@@ -38,11 +38,18 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
+import java.io.File;
+
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final int CAMERA_PERMISSION_REQUEST = 40;
     private static final long STATUS_REFRESH_INTERVAL_MS = 5000L;
     private static final long DASHBOARD_RETRY_INTERVAL_MS = 60_000L;
+    private static final long SCHEDULE_CHECK_MAX_MS = 30_000L;
+    private static final long SCHEDULE_CHECK_MIN_MS = 1_000L;
+    private static final long AMBIENT_FADE_OUT_MS = 900L;
+    private static final long AMBIENT_FADE_IN_DELAY_MS = 350L;
+    private static final long AMBIENT_FADE_IN_MS = 1400L;
     private static final String OFFLINE_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/offline.html";
     private static final String BUILT_IN_DASHBOARD_URL =
@@ -51,6 +58,22 @@ public final class MainActivity extends Activity {
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
+    private final Handler scheduleHandler = new Handler(Looper.getMainLooper());
+    private final Runnable scheduleCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (root != null && !backgroundVideos.effectiveId().equals(appliedAmbientId)) {
+                renderDashboard();
+            }
+            long next = backgroundVideos.nextScheduleChangeMillis();
+            long delay = next < 0
+                    ? SCHEDULE_CHECK_MAX_MS
+                    : Math.max(SCHEDULE_CHECK_MIN_MS, Math.min(
+                            SCHEDULE_CHECK_MAX_MS,
+                            next - System.currentTimeMillis() + 250L));
+            scheduleHandler.postDelayed(this, delay);
+        }
+    };
     private final Runnable dashboardRetry = new Runnable() {
         @Override
         public void run() {
@@ -79,6 +102,7 @@ public final class MainActivity extends Activity {
         public void onReceive(Context context, Intent intent) {
             if (ControlServerService.ACTION_CONFIGURATION_CHANGED.equals(intent.getAction())) {
                 renderDashboard();
+                restartScheduleCheck();
             } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(intent.getAction())
                     || WifiManager.WIFI_STATE_CHANGED_ACTION.equals(intent.getAction())) {
                 renderDashboard();
@@ -102,11 +126,15 @@ public final class MainActivity extends Activity {
     private View dashboardView;
     private WebView webDashboard;
     private PlayerView ambientVideoView;
+    private View ambientCurtain;
     private PlayerView playerView;
     private View sleepOverlay;
     private TextView nativeStatus;
     private TextView nativeCode;
     private String loadedDashboardUrl = "";
+    private String appliedAmbientId = "";
+    private File appliedAmbientFile;
+    private boolean ambientSwitchPending;
     private boolean dashboardOffline;
     private boolean cameraPermissionRequested;
     private boolean ambientDashboardSelected;
@@ -146,6 +174,18 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
         media.attachAmbient(ambientVideoView);
+
+        // A black curtain between the video and the dashboard lets videos fade
+        // through black; SurfaceView content itself ignores view alpha on Android 6.
+        ambientCurtain = new View(this);
+        ambientCurtain.setBackgroundColor(Color.BLACK);
+        ambientCurtain.setAlpha(0f);
+        ambientCurtain.setVisibility(View.GONE);
+        root.addView(
+                ambientCurtain,
+                new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
 
         playerView = new PlayerView(this);
         playerView.setBackgroundColor(Color.BLACK);
@@ -196,6 +236,7 @@ public final class MainActivity extends Activity {
         }
         statusHandler.removeCallbacks(statusRefresh);
         statusHandler.post(statusRefresh);
+        restartScheduleCheck();
         if (dashboardOffline) {
             dashboardHandler.removeCallbacks(dashboardRetry);
             dashboardHandler.postDelayed(dashboardRetry, DASHBOARD_RETRY_INTERVAL_MS);
@@ -221,6 +262,7 @@ public final class MainActivity extends Activity {
         activityResumed = false;
         updateAmbientVideoState();
         statusHandler.removeCallbacks(statusRefresh);
+        scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
         super.onPause();
     }
@@ -228,7 +270,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         statusHandler.removeCallbacks(statusRefresh);
+        scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
+        ambientCurtain.animate().cancel();
         unregisterReceiver(stateReceiver);
         media.detachAmbient(ambientVideoView);
         media.detach(playerView);
@@ -244,7 +288,7 @@ public final class MainActivity extends Activity {
         } else if (pairingManager.isPaired() && !currentIpAddress().isEmpty()) {
             DashboardLayoutConfig layout = configStore.getDashboardLayout();
             ambientDashboardSelected = "video".equals(layout.backgroundMode())
-                    && backgroundVideos.activeFile() != null;
+                    && backgroundVideos.effectiveFile() != null;
             ambientBackgroundFit = layout.backgroundFit();
             renderWebDashboard(BUILT_IN_DASHBOARD_URL);
         } else {
@@ -567,7 +611,7 @@ public final class MainActivity extends Activity {
         dashboardView = view;
         root.addView(
                 view,
-                Math.min(1, root.getChildCount()),
+                root.indexOfChild(ambientCurtain) + 1,
                 new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
@@ -611,6 +655,14 @@ public final class MainActivity extends Activity {
         updateAmbientVideoState();
     }
 
+    /** Re-arms the boundary timer so a newly saved schedule is timed precisely. */
+    private void restartScheduleCheck() {
+        scheduleHandler.removeCallbacks(scheduleCheck);
+        if (activityResumed) {
+            scheduleHandler.post(scheduleCheck);
+        }
+    }
+
     private void updateSleepVisibility() {
         if (sleepOverlay != null) {
             sleepOverlay.setVisibility(automation.isSleeping() ? View.VISIBLE : View.GONE);
@@ -641,11 +693,50 @@ public final class MainActivity extends Activity {
                         ? AspectRatioFrameLayout.RESIZE_MODE_FIT
                         : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
         ambientVideoView.setVisibility(state.enabled ? View.VISIBLE : View.GONE);
-        media.setAmbientState(
-                backgroundVideos.activeFile(),
-                backgroundVideos.activeId(),
-                state.enabled,
-                state.playing);
+        String targetId = backgroundVideos.effectiveId();
+        File targetFile = backgroundVideos.effectiveFile();
+        if (state.playing && !appliedAmbientId.isEmpty() && !targetId.equals(appliedAmbientId)) {
+            // Fade the current video out through black, switch, then fade in.
+            if (!ambientSwitchPending) {
+                ambientSwitchPending = true;
+                ambientCurtain.animate().cancel();
+                ambientCurtain.setVisibility(View.VISIBLE);
+                ambientCurtain.animate()
+                        .setStartDelay(0L)
+                        .alpha(1f)
+                        .setDuration(AMBIENT_FADE_OUT_MS)
+                        .withEndAction(() -> {
+                            ambientSwitchPending = false;
+                            appliedAmbientId = "";
+                            updateAmbientVideoState();
+                            revealAmbientVideo();
+                        });
+            }
+            media.setAmbientState(appliedAmbientFile, appliedAmbientId, state.enabled, state.playing);
+            return;
+        }
+        if (!state.playing && ambientSwitchPending) {
+            ambientSwitchPending = false;
+            ambientCurtain.animate().cancel();
+            ambientCurtain.setAlpha(0f);
+            ambientCurtain.setVisibility(View.GONE);
+        }
+        appliedAmbientId = targetId;
+        appliedAmbientFile = targetFile;
+        media.setAmbientState(targetFile, targetId, state.enabled, state.playing);
+    }
+
+    private void revealAmbientVideo() {
+        ambientCurtain.animate().cancel();
+        ambientCurtain.animate()
+                .setStartDelay(AMBIENT_FADE_IN_DELAY_MS)
+                .alpha(0f)
+                .setDuration(AMBIENT_FADE_IN_MS)
+                .withEndAction(() -> {
+                    if (!ambientSwitchPending) {
+                        ambientCurtain.setVisibility(View.GONE);
+                    }
+                });
     }
 
     private void requestCameraPermissionIfNeeded() {

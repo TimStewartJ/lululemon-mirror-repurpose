@@ -166,6 +166,15 @@ Active videos cannot be deleted. Audio tracks are ignored, display sleep pauses
 the loop, and full-screen casting temporarily takes over the same decoder before
 the background resumes.
 
+**Display > Video schedule** changes the background by time of day, for example
+a bright film from 06:00 and a calmer one from 19:00. Each time shows its video
+until the next time, wrapping past midnight, using the Mirror's saved local
+offset. Turning the schedule on selects the built-in layout with a video
+background. While it runs, **Show now** (or **Use previous video**) shows another
+video only until the next scheduled change; **Resume schedule** ends that sooner.
+Videos fade through black when the background changes. Scheduled videos cannot
+be deleted until they are removed from the schedule.
+
 See [Background videos](background-videos.md) for storage, CLI, validation, and
 recovery details.
 

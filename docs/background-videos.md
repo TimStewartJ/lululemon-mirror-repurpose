@@ -21,7 +21,8 @@ Files live in Mirror Home's private application data:
 
 The object name is the lowercase SHA-256 of the exact uploaded bytes. Metadata
 contains only display and media properties, never filesystem paths. Active and
-previous object IDs are stored in private Android preferences.
+previous object IDs, the schedule, and any temporary hold are stored in private
+Android preferences.
 
 The library survives APK updates and APK rollback. Uninstalling Mirror Home or
 clearing its application data removes it.
@@ -56,7 +57,8 @@ selects video mode; **Fill**
 crops to the panel and **Whole** letterboxes. Background dimming remains
 available for text legibility.
 
-The active video cannot be deleted. Activating another video retains the old
+The video on the glass cannot be deleted, and neither can a scheduled video.
+Activating another video retains the old
 selection as the rollback copy. Deleting the rollback copy is allowed only
 after an explicit confirmation.
 
@@ -100,6 +102,46 @@ After confirmation that bootstrap hash remains permanently marked consumed,
 including across APK rollback; a later deployment uses a new random capability.
 Normal builds leave the hash empty and disable provisioning entirely.
 
+## Schedule
+
+A schedule changes the background by time of day. It is a daily timetable of up
+to eight start times, each with a video. A time shows its video until the next
+time starts, wrapping past midnight, so exactly one video applies at any moment.
+Times use the Mirror's saved local UTC offset, the same clock as the sleep
+schedule. With a single time, that video shows all day.
+
+Open **Display > Video schedule**, turn on **Change video by time of day**,
+choose a video for each time, and select **Save video schedule**. Turning a
+schedule on selects the built-in layout with a video background, like
+activation. Turning it off keeps its times and shows the manually selected
+video again.
+
+While a schedule runs, choosing **Show now** on another video, activating it
+through the API or CLI, or rolling back shows that video only until the next
+scheduled change; **Resume schedule** ends the hold sooner. Saving a new
+schedule also ends any hold. The glass fades the old video out through black and
+the new one in when the background changes. A scheduled video cannot be deleted
+until it is removed from the schedule.
+
+```powershell
+.\tools\background-video.ps1 schedule set 06:00=luminous-flowers-spatial-180s.mp4 19:00=546e5d02
+.\tools\background-video.ps1 schedule show
+.\tools\background-video.ps1 schedule off
+.\tools\background-video.ps1 schedule on
+.\tools\background-video.ps1 schedule resume
+```
+
+Each `HH:MM=VIDEO` uses a 24-hour time and a video file name, full ID, or unique
+ID prefix of at least six characters.
+
+`PUT /api/v1/background-videos/schedule` takes
+`{"enabled": true, "slots": [{"start": "06:00", "videoId": "SHA256_ID"}]}` and
+returns the catalog. `POST /api/v1/background-videos/schedule/resume` ends a hold.
+The catalog reports `effectiveId` (what the glass shows), keeps `activeId` as the
+manual selection, marks each video with `showing` and `scheduledStarts`, and
+includes `schedule` with the saved times, `current` and `next` slots,
+`nextChangeAt`, and any `hold`.
+
 ## Optional seasonal artwork
 
 `tools\render_seasonal_video.py` renders the original four-seasons film offline;
@@ -128,10 +170,16 @@ once. The background is muted, requests no audio focus, and disables audio track
 selection. It pauses during display sleep and releases its decoder when the HOME
 activity leaves the foreground.
 
-`GET /api/v1/dashboard/ambient-video` reports the active content ID, decoder,
+`GET /api/v1/dashboard/ambient-video` reports the playing content ID, decoder,
 resolution, frame rate, rendered/dropped frames, loop count, and dashboard
-readiness. LAN callers receive only redacted dashboard diagnostics unless they
+readiness. Authenticated callers also get the selection, with `active` as the
+video on the glass, `selectedId` as the manual choice, and the schedule. LAN
+callers receive only redacted dashboard diagnostics unless they
 authenticate.
+
+A background change fades through black: a black curtain between the video and
+the widgets closes over roughly one second, the player switches source, and the
+curtain opens again. While asleep or hidden, the source simply switches.
 
 The endpoint name and its authenticated `video.season` field are retained for
 compatibility. `season` labels the four quarters of the playback timeline

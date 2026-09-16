@@ -56,6 +56,8 @@ PUT  /api/v1/background-videos/upload/{name}
 GET  /api/v1/background-videos/{id}/poster
 POST /api/v1/background-videos/{id}/activate
 POST /api/v1/background-videos/rollback
+PUT  /api/v1/background-videos/schedule
+POST /api/v1/background-videos/schedule/resume
 DELETE /api/v1/background-videos/{id}
 GET  /api/v1/dashboard/ambient-video
 POST /api/v1/control/brightness
@@ -77,7 +79,7 @@ are public. Full status and all state changes require authentication for LAN
 clients. ADB-forwarded and on-device loopback status remains available for
 recovery and local templates.
 
-Background video list, upload, activation, rollback, deletion, and poster routes
+Background video list, upload, activation, rollback, schedule, deletion, and poster routes
 require an ordinary bearer credential. The bootstrap availability route is
 public; its POST exchanges an independently generated build-scoped capability
 for one normal revocable client credential. Repeating the exchange returns the

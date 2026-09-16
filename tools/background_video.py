@@ -12,6 +12,8 @@ Talks directly to a paired Mirror's background-video HTTP endpoints:
     POST   /api/v1/background-videos/{sha256}/activate    (Bearer token)
     POST   /api/v1/background-videos/rollback              (Bearer token)
     DELETE /api/v1/background-videos/{sha256}              (Bearer token)
+    PUT    /api/v1/background-videos/schedule              (Bearer token)
+    POST   /api/v1/background-videos/schedule/resume       (Bearer token)
 
 Credentials returned by ``pair`` are written to a local JSON file (default
 ``.secrets/mirror-background-video.json``) with restrictive permissions and
@@ -49,6 +51,7 @@ MAX_BOOTSTRAP_SECRET_LENGTH = 256
 # stay within this because each 1 MiB chunk send/recv resets the clock.
 UPLOAD_TIMEOUT_SECONDS = 180
 ID_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SCHEDULE_TIME_PATTERN = re.compile(r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 class BackgroundVideoClientError(RuntimeError):
@@ -455,6 +458,26 @@ class BackgroundVideoClient:
             headers=self._auth_headers(),
         )
 
+    def update_schedule(self, enabled: bool, slots: list[dict]) -> dict:
+        return _json_call(
+            self.host,
+            self.port,
+            "PUT",
+            "/api/v1/background-videos/schedule",
+            {"enabled": enabled, "slots": slots},
+            headers=self._auth_headers(),
+        )
+
+    def resume_schedule(self) -> dict:
+        return _json_call(
+            self.host,
+            self.port,
+            "POST",
+            "/api/v1/background-videos/schedule/resume",
+            {},
+            headers=self._auth_headers(),
+        )
+
     def delete(self, video_id: str) -> dict:
         normalized = normalize_id(video_id)
         return _json_call(
@@ -532,6 +555,57 @@ def confirm(prompt: str) -> bool:
     except EOFError:
         return False
     return answer.strip().lower() in {"y", "yes"}
+
+
+def resolve_video_id(catalog: dict, value: str) -> str:
+    """Accept a full id, a unique id prefix of at least 6 characters, or an exact file name."""
+    candidate = value.strip()
+    videos = catalog.get("videos") or []
+    named = [video.get("id") for video in videos if video.get("name") == candidate]
+    if len(named) == 1:
+        return named[0]
+    lowered = candidate.lower()
+    if not re.fullmatch(r"[0-9a-f]{6,64}", lowered):
+        raise BackgroundVideoClientError(
+            f"{value!r} is not a video name or an id prefix of at least 6 hex characters"
+        )
+    matches = [video.get("id") for video in videos if str(video.get("id", "")).startswith(lowered)]
+    if len(matches) != 1:
+        problem = "matches no video" if not matches else "matches more than one video"
+        raise BackgroundVideoClientError(f"{value!r} {problem}")
+    return matches[0]
+
+
+def parse_schedule_slot(catalog: dict, value: str) -> dict:
+    start, separator, video = value.partition("=")
+    if not separator or not SCHEDULE_TIME_PATTERN.fullmatch(start):
+        raise BackgroundVideoClientError(
+            f"{value!r} must look like HH:MM=VIDEO using a 24-hour time"
+        )
+    return {"start": start, "videoId": resolve_video_id(catalog, video)}
+
+
+def run_schedule(client: BackgroundVideoClient, action: str, slot_values=()) -> dict:
+    if action == "resume":
+        catalog = client.resume_schedule()
+    elif action == "set":
+        catalog = client.list_videos()
+        slots = [parse_schedule_slot(catalog, value) for value in slot_values]
+        catalog = client.update_schedule(True, slots)
+    elif action in ("on", "off"):
+        current = client.list_videos().get("schedule") or {}
+        slots = [
+            {"start": slot.get("start"), "videoId": slot.get("videoId")}
+            for slot in current.get("slots") or []
+        ]
+        if action == "on" and not slots:
+            raise BackgroundVideoClientError("No saved times; use 'schedule set' first")
+        catalog = client.update_schedule(action == "on", slots)
+    elif action == "show":
+        catalog = client.list_videos()
+    else:
+        raise AssertionError(f"Unhandled schedule action: {action}")
+    return {"schedule": catalog.get("schedule"), "effectiveId": catalog.get("effectiveId")}
 
 
 def perform_delete(
@@ -714,6 +788,24 @@ def build_parser() -> argparse.ArgumentParser:
     delete_parser.add_argument("id")
     delete_parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
 
+    schedule_parser = subparsers.add_parser(
+        "schedule", help="Show or change the time-of-day video schedule"
+    )
+    schedule_actions = schedule_parser.add_subparsers(dest="schedule_action", required=True)
+    schedule_actions.add_parser("show", help="Show the schedule and what the mirror shows now")
+    set_parser = schedule_actions.add_parser(
+        "set", help="Replace the schedule and turn it on, e.g. 06:00=VIDEO 19:00=VIDEO"
+    )
+    set_parser.add_argument(
+        "slots",
+        nargs="+",
+        metavar="HH:MM=VIDEO",
+        help="24-hour start time and a video name, full id, or unique id prefix",
+    )
+    schedule_actions.add_parser("on", help="Turn the saved schedule on")
+    schedule_actions.add_parser("off", help="Turn the schedule off but keep its times")
+    schedule_actions.add_parser("resume", help="End a manual choice and follow the schedule")
+
     return parser
 
 
@@ -768,6 +860,8 @@ def main(argv: list[str] | None = None) -> int:
             result = client.rollback()
         elif args.command == "delete":
             result = perform_delete(client, args.id, assume_yes=args.yes)
+        elif args.command == "schedule":
+            result = run_schedule(client, args.schedule_action, getattr(args, "slots", ()))
         else:
             raise AssertionError(f"Unhandled command: {args.command}")
     except BackgroundVideoClientError as error:

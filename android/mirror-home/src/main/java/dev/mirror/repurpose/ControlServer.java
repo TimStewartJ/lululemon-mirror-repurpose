@@ -173,6 +173,14 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/background-videos/rollback".equals(uri)) {
                 return rollbackBackgroundVideo();
             }
+            if (Method.PUT.equals(session.getMethod())
+                    && "/api/v1/background-videos/schedule".equals(uri)) {
+                return updateBackgroundVideoSchedule(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod())
+                    && "/api/v1/background-videos/schedule/resume".equals(uri)) {
+                return resumeBackgroundVideoSchedule();
+            }
             if (Method.POST.equals(session.getMethod())
                     && uri.startsWith("/api/v1/background-videos/")
                     && uri.endsWith("/activate")) {
@@ -747,6 +755,34 @@ public final class ControlServer extends NanoHTTPD {
         }
     }
 
+    private Response updateBackgroundVideoSchedule(JSONObject body) throws JSONException {
+        try {
+            BackgroundVideoSchedule schedule = BackgroundVideoSchedule.parse(body);
+            backgroundVideos.updateSchedule(schedule);
+            if (schedule.isActive()) {
+                configStore.setDashboardLayout(
+                        configStore.getDashboardLayout().withBackgroundMode("video"));
+                configStore.setDashboardUrl("");
+            }
+            notifyConfigurationChanged();
+            return response(Response.Status.OK, backgroundVideos.document());
+        } catch (IllegalArgumentException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
+        } catch (IOException error) {
+            return error(Response.Status.CONFLICT, error.getMessage());
+        }
+    }
+
+    private Response resumeBackgroundVideoSchedule() throws JSONException {
+        try {
+            backgroundVideos.resumeSchedule();
+            notifyConfigurationChanged();
+            return response(Response.Status.OK, backgroundVideos.document());
+        } catch (IOException error) {
+            return error(Response.Status.CONFLICT, error.getMessage());
+        }
+    }
+
     private Response deleteBackgroundVideo(String id) throws JSONException {
         try {
             BackgroundVideoLibrary.DeleteResult result = backgroundVideos.delete(id);
@@ -755,6 +791,10 @@ public final class ControlServer extends NanoHTTPD {
                     return error(
                             Response.Status.CONFLICT,
                             "Activate another background before deleting this one");
+                case SCHEDULED:
+                    return error(
+                            Response.Status.CONFLICT,
+                            "Remove this video from the schedule before deleting it");
                 case NOT_FOUND:
                     return error(Response.Status.NOT_FOUND, "Background video not found");
                 default:

@@ -27,12 +27,15 @@ from background_video import (  # noqa: E402
     main,
     normalize_id,
     pair,
+    parse_schedule_slot,
     perform_delete,
     provision,
     read_bootstrap_secret,
     redact_config,
+    resolve_video_id,
     run_provision,
     run_push,
+    run_schedule,
     validate_host,
     validate_video_file,
     write_secret_file,
@@ -1094,6 +1097,109 @@ class PerformDeleteTest(unittest.TestCase):
         with self.assertRaises(BackgroundVideoClientError):
             perform_delete(client, "not-a-valid-id", assume_yes=True)
         client.delete.assert_not_called()
+
+
+class ScheduleTest(unittest.TestCase):
+    FLOWERS = "43c66c53" + "a" * 56
+    SEASONS = "b0698aae" + "b" * 56
+    SEASONS_TWIN = "b0698aaf" + "c" * 56
+    CATALOG = {
+        "videos": [
+            {"id": FLOWERS, "name": "luminous-flowers-180s.mp4"},
+            {"id": SEASONS, "name": "four-seasons-luminous-120s.mp4"},
+            {"id": SEASONS_TWIN, "name": "twin.mp4"},
+        ],
+        "effectiveId": SEASONS,
+        "schedule": {
+            "enabled": True,
+            "slots": [
+                {"start": "06:00", "videoId": FLOWERS},
+                {"start": "19:00", "videoId": SEASONS},
+            ],
+        },
+    }
+
+    def test_resolves_names_full_ids_and_unique_prefixes(self):
+        self.assertEqual(self.FLOWERS, resolve_video_id(self.CATALOG, "luminous-flowers-180s.mp4"))
+        self.assertEqual(self.FLOWERS, resolve_video_id(self.CATALOG, self.FLOWERS.upper()))
+        self.assertEqual(self.FLOWERS, resolve_video_id(self.CATALOG, "43c66c"))
+        for bad, message in (("b0698a", "more than one"), ("ffffff", "no video"),
+                             ("43c66", "at least 6"), ("../x", "at least 6")):
+            with self.subTest(value=bad):
+                with self.assertRaisesRegex(BackgroundVideoClientError, message):
+                    resolve_video_id(self.CATALOG, bad)
+
+    def test_slots_need_a_24_hour_time_and_a_video(self):
+        self.assertEqual(
+            {"start": "19:00", "videoId": self.SEASONS},
+            parse_schedule_slot(self.CATALOG, "19:00=b0698aae"),
+        )
+        for bad in ("7:00=43c66c", "24:00=43c66c", "06:00", "06:00=nope"):
+            with self.subTest(value=bad):
+                with self.assertRaises(BackgroundVideoClientError):
+                    parse_schedule_slot(self.CATALOG, bad)
+
+    def test_client_uses_schedule_routes(self):
+        client = BackgroundVideoClient("127.0.0.1", "t" * 40)
+        with mock.patch("background_video._json_call", return_value={}) as call:
+            slots = [{"start": "06:00", "videoId": self.FLOWERS}]
+            client.update_schedule(True, slots)
+            client.resume_schedule()
+        first, second = call.call_args_list
+        self.assertEqual(("PUT", "/api/v1/background-videos/schedule",
+                          {"enabled": True, "slots": slots}), first.args[2:5])
+        self.assertEqual(("POST", "/api/v1/background-videos/schedule/resume", {}), second.args[2:5])
+        self.assertIn("Authorization", first.kwargs["headers"])
+
+    def test_set_resolves_every_slot_before_turning_the_schedule_on(self):
+        client = mock.Mock()
+        client.list_videos.return_value = self.CATALOG
+        client.update_schedule.return_value = self.CATALOG
+
+        result = run_schedule(client, "set", ["06:00=luminous-flowers-180s.mp4", "19:00=b0698aae"])
+
+        client.update_schedule.assert_called_once_with(True, [
+            {"start": "06:00", "videoId": self.FLOWERS},
+            {"start": "19:00", "videoId": self.SEASONS},
+        ])
+        self.assertEqual(self.SEASONS, result["effectiveId"])
+        self.assertEqual(self.CATALOG["schedule"], result["schedule"])
+
+        client.update_schedule.reset_mock()
+        with self.assertRaises(BackgroundVideoClientError):
+            run_schedule(client, "set", ["06:00=luminous-flowers-180s.mp4", "19:00=ffffff"])
+        client.update_schedule.assert_not_called()
+
+    def test_off_and_on_keep_saved_times_and_resume_ends_a_hold(self):
+        client = mock.Mock()
+        client.list_videos.return_value = self.CATALOG
+        client.update_schedule.return_value = self.CATALOG
+        client.resume_schedule.return_value = self.CATALOG
+
+        run_schedule(client, "off")
+        client.update_schedule.assert_called_once_with(False, self.CATALOG["schedule"]["slots"])
+        run_schedule(client, "resume")
+        client.resume_schedule.assert_called_once_with()
+
+        client.list_videos.return_value = {"schedule": {"enabled": False, "slots": []}}
+        with self.assertRaisesRegex(BackgroundVideoClientError, "No saved times"):
+            run_schedule(client, "on")
+
+    def test_main_schedule_set_prints_the_resulting_schedule(self):
+        config = {"host": "127.0.0.1", "port": 8787, "token": "super-secret-token"}
+        client = mock.Mock()
+        client.list_videos.return_value = self.CATALOG
+        client.update_schedule.return_value = self.CATALOG
+        buffer = io.StringIO()
+        with mock.patch(
+            "background_video.client_from_config", return_value=(client, config)
+        ), contextlib.redirect_stdout(buffer):
+            exit_code = main(["schedule", "set", "06:00=43c66c", "19:00=b0698aae"])
+
+        self.assertEqual(0, exit_code)
+        output = json.loads(buffer.getvalue())
+        self.assertEqual("19:00", output["schedule"]["slots"][1]["start"])
+        self.assertNotIn("super-secret-token", buffer.getvalue())
 
 
 class MainStatusTest(unittest.TestCase):
