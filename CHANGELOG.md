@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.1.0 - 2026-09-15
+
+- Schedule background videos by time of day. **Display > Video schedule** holds
+  up to eight start times, each showing its video until the next one and
+  wrapping past midnight in the Mirror's local offset, so mornings and nights
+  can use different films. Turning it on selects the built-in video background.
+  While a schedule runs, **Show now**, API/CLI activation, and rollback hold a
+  video until the next scheduled change; **Resume schedule** ends the hold.
+  Scheduled videos cannot be deleted. Add `PUT /api/v1/background-videos/schedule`,
+  `POST /api/v1/background-videos/schedule/resume`, catalog `effectiveId`,
+  `showing`, `scheduledStarts`, and `schedule` fields, and
+  `background-video.ps1 schedule show|set|on|off|resume`.
+- Fade the glass through black whenever the background video changes instead of
+  cutting while the decoder switches.
+
 ## 2.0.0 - 2026-09-04
 
 - Add a production background-video library stored separately from the APK.
