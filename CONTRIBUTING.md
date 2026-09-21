@@ -18,6 +18,12 @@ Run the complete local gate:
 python tools/check.py
 ```
 
+GitHub CI runs this same gate. SDK setup requests `platform-tools`, then
+explicitly installs Android SDK Platform 35 and Build Tools 35.0.0. The legacy
+SDK `tools` package is not needed and must not be part of the bootstrap request.
+Optional artwork tests skip when their Python or GPU dependencies are absent;
+validate renderer changes locally with those dependencies installed.
+
 For a focused loop:
 
 ```powershell
