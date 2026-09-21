@@ -166,7 +166,13 @@ unknown device pass. No compatible raw-flash recovery path is established.
 
 ## 4. Sign and install Mirror Home
 
-For a first installation, generate a private release key. If a key or
+The recommended path is an owner-signed source build, so you control future
+updates and can sign the optional OTA supervisor with the same certificate.
+Use a clean checkout of the intended release tag (for example, `v2.1.0`), not a
+mixture of release scripts and unreleased code. The published-APK alternative
+and its signing restrictions are described below.
+
+For a first source installation, generate a private release key. If a key or
 `keystore.properties` already exists, inspect and reuse the intended signing
 configuration instead; **do not overwrite it**.
 
@@ -203,6 +209,46 @@ Updates back up the installed APK and attempt rollback on a failed health
 check; a failed first install has no previous Home APK and attempts removal
 of the candidate. Unknown install state requires investigation, not retries
 that assume rollback succeeded. See [Recovery](recovery.md#mirror-home-update-rollback).
+
+### Published APKs and signing compatibility
+
+A GitHub Release may include a project-signed Home APK, `SHA256SUMS.txt`, and
+`build-provenance.json`. Check the downloaded file's SHA-256 against the sums
+and verify its signature with Android SDK
+`apksigner verify --min-sdk-version 23 --verbose --print-certs` (from Build Tools
+35.0.0; use its full path if it is not on PATH). The certificate SHA-256 must
+match the provenance. These checks verify the artifact, not the hardware:
+complete stages 1-3 and retain authorized USB access.
+
+An existing installation must keep its signing certificate. **Do not uninstall
+Home, clear its data, generate a replacement key, or force a downgrade to use a
+public APK with another certificate.** The installer above builds from source
+using your private key; it does not install the downloaded APK. Project-signed
+Home and an owner-signed OTA supervisor are not certificate-compatible. Build
+both from source with your own key if you want owner-controlled OTA updates.
+
+For a first installation only, after the profile/backups and artifact checks,
+confirm `adb -s DEVICE_SERIAL shell pm path dev.mirror.repurpose` returns no
+installed package. Then, replacing the placeholders with the intended device
+and downloaded file:
+
+```powershell
+adb -s DEVICE_SERIAL install -r -g 'C:\path\to\mirror-home-2.1.0.apk'
+adb -s DEVICE_SERIAL shell am start -n dev.mirror.repurpose/.MainActivity
+```
+
+Require install `Success`, a successful activity start, and a visible Home
+screen. This manual path does not provide `install-home`'s transactional health
+check or rollback. Stop on any error and use the recovery guide; do not remove
+or disable the factory launcher. Continue stages 5-8 to pair, configure Wi-Fi,
+select default HOME and verify reboot persistence. APK installation alone is
+not a completed installation, and this path has not been clean-room validated.
+
+Public 2.1.0 uses version code 71. A device already running 2.1.0 does not need
+to reinstall it, and the OTA supervisor requires a strictly increasing version
+code rather than accepting another build of code 71. Public APKs leave test
+health failures and unattended background-video bootstrap provisioning disabled;
+normal on-glass pairing is still required.
 
 ## 5. Pair a browser and configure Wi-Fi
 

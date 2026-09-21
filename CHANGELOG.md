@@ -64,6 +64,11 @@
 
 ### Distribution maintenance - 2026-09-20
 
+- Request `platform-tools` explicitly during hosted CI bootstrap, avoiding the
+  unavailable legacy SDK `tools` package while keeping the full gate unchanged.
+- Document project-signed APK verification, certificate compatibility and the
+  owner-signed source-build path. Public Home builds leave test health failures
+  and unattended background-video bootstrap provisioning disabled.
 - Update the optional companion to Express 4.22.3, body-parser 1.20.8 and
   qs 6.16.0, resolving the known query-parser dependency advisories while
   retaining Express 4 compatibility. Mirror Home's Android code is unchanged.
