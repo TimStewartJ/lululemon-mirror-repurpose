@@ -41,6 +41,11 @@
 - Refuse to render either artwork film if repeated warm-up frames never agree.
   Report the failure explicitly and release the GPU context instead of silently
   returning nondeterministic frames.
+- Encode artwork films in isolated temporary storage and publish the complete
+  MP4 only after media validation, the widget guard and any loop-seam check
+  pass. Publication is atomic and never replaces an existing file, including
+  one created during rendering. Failed or interrupted runs do not leave an
+  invalid film under its official name. Encoder errors retain their diagnostics.
 
 ## 2.1.0 - 2026-09-15
 

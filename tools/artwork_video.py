@@ -19,6 +19,7 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import time
 from typing import Callable, Iterable, Iterator
 
@@ -414,30 +415,58 @@ def write_previews(spec: ArtworkSpec, indices, workers):
 def encode(spec: ArtworkSpec, indices, output_path, workers, full_loop):
     if worst_case_upload_bytes(spec.duration_s, spec.maxrate_kbps, spec.bufsize_kbps) * 1.01 >= MAX_VIDEO_BYTES:
         raise ValueError("Encoding budget cannot guarantee the upload size limit for this duration")
+    output_path = Path(output_path)
+    if output_path.exists():
+        raise FileExistsError(f"Output already exists: {output_path}")
+    with tempfile.TemporaryDirectory(prefix=f".{output_path.stem}-", dir=output_path.parent) as directory:
+        partial_path = Path(directory) / f"{output_path.stem}.partial.mp4"
+        report = _encode_partial(spec, indices, partial_path, workers, full_loop)
+        # Unlike POSIX rename, a hard link publishes atomically without replacing a racing destination.
+        os.link(partial_path, output_path)
+    report["path"] = str(output_path)
+    print(f"[render] mirror metrics {report['mirror_metrics']}")
+    report_path = PREVIEW_DIR / f"{output_path.stem}-report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2))
+    print(f"[render] report -> {report_path}")
+    return report
+
+
+def _encode_partial(spec: ArtworkSpec, indices, output_path, workers, full_loop):
     t_start = time.time()
     cmd = build_ffmpeg_cmd(output_path, width=spec.width, height=spec.height, fps=spec.fps, crf=spec.crf,
                            maxrate_kbps=spec.maxrate_kbps, bufsize_kbps=spec.bufsize_kbps)
     print("[render] ffmpeg:", " ".join(cmd), flush=True)
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     widget_lumas, samples = [], []
     monitor = ContinuityMonitor()
-    try:
-        for count, (index, (frame, widget_luma)) in enumerate(
-                iter_frames(indices, spec.worker_init, spec.worker_frame, workers=workers)):
-            proc.stdin.write(frame.tobytes())
-            widget_lumas.append(widget_luma)
-            monitor.push(index, frame)
-            if count % spec.fps == 0:
-                samples.append(frame_metrics(frame))
-            if count % (spec.fps * 4) == 0:
-                print(f"[render] frame {count}/{len(indices)} ({time.time() - t_start:.1f}s)", flush=True)
-    finally:
-        proc.stdin.close()
-        stderr = proc.stderr.read().decode("utf-8", "ignore")
-        code = proc.wait()
-    if code != 0:
-        print(stderr[-4000:])
-        raise RuntimeError(f"ffmpeg exited with code {code}")
+    with tempfile.TemporaryFile() as error_output:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=error_output)
+        pipe_error = None
+        try:
+            for count, (index, (frame, widget_luma)) in enumerate(
+                    iter_frames(indices, spec.worker_init, spec.worker_frame, workers=workers)):
+                proc.stdin.write(frame.tobytes())
+                widget_lumas.append(widget_luma)
+                monitor.push(index, frame)
+                if count % spec.fps == 0:
+                    samples.append(frame_metrics(frame))
+                if count % (spec.fps * 4) == 0:
+                    print(f"[render] frame {count}/{len(indices)} ({time.time() - t_start:.1f}s)", flush=True)
+        except BrokenPipeError as error:
+            pipe_error = error
+        finally:
+            try:
+                proc.stdin.close()
+            except BrokenPipeError as error:
+                pipe_error = error
+            finally:
+                code = proc.wait()
+        if code != 0:
+            error_output.seek(0)
+            stderr = error_output.read().decode("utf-8", "replace")
+            raise RuntimeError(f"ffmpeg exited with code {code}:\n{stderr[-4000:]}") from pipe_error
+        if pipe_error is not None:
+            raise pipe_error
     render_elapsed = time.time() - t_start
     print(f"[render] widget luma min={min(widget_lumas):.2f} mean={np.mean(widget_lumas):.2f} "
           f"max={max(widget_lumas):.2f} (ceiling {WIDGET_LUMA_MAX})")
@@ -455,10 +484,4 @@ def encode(spec: ArtworkSpec, indices, output_path, workers, full_loop):
               f"near x={event['x']} y={event['y']}")
     if full_loop:
         report["seam"] = report_seam_metrics(output_path, spec.n_frames)
-    report["path"] = str(output_path)
-    print(f"[render] mirror metrics {report['mirror_metrics']}")
-    report_path = PREVIEW_DIR / f"{output_path.stem}-report.json"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, indent=2))
-    print(f"[render] report -> {report_path}")
     return report

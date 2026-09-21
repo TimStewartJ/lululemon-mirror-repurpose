@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import math
 import pathlib
@@ -177,6 +178,204 @@ class ArtworkVideoTest(unittest.TestCase):
             import cv2
             sheet = cv2.imread(str(path))
             self.assertEqual(sheet.shape[:2], (96, 54))
+
+
+@unittest.skipUnless(HAS_DEPS, "Optional artwork dependencies are not installed")
+class ArtworkEncodingTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = pathlib.Path(directory.name)
+        self.output = self.root / "film.mp4"
+        self.previews = self.root / "previews"
+        self.spec = artwork.ArtworkSpec(
+            description="", slug="test", output_path=self.output, n_frames=30,
+            worker_init=_dummy_init, worker_frame=_dummy_frame, width=64, height=64,
+        )
+        self.indices = list(range(self.spec.n_frames))
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+        self.events = []
+        self.encoder_code = 0
+        self.broken_pipe = False
+        self.popen = self.patch(artwork.subprocess, "Popen", side_effect=self.start_encoder)
+        self.frames = self.patch(artwork, "iter_frames", return_value=[
+            (index, (frame, 0.0)) for index in self.indices
+        ])
+        self.validate = self.patch(artwork, "validate_output", side_effect=self.validate_partial)
+        self.seam = self.patch(artwork, "report_seam_metrics", side_effect=self.check_seam)
+        self.patch(artwork, "PREVIEW_DIR", self.previews)
+
+    def patch(self, target, name, *args, **kwargs):
+        patcher = mock.patch.object(target, name, *args, **kwargs)
+        result = patcher.start()
+        self.addCleanup(patcher.stop)
+        return result
+
+    def start_encoder(self, command, **kwargs):
+        self.partial = pathlib.Path(command[-1])
+        self.assertNotEqual(self.partial, self.output)
+        self.partial.write_bytes(b"encoded video")
+        kwargs["stderr"].write(b"encoder diagnostic\n")
+        self.process = mock.Mock()
+        self.process.stdin = io.BytesIO()
+        if self.broken_pipe:
+            self.process.stdin = mock.Mock()
+            self.process.stdin.write.side_effect = BrokenPipeError("encoder pipe closed")
+            self.process.stdin.close.side_effect = BrokenPipeError("encoder pipe closed")
+
+        def finish():
+            self.events.append("encoder finished")
+            return self.encoder_code
+
+        self.process.wait.side_effect = finish
+        return self.process
+
+    def validate_partial(self, path, **kwargs):
+        self.assertTrue(path.is_file())
+        self.assertTrue(path.name.endswith(".partial.mp4"))
+        self.assertFalse(self.output.exists())
+        self.assertEqual(kwargs["n_frames"], len(self.indices))
+        self.events.append("validation")
+        return {"validated": True}
+
+    def check_seam(self, path, n_frames):
+        self.assertEqual(path, self.partial)
+        self.assertEqual(n_frames, self.spec.n_frames)
+        self.assertFalse(self.output.exists())
+        self.events.append("seam")
+        return {"wrap": 0.0}
+
+    def encode(self, full_loop=False):
+        return artwork.encode(self.spec, self.indices, self.output, workers=1, full_loop=full_loop)
+
+    def assert_no_staging(self):
+        self.assertEqual(list(self.root.glob(".film-*")), [])
+
+    def assert_unpublished(self):
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.previews.exists())
+        self.assert_no_staging()
+
+    def test_publishes_only_after_validation_and_records_the_final_path(self):
+        report = self.encode(full_loop=True)
+        self.assertEqual(self.events, ["encoder finished", "validation", "seam"])
+        self.assertEqual(self.output.read_bytes(), b"encoded video")
+        self.assertEqual(report["path"], str(self.output))
+        stored = json.loads((self.previews / "film-report.json").read_text())
+        self.assertEqual(stored, report)
+        self.assertTrue(self.process.stdin.closed)
+        self.assert_no_staging()
+
+    def test_renderer_failure_does_not_publish(self):
+        self.frames.side_effect = RuntimeError("renderer failed")
+        with self.assertRaisesRegex(RuntimeError, "renderer failed"):
+            self.encode()
+        self.process.wait.assert_called_once()
+        self.assertTrue(self.process.stdin.closed)
+        self.assert_unpublished()
+
+    def test_interrupted_render_does_not_publish(self):
+        def interrupted(*_args, **_kwargs):
+            yield self.frames.return_value[0]
+            raise KeyboardInterrupt()
+
+        self.frames.side_effect = interrupted
+        with self.assertRaises(KeyboardInterrupt):
+            self.encode()
+        self.process.wait.assert_called_once()
+        self.assertTrue(self.process.stdin.closed)
+        self.assert_unpublished()
+
+    def test_failed_process_start_cleans_staging(self):
+        self.popen.side_effect = OSError("ffmpeg unavailable")
+        with self.assertRaisesRegex(OSError, "ffmpeg unavailable"):
+            self.encode()
+        self.assert_unpublished()
+
+    def test_failed_encoder_retains_diagnostics(self):
+        self.encoder_code = 1
+        with self.assertRaisesRegex(RuntimeError, "ffmpeg exited with code 1") as raised:
+            self.encode()
+        self.assertIn("encoder diagnostic", str(raised.exception))
+        self.validate.assert_not_called()
+        self.assert_unpublished()
+
+    def test_broken_pipe_retains_encoder_diagnostics_and_reaps_process(self):
+        self.broken_pipe = True
+        self.encoder_code = 2
+        with self.assertRaisesRegex(RuntimeError, "ffmpeg exited with code 2") as raised:
+            self.encode()
+        self.assertIn("encoder diagnostic", str(raised.exception))
+        self.assertIsInstance(raised.exception.__cause__, BrokenPipeError)
+        self.process.wait.assert_called_once()
+        self.assert_unpublished()
+
+    def test_broken_pipe_is_not_ignored_even_after_successful_encoder_exit(self):
+        self.broken_pipe = True
+        with self.assertRaises(BrokenPipeError):
+            self.encode()
+        self.validate.assert_not_called()
+        self.assert_unpublished()
+
+    def test_widget_ceiling_failure_does_not_publish(self):
+        self.frames.return_value = [
+            (index, (frame, artwork.WIDGET_LUMA_MAX + 1.0))
+            for index, (frame, _) in self.frames.return_value
+        ]
+        with self.assertRaisesRegex(ValueError, "Widget zone exceeded"):
+            self.encode()
+        self.validate.assert_not_called()
+        self.assert_unpublished()
+
+    def test_metadata_validation_failure_does_not_publish(self):
+        self.validate.side_effect = ValueError("invalid metadata")
+        with self.assertRaisesRegex(ValueError, "invalid metadata"):
+            self.encode()
+        self.seam.assert_not_called()
+        self.assert_unpublished()
+
+    def test_seam_failure_does_not_publish(self):
+        self.seam.side_effect = ValueError("invalid seam")
+        with self.assertRaisesRegex(ValueError, "invalid seam"):
+            self.encode(full_loop=True)
+        self.assert_unpublished()
+
+    def test_existing_output_is_never_overwritten(self):
+        self.output.write_bytes(b"original")
+        with self.assertRaises(FileExistsError):
+            self.encode()
+        self.assertEqual(self.output.read_bytes(), b"original")
+        self.popen.assert_not_called()
+        self.assert_no_staging()
+
+    def test_output_created_during_rendering_is_never_overwritten(self):
+        def racing_destination(path, **kwargs):
+            report = self.validate_partial(path, **kwargs)
+            self.output.write_bytes(b"another render won")
+            return report
+
+        self.validate.side_effect = racing_destination
+        with self.assertRaises(FileExistsError):
+            self.encode()
+        self.assertEqual(self.output.read_bytes(), b"another render won")
+        self.assertFalse(self.previews.exists())
+        self.assert_no_staging()
+
+    def test_publication_failure_is_explicit_and_does_not_publish(self):
+        with mock.patch.object(artwork.os, "link", side_effect=OSError("hard links unsupported")):
+            with self.assertRaisesRegex(OSError, "hard links unsupported"):
+                self.encode()
+        self.assert_unpublished()
+
+    def test_failed_render_does_not_block_retry(self):
+        self.validate.side_effect = ValueError("invalid metadata")
+        with self.assertRaises(ValueError):
+            self.encode()
+        self.assert_unpublished()
+        self.validate.side_effect = self.validate_partial
+        self.encode()
+        self.assertEqual(self.output.read_bytes(), b"encoded video")
+        self.assert_no_staging()
 
 
 if __name__ == "__main__":

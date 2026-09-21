@@ -285,7 +285,15 @@ duration, color signaling, upload size/bitrate and the Level 4.1 macroblock
 envelope, refuse to overwrite existing outputs (use `--output PATH`), print
 SHA-256, and record mirror metrics: the share of near-black (mirror), dim veil
 (fog) and bright pixels. Full renders also check decoded loop-seam differences.
-A JSON report is written next to the previews.
+A JSON report is written next to the previews. Encoding writes an MP4 inside
+its own temporary directory beside the destination. Only after media validation,
+the widget guard, and any loop-seam check pass is the complete file atomically
+published under the requested name, without replacing an existing file (even
+one created while rendering). Failed or interrupted runs clean up their staging
+files; a forcibly terminated process may leave a temporary directory, but it
+cannot block the next run or leave an invalid film under the requested name.
+Publication requires a filesystem that supports hard links, such as NTFS or
+ext4; unsupported filesystems report an error rather than use an unsafe fallback.
 
 Every render also reports continuity: the largest one-step changes in any patch
 of the picture that stand apart from the motion around them, with the frame and
