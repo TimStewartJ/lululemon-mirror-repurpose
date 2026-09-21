@@ -142,24 +142,120 @@ manual selection, marks each video with `showing` and `scheduledStarts`, and
 includes `schedule` with the saved times, `current` and `next` slots,
 `nextChangeAt`, and any `hold`.
 
-## Optional seasonal artwork
+## Optional artwork film
 
-`tools\render_seasonal_video.py` renders the original four-seasons film offline;
-it is not part of the Android build or a runtime dependency. It requires Python
-with `pycairo`, `numpy`, and `opencv-python`, plus `ffmpeg` and `ffprobe` on PATH.
+The artwork renderer makes a background film offline; it is not part of the
+Android build or a runtime dependency. It renders a real 3D scene on the GPU and
+requires Python with `moderngl`, `numpy` and `opencv-python`, a graphics device
+with OpenGL 4.3, plus `ffmpeg` and `ffprobe` on PATH. No window is opened.
+
+The film is designed for a two-way mirror: light on a true-black stage.
+Black pixels leave the glass reflective, so the imagery appears to float in the
+room instead of lighting the whole panel. Nothing references or reproduces a
+specific third-party artwork.
+
+### Four seasons
+
+`tools\render_seasonal_video.py` renders one weeping cherry living through a
+year while the camera makes a single level orbit around it, so the crown turns
+in true perspective and its far side really passes behind the near side:
+
+- the tree is grown, not drawn: space colonization reaches a crown of limbs
+  toward a dome of attraction points, hanging strands are dropped from them,
+  and the pipe model gives every limb the cross-section of what it feeds. Limbs
+  are swept as tapered spline tubes whose bark is lit as ink strokes of light
+  that follow the grain
+- blossoms swell from buds in a wave that runs down the strands, open, and are
+  torn away in three gusts that cross the crown as a front; leaves bud under
+  the falling petals, deepen, turn gold, orange and crimson from the tips
+  inward, and let go in the autumn gusts
+- everything that falls lands on still water that mirrors the tree, rings where
+  it touches down, carries the petals and leaves as a glowing carpet, and lets
+  them fade
+- fireflies wander through summer; in winter snow falls through the depth of
+  field, settles along the limbs, and frost glints at the strand tips
+
+Every petal and leaf carries its whole year as constants and is animated on the
+GPU. A released leaf starts exactly at its live position on the swaying strand,
+so nothing jumps. The whole tree stays in focus while whatever flies between it
+and the lens blurs with distance, and a shutter that stays open for part of
+every frame smears the storm instead of strobing it.
 
 ```powershell
-python .\tools\render_seasonal_video.py 24
+python .\tools\render_seasonal_video.py 30
+python .\tools\render_seasonal_video.py 240 --start-frame 660
 python .\tools\render_seasonal_video.py --contact-sheet
+python .\tools\render_seasonal_video.py --frames 300,1350,2475,3150
 python .\tools\render_seasonal_video.py
 ```
 
-The first command makes a one-second smoke clip; `--contact-sheet` writes 16
-evenly spaced preview PNGs. Both go into ignored
-`generated\background-videos\previews`. The full render writes
-`generated\background-videos\four-seasons-cinematic.mp4`: 1080x1920, 24 FPS,
-48 seconds, H.264 High@4.1, and no audio. Upload that file with the CLI or control
-application like any other background video. No generated media belongs in
+The first command makes a one-second smoke clip and the second samples the
+petal storm. `--contact-sheet` writes 16 evenly spaced preview PNGs; `--frames`
+previews chosen frames. Previews also produce an overview JPEG and per-frame
+metrics. The full render writes
+`generated\background-videos\four-seasons-spatial-120s.mp4`: native 1080x1920,
+30 FPS, 120 seconds (30 seconds per season), H.264 High@4.1, yuv420p, BT.709
+limited-range output, and no audio. The earlier `four-seasons-cinematic.mp4`
+is never overwritten.
+
+### Shared pipeline
+
+`tools\artwork_video.py` holds what the films share. Frames render in parallel
+worker processes (`--workers N`; each film names a default that suits its mix of
+CPU and GPU work), each building its scene once; an ordered, bounded window feeds
+`ffmpeg`, so memory stays flat. Every frame is an exact function of loop time,
+so the frame after the last one equals frame 0 and each loop is seamless by
+construction.
+
+`tools\artwork_gl.py` is the GPU stage: multisampled HDR targets, depth of field
+as blur slabs that are cross-faded and laid over one another back to front,
+points of light with an analytic circle of confusion, gaussian bloom,
+and the display transform (hue-preserving knee, luminance-weighted grain that
+keeps exact black exact, the fade toward the widget corner). The picture is
+rendered with a margin around the frame and cropped, because blur and bloom can
+only gather what has been drawn: without it, whatever drifts in over the edge
+would appear all at once. A renderer settles before it hands out frames, since a
+driver may run a freshly compiled shader through a provisional build the first
+time it is used.
+
+Films run at 30 FPS, half the panel's 60 Hz, so every frame is held for exactly
+two refreshes and slow drifts stay even; 24 FPS would alternate between two and
+three. It is also the most that Level 4.1 carries at this size.
+
+The slow x264 preset uses capped CRF 16. By default VBV is capped at 16 Mbps with a
+20 Mbit buffer: quality stays constant and mostly-black films stay small, while the
+worst case (maximum rate for the whole film plus buffer) stays below 256 MiB. A
+film may choose a lower cap for a longer loop; rendering refuses any budget that
+cannot guarantee the upload limit.
+Three reference frames and two B-frames keep the hardware-friendly decoder
+settings. The widget zone (x 2-40%, y 3-24%) is numerically kept dark and
+smooth.
+
+Smoke and full renders validate codec, dimensions, cadence, frame count,
+duration, color signaling, upload size/bitrate and the Level 4.1 macroblock
+envelope, refuse to overwrite existing outputs (use `--output PATH`), print
+SHA-256, and record mirror metrics: the share of near-black (mirror), dim veil
+(fog) and bright pixels. Full renders also check decoded loop-seam differences.
+A JSON report is written next to the previews.
+
+Every render also reports continuity: the largest one-step changes in any patch
+of the picture that stand apart from the motion around them, with the frame and
+place of each. Motion, however fast, changes a patch by similar amounts on
+successive steps; something switching state in a single frame does not. A high
+score is a frame worth looking at (`--frames`), not a verdict.
+
+Focused optional tests skip if the artwork-only Python dependencies or a
+suitable graphics device are absent:
+
+```powershell
+python -m unittest discover -s tools\tests -p "test_artwork_video.py" -v
+python -m unittest discover -s tools\tests -p "test_artwork_gl.py" -v
+python -m unittest discover -s tools\tests -p "test_render_seasonal_video.py" -v
+```
+
+Upload a new film with the CLI or control application like any other background
+video. Activating it keeps the previous selection for rollback; do not delete
+that copy until playback has been verified. No generated media belongs in
 Android resources or Git.
 
 ## Playback

@@ -1,1647 +1,1417 @@
 #!/usr/bin/env python3
-"""Offline renderer for the four-seasons cinematic background.
+"""Offline renderer for the spatial four-seasons background film.
 
-Deterministic, offline, fully self-contained renderer for a 48-second,
-1080x1920, 24fps, seamless four-seasons tree animation aimed at a museum
-projection / borderless-installation mood: luminous organic motion, layered
-atmospheric depth, painterly light, flowing particles, and a meditative
-sense of seasons dissolving into one another. Nothing here references or
-reproduces any specific third-party artwork — only generic, original
-qualities (bloom, parallax, watercolor-like light ribbons, soft particles)
-are used, built from first principles with pycairo + NumPy + OpenCV.
+A deterministic 120-second, 1080x1920, 30 FPS seamless loop: one weeping cherry
+living through a year, as a real 3D sculpture of light on a true-black stage.
+The camera circles the tree exactly once per loop, so its grown (not drawn)
+branches, hanging strands, blossoms and leaves slide past each other in true
+perspective. Blossoms swell from buds, open and are torn away in gusts that
+travel through the crown; leaves unfurl, shimmer, turn from the strand tips
+upward and let go; petals and leaves tumble, land on still water, float and
+fade; fireflies wander through summer; snow falls through the depth of field
+and settles on the boughs while frost glints on the bare strands.
 
-Wind harmonics and foliage clusters are seeded once, then evaluated per frame.
-Layered atmosphere, bloom, and camera drift preserve a dark widget quiet zone.
-The output uses H.264 High Profile / Level 4.1, yuv420p, and no audio.
+Black pixels keep the Mirror's glass reflective, so the tree appears to stand
+in the room. It references no specific third-party artwork; generic qualities
+(emissive colour on darkness, perpetual growth and decay) are built from first
+principles with moderngl, NumPy and OpenCV.
 
 Run:
-    python tools\\render_seasonal_video.py [n_frames]
-
-    n_frames (optional): render only the first N frames for a quick smoke
-    test instead of the full clip. Omit for the full deterministic 48s
-    render used for the external background-video library.
-    --contact-sheet: write 16 evenly spaced preview frames instead of a video.
+    python tools\\render_seasonal_video.py 30                    # smoke clip
+    python tools\\render_seasonal_video.py 240 --start-frame 660 # petal storm
+    python tools\\render_seasonal_video.py --contact-sheet
+    python tools\\render_seasonal_video.py --frames 300,1350,2475,3150
+    python tools\\render_seasonal_video.py                       # full film
 
 Output:
-    generated\\background-videos\\four-seasons-cinematic.mp4
-    generated\\background-videos\\previews\\ (smoke clips and preview frames)
+    generated\\background-videos\\four-seasons-spatial-120s.mp4
+    generated\\background-videos\\previews\\ (smoke clips, previews, reports)
 """
 
 from __future__ import annotations
 
-import json
 import math
-import os
-import subprocess
-import sys
-import time
 
-import cairo
-import cv2
 import numpy as np
 
-# --------------------------------------------------------------------------
-# Constants
-# --------------------------------------------------------------------------
+import artwork_video as artwork
 
-WIDTH = 1080
-HEIGHT = 1920
-FPS = 24
-DURATION_S = 48.0
-N_FRAMES = int(round(FPS * DURATION_S))  # 1152
+WIDTH = artwork.WIDTH
+HEIGHT = artwork.HEIGHT
+FPS = artwork.FPS
+DURATION_S = 120.0
+N_FRAMES = int(round(FPS * DURATION_S))
+SEASON_LEN = DURATION_S / 4.0
 
-SEED = 20250903  # fixed -> deterministic/reproducible renders
+SEED = 20260919
+SLUG = "four-seasons-spatial"
+OUTPUT_PATH = artwork.VIDEO_DIR / "four-seasons-spatial-120s.mp4"
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-OUTPUT_PATH = os.path.join(
-    REPO_ROOT, "generated", "background-videos", "four-seasons-cinematic.mp4",
-)
-
-# Keep uploads compact while retaining high-quality portrait detail.
-TARGET_BITRATE_KBPS = 4800
-MAXRATE_KBPS = 5400
-BUFSIZE_KBPS = 10800
-
-# Season indices
 SPRING, SUMMER, AUTUMN, WINTER = 0, 1, 2, 3
-SEASON_LEN = DURATION_S / 4.0  # 12s per season
 
-# Upper-left "quiet zone" reserved for clock/date widgets: no strong tree
-# mass, bright bloom, or saturated particles are allowed to rest here,
-# though faint atmospheric drift (sky gradient, dust, ribbons) may pass
-# behind it.
-QUIET_X = 0.34 * WIDTH
-QUIET_Y = 0.30 * HEIGHT
+# Camera: a level orbit with a shifted lens, so verticals stay vertical, the
+# whole crown stays inside the glass all the way round and its top clears the
+# widget corner.
+FOV_Y = 34.0
+ORBIT_RADIUS = 21.0
+EYE_HEIGHT = 2.4
+ORBIT_START = math.radians(205.0)
+LENS_SHIFT_X = 0.03          # tree axis a touch right of centre
+LENS_SHIFT_Y = -0.27         # horizon at 63% of the height, water below
+QUIET_FEATHER = 150.0        # how softly light fades toward the widget corner
+NEAR, FAR = 0.5, 90.0
+ASPECT = WIDTH / HEIGHT
 
-# Precise widget-legibility rectangle (art-director spec): mean luminance
-# under this must stay below WIDGET_LUMA_MAX with no high-frequency detail.
-# This is smaller/more precise than the geometry-avoidance QUIET_X/QUIET_Y
-# box above, and is enforced numerically as a hard guarantee in
-# ``enforce_widget_zone`` regardless of what atmosphere/background bleeds
-# nearby, so the requirement is met even if upstream art direction changes.
-WIDGET_X0, WIDGET_X1 = 0.02 * WIDTH, 0.40 * WIDTH
-WIDGET_Y0, WIDGET_Y1 = 0.03 * HEIGHT, 0.24 * HEIGHT
-WIDGET_LUMA_MAX = 15.0
+DOF_SCALE = 105.0
+DOF_SHARP_RANGE = 2.2        # the whole tree stays crisp
+DOF_FAR_SIGMAS = (1.5, 3.0)
+DOF_NEAR_SIGMAS = (1.5, 3.0, 5.0, 8.0, 12.0)
+MARGIN = 48                  # px rendered around the frame: the reach of the widest blur
 
-TRUNK_BASE = (0.78 * WIDTH, 1.05 * HEIGHT)
-
-GLOW_SCALE = 0.5
-GLOW_W = int(WIDTH * GLOW_SCALE)
-GLOW_H = int(HEIGHT * GLOW_SCALE)
-
-# --------------------------------------------------------------------------
-# Small deterministic math helpers
-# --------------------------------------------------------------------------
+TRUNK_RADIUS = 0.235
+STEP = 0.15
 
 
-def clamp(x, lo=0.0, hi=1.0):
-    return lo if x < lo else (hi if x > hi else x)
-
-
-def lerp(a, b, t):
-    return a + (b - a) * t
-
-
-def lerp_color(c0, c1, t):
-    return tuple(lerp(c0[i], c1[i], t) for i in range(len(c0)))
-
-
-def smoothstep(edge0, edge1, x):
-    if edge0 == edge1:
-        return 0.0 if x < edge0 else 1.0
-    t = clamp((x - edge0) / (edge1 - edge0))
-    return t * t * (3 - 2 * t)
-
-
-def wrapped_delta(a, b, period):
-    """Shortest signed distance from b to a on a circle of given period."""
-    d = (a - b) % period
-    if d > period / 2:
-        d -= period
-    return d
-
-
-# --------------------------------------------------------------------------
-# Periodic noise — precomputed harmonics, evaluated vectorized per frame.
-#
-# Build seeded harmonic/phase tables once and evaluate a whole population's
-# wind/flutter with a single vectorized NumPy expression per frame.
-# --------------------------------------------------------------------------
-
-AMP_DECAY = 0.55
-K_CHOICES = np.array([1, 2, 3, 4, 5], dtype=np.float64)
-
-
-def octave_amps(n_octaves):
-    return np.array([AMP_DECAY ** i for i in range(n_octaves)])
-
-
-def make_harmonics(rng: np.random.RandomState, n, n_octaves=3):
-    """Per-instance harmonic numbers + phases, built once at construction
-    time. Returns (harmonics[n,n_octaves], phases[n,n_octaves])."""
-    idx = rng.randint(0, len(K_CHOICES), size=(n, n_octaves))
-    harmonics = K_CHOICES[idx]
-    phases = rng.uniform(0, 2 * math.pi, size=(n, n_octaves))
-    return harmonics, phases
-
-
-def periodic_batch(t, harmonics, phases, amps, duration=DURATION_S):
-    """Vectorized evaluation for an entire population at time t.
-    Returns array of shape (n,), range approx [-1, 1]."""
-    arg = (2 * math.pi * (t / duration)) * harmonics + phases
-    vals = np.sin(arg) * amps[np.newaxis, :]
-    return vals.sum(axis=1) / amps.sum()
-
-
-def make_signal_params(seed, n_octaves=2):
-    rng = np.random.RandomState(seed)
-    harmonics, phases = make_harmonics(rng, 1, n_octaves)
-    return harmonics[0], phases[0], octave_amps(n_octaves)
-
-
-def eval_signal(t, params, duration=DURATION_S):
-    harmonics, phases, amps = params
-    val = 0.0
-    for k, ph, a in zip(harmonics, phases, amps):
-        val += a * math.sin(2 * math.pi * k * t / duration + ph)
-    return val / amps.sum()
-
-
-# A handful of named, art-directed global signals (deliberately simple,
-# hand-tuned rather than randomized, since they are singular "camera" /
-# "wind gust" effects rather than a population needing organic variety).
-WIND_GUST_PARAMS = make_signal_params(SEED + 1, n_octaves=2)
-RIBBON_DRIFT_PARAMS = make_signal_params(SEED + 3, n_octaves=2)
-
-
-def global_wind_envelope(t):
-    raw = eval_signal(t, WIND_GUST_PARAMS)
-    return 0.55 + 0.45 * clamp(0.5 + 0.5 * raw, 0.0, 1.0)
-
-
-def camera_transform(t):
-    """Slow single-cycle breathing: always zooms *in* (scale >= 1) so no
-    surface edge is ever revealed; small elliptical drift underneath."""
-    breath = 0.5 + 0.5 * math.sin(2 * math.pi * 1 * t / DURATION_S)
-    scale = 1.0 + 0.010 * breath
-    dx = 5.0 * math.sin(2 * math.pi * 1 * t / DURATION_S + math.pi / 2.0)
-    dy = 3.0 * math.sin(2 * math.pi * 1 * t / DURATION_S)
-    return scale, dx, dy
-
-
-def apply_camera(ctx, t):
-    scale, dx, dy = camera_transform(t)
-    cx, cy = WIDTH * 0.5, HEIGHT * 0.55
-    ctx.translate(cx + dx, cy + dy)
-    ctx.scale(scale, scale)
-    ctx.translate(-cx, -cy)
-
-
-# --------------------------------------------------------------------------
-# Season weight schedule (periodic crossfade -> seamless winter->spring loop)
-# --------------------------------------------------------------------------
+def smooth(x):
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
 
 
 def season_weights(t):
-    """Returns a length-4 array of blend weights (sum to 1) for
-    spring/summer/autumn/winter at time t. Smooth triangular crossfade,
-    fully periodic in t over DURATION_S so the loop point is seamless."""
-    pos = (t % DURATION_S) / SEASON_LEN  # 0..4 continuous
-    raw = np.zeros(4)
-    for i in range(4):
-        delta = wrapped_delta(pos, i + 0.5, 4.0)
-        raw[i] = clamp(1.6 - 1.6 * abs(delta), 0.0, 1.0)
-    s = raw.sum()
-    if s <= 1e-6:
-        raw[:] = 0.25
-        s = 1.0
-    return raw / s
+    """Soft membership of loop time ``t`` in each season (sums to one)."""
+    pos = (t % DURATION_S) / SEASON_LEN - 0.5
+    w = np.zeros(4)
+    lo = int(math.floor(pos)) % 4
+    frac = float(smooth((pos - math.floor(pos) - 0.3) / 0.4))
+    w[lo] += 1.0 - frac
+    w[(lo + 1) % 4] += frac
+    return w
 
 
 # --------------------------------------------------------------------------
-# Cyclic keyframe curves for foliage "presence" (growth / shedding), decoupled
-# from color so a leaf can be autumn-colored yet fading in the same breath.
-# Positions are in season-units (0..4, periodic); each table's first and last
-# entries match so the curve is exactly continuous across the loop point.
+# Growing the tree
 # --------------------------------------------------------------------------
 
-# Morphological (not merely recolored) season arc:
-#  spring (0-1):  sparse/twiggy, open sky, ramping from near-bare
-#  summer (1-2):  heavy, closed, sagging canopy at full presence
-#  autumn (2-3):  thins outside-in with real gaps (see OUTSIDE_PHASE_SHIFT)
-#  winter (3-4):  genuinely bare (near-zero floor, not just dim)
-# First/last entries match exactly so the loop wraps with zero discontinuity.
-LEAF_PRESENCE_KEYFRAMES = [
-    (0.0, 0.03), (0.30, 0.08), (0.65, 0.32), (1.0, 0.58),
-    (1.25, 0.86), (1.55, 1.0), (2.0, 1.0),
-    (2.35, 0.90), (2.65, 0.60), (2.9, 0.30), (3.15, 0.10),
-    (3.4, 0.03), (4.0, 0.03),
-]
 
-BLOSSOM_PRESENCE_KEYFRAMES = [
-    (0.0, 0.0), (0.12, 0.06), (0.32, 0.45), (0.5, 0.95), (0.68, 0.55),
-    (0.88, 0.10), (1.0, 0.0), (3.0, 0.0), (3.9, 0.0), (4.0, 0.0),
-]
+class Tree:
+    """Node arrays: position, parent, radius, flex, path length from the root."""
 
-# "Outsideness" phase-advance: clusters further from the trunk (higher
-# t_local along their branch, deeper branch generation) are pushed slightly
-# *ahead* in the yearly phase. Because the presence curve is cyclic, a single
-# consistent phase-advance makes outer growth bud first in spring (a
-# staggered wave) *and* shed first in autumn (thinning outside-in), from one
-# unified mechanism rather than separate hacks.
-OUTSIDE_PHASE_ADVANCE_S = 1.6
+    def __init__(self):
+        rng = np.random.RandomState(SEED)
+        self.pos, self.parent, self.kind = [], [], []     # kind 0 scaffold, 1 strand
+        self._trunk(rng)
+        self._colonize(rng)
+        self._relax()
+        self.scaffold_count = len(self.pos)
+        self._strands(rng)
+        self.pos = np.asarray(self.pos, dtype=np.float64)
+        self.parent = np.asarray(self.parent, dtype=np.int64)
+        self.kind = np.asarray(self.kind, dtype=np.int64)
+        self._measure()
 
+    def _add(self, pos, parent, kind=0):
+        self.pos.append(np.asarray(pos, dtype=np.float64))
+        self.parent.append(parent)
+        self.kind.append(kind)
+        return len(self.pos) - 1
 
-def cyclic_interp(pos, keyframes, period=4.0):
-    pos = pos % period
-    for i in range(len(keyframes) - 1):
-        x0, v0 = keyframes[i]
-        x1, v1 = keyframes[i + 1]
-        if x0 <= pos <= x1:
-            f = smoothstep(x0, x1, pos)
-            return lerp(v0, v1, f)
-    return keyframes[-1][1]
+    def _trunk(self, rng):
+        node = self._add((0.0, 0.0, 0.0), -1)
+        y = 0.0
+        while y < 2.5:
+            y += STEP
+            x = 0.20 * math.sin(y * 1.15 + 0.4) - 0.20 * math.sin(0.4)
+            z = 0.14 * math.sin(y * 0.9 + 2.0) - 0.14 * math.sin(2.0)
+            node = self._add((x, y, z), node)
+        self.trunk_top = node
 
+    def _colonize(self, rng):
+        """Space colonization: branches grow toward a dome of attraction points,
+        which gives the irregular, reaching limbs of a real crown."""
+        n = 2300
+        centre = np.array([0.0, 3.1, 0.0])
+        direction = rng.normal(size=(n, 3))
+        direction[:, 1] = np.abs(direction[:, 1]) * 0.9 + 0.05
+        direction /= np.linalg.norm(direction, axis=1, keepdims=True)
+        shell = rng.uniform(0.30, 1.0, n) ** 0.55
+        lobes = 1.0 + 0.16 * np.sin(3.0 * np.arctan2(direction[:, 2], direction[:, 0]) + 1.0)
+        points = centre + direction * shell[:, None] * np.array([2.15, 3.10, 2.15]) * lobes[:, None]
+        points = points[points[:, 1] > 2.9]
 
-def leaf_presence(t, offset_s):
-    pos = ((t - offset_s) % DURATION_S) / SEASON_LEN
-    return cyclic_interp(pos, LEAF_PRESENCE_KEYFRAMES)
+        influence, kill = 1.5, 0.30
+        nearest = np.full(len(points), -1)
+        nearest_d = np.full(len(points), np.inf)
 
+        def update(new_indices):
+            new_pos = np.asarray([self.pos[i] for i in new_indices])
+            d = np.linalg.norm(points[:, None, :] - new_pos[None, :, :], axis=2)
+            best = d.argmin(axis=1)
+            best_d = d[np.arange(len(points)), best]
+            better = best_d < nearest_d
+            nearest[better] = np.asarray(new_indices)[best[better]]
+            nearest_d[better] = best_d[better]
 
-def blossom_presence(t, offset_s):
-    pos = ((t - offset_s) % DURATION_S) / SEASON_LEN
-    return cyclic_interp(pos, BLOSSOM_PRESENCE_KEYFRAMES)
+        update(list(range(len(self.pos))))
+        alive = np.ones(len(points), dtype=bool)
+        for _ in range(260):
+            active = alive & (nearest_d < influence)
+            if not active.any():
+                # Reach for the dome when nothing is close yet.
+                if alive.any() and len(self.pos) < 40:
+                    influence *= 1.3
+                    continue
+                break
+            grow = {}
+            for a in np.nonzero(active)[0]:
+                node = nearest[a]
+                pull = points[a] - self.pos[node]
+                grow.setdefault(node, np.zeros(3))
+                grow[node] += pull / max(np.linalg.norm(pull), 1e-9)
+            new_nodes = []
+            for node, pull in grow.items():
+                pull = pull / max(np.linalg.norm(pull), 1e-9)
+                if self.parent[node] >= 0:
+                    # Keep some momentum so limbs sweep instead of zig-zagging.
+                    along = self.pos[node] - self.pos[self.parent[node]]
+                    pull = pull + 0.55 * along / max(np.linalg.norm(along), 1e-9)
+                pull = pull + rng.normal(0.0, 0.10, 3)
+                pull /= np.linalg.norm(pull)
+                candidate = self.pos[node] + pull * STEP
+                new_nodes.append(self._add(candidate, node))
+            update(new_nodes)
+            alive &= nearest_d > kill
+            if len(self.pos) > 5200:
+                break
 
+    def _relax(self):
+        """Laplacian smoothing along each limb removes growth jitter."""
+        pos = np.asarray(self.pos)
+        parent = np.asarray(self.parent)
+        children = [[] for _ in pos]
+        for i, p in enumerate(parent):
+            if p >= 0:
+                children[p].append(i)
+        for _ in range(3):
+            new = pos.copy()
+            for i, p in enumerate(parent):
+                if p < 0 or len(children[i]) != 1:
+                    continue
+                new[i] = 0.5 * pos[i] + 0.25 * (pos[p] + pos[children[i][0]])
+            pos = new
+        self.pos = [p for p in pos]
 
-# --------------------------------------------------------------------------
-# Season palettes (dark, cinematic, mirror-friendly, gently desaturated)
-# --------------------------------------------------------------------------
+    def _strands(self, rng):
+        """Weeping strands hang from the outer limbs like curtains."""
+        pos = np.asarray(self.pos)
+        parent = np.asarray(self.parent)
+        has_child = np.zeros(len(pos), dtype=bool)
+        has_child[parent[parent >= 0]] = True
+        radial = np.hypot(pos[:, 0], pos[:, 2])
+        outer = (pos[:, 1] > 3.3) & (radial > 0.7)
+        tips = ~has_child & (pos[:, 1] > 3.0)
+        chance = np.where(tips, 1.0, np.where(outer, 0.075, 0.0))
+        self.strand_roots = []
+        for node in np.nonzero(rng.uniform(size=len(pos)) < chance)[0]:
+            away = np.array([pos[node, 0], 0.0, pos[node, 2]])
+            away /= max(np.linalg.norm(away), 1e-6)
+            along = pos[node] - pos[parent[node]]
+            along /= max(np.linalg.norm(along), 1e-9)
+            heading = away * 0.55 + along * 0.55 + rng.normal(0.0, 0.22, 3)
+            heading[1] = min(heading[1], 0.25)
+            floor = rng.uniform(0.7, 2.6) if rng.uniform() < 0.75 else rng.uniform(2.6, 3.6)
+            length = rng.uniform(1.8, 5.0)
+            self._hang(rng, node, heading, length, floor, droop=rng.uniform(0.20, 0.32), spawn=True)
 
-PALETTE = {
-    SPRING: dict(
-        sky_top=(6, 10, 22), sky_bot=(13, 23, 33),
-        glow=(72, 112, 122), ground=(8, 14, 16),
-        bark=(34, 26, 22), bark_hi=(60, 47, 36),
-        bark_glow=(120, 150, 110),
-        leaf=(92, 148, 86), leaf_hi=(142, 190, 112),
-        blossom=(233, 200, 210), blossom_hi=(251, 236, 239),
-        particle=(240, 205, 214), ribbon=(120, 170, 160),
-    ),
-    SUMMER: dict(
-        sky_top=(4, 12, 16), sky_bot=(7, 21, 21),
-        glow=(62, 132, 112), ground=(6, 16, 12),
-        bark=(30, 24, 18), bark_hi=(54, 41, 29),
-        bark_glow=(150, 190, 110),
-        leaf=(38, 98, 56), leaf_hi=(86, 152, 80),
-        blossom=(210, 210, 150), blossom_hi=(235, 235, 190),
-        particle=(232, 212, 132), ribbon=(90, 180, 150),
-    ),
-    AUTUMN: dict(
-        sky_top=(14, 8, 10), sky_bot=(29, 15, 10),
-        glow=(152, 92, 50), ground=(16, 10, 8),
-        bark=(36, 26, 20), bark_hi=(62, 43, 30),
-        bark_glow=(200, 130, 60),
-        leaf=(178, 98, 34), leaf_hi=(216, 152, 60),
-        blossom=(198, 94, 40), blossom_hi=(226, 142, 60),
-        particle=(202, 112, 46), ribbon=(190, 120, 60),
-    ),
-    WINTER: dict(
-        sky_top=(6, 10, 20), sky_bot=(15, 21, 34),
-        glow=(122, 152, 192), ground=(14, 18, 24),
-        bark=(24, 22, 24), bark_hi=(72, 76, 84),
-        bark_glow=(160, 190, 230),
-        leaf=(212, 222, 232), leaf_hi=(246, 249, 253),
-        blossom=(231, 236, 246), blossom_hi=(255, 255, 255),
-        particle=(236, 241, 251), ribbon=(150, 190, 230),
-    ),
-}
+    def _hang(self, rng, node, heading, length, floor, droop, spawn):
+        heading = heading / np.linalg.norm(heading)
+        step = 0.11
+        travelled = 0.0
+        chain = []
+        while travelled < length:
+            heading = heading + np.array([0.0, -droop, 0.0]) + rng.normal(0.0, 0.035, 3)
+            heading /= np.linalg.norm(heading)
+            nxt = self.pos[node] + heading * step
+            if nxt[1] < floor:
+                break
+            node = self._add(nxt, node, kind=1)
+            chain.append(node)
+            travelled += step
+        if spawn and len(chain) > 8:
+            for _ in range(rng.randint(1, 4)):
+                start = chain[rng.randint(2, max(3, int(len(chain) * 0.6)))]
+                side = rng.normal(size=3)
+                side[1] = 0.0
+                side /= max(np.linalg.norm(side), 1e-9)
+                self._hang(rng, start, side * 0.8 + np.array([0.0, -0.5, 0.0]), rng.uniform(0.5, 1.6),
+                           floor, droop=rng.uniform(0.2, 0.3), spawn=False)
 
-
-def blended_palette(w):
-    keys = PALETTE[0].keys()
-    out = {}
-    for k in keys:
-        acc = [0.0, 0.0, 0.0]
-        for s in range(4):
-            c = PALETTE[s][k]
-            for i in range(3):
-                acc[i] += c[i] * w[s]
-        out[k] = tuple(acc)
-    return out
-
-
-# Seasonal key-light: normalized (x, y) position (fraction of W/H) plus a
-# rake angle (degrees from straight-down) used both to place the soft glow
-# and to aim faint canopy-gap light shafts, so the light genuinely moves and
-# changes character across the year instead of sitting as a static flare.
-# Autumn = low warm rake; winter = high, diffuse, cool; spring/summer sit
-# higher and softer.
-KEY_LIGHT = {
-    SPRING: dict(pos=(0.78, 0.22), angle=26, warmth=0.15),
-    SUMMER: dict(pos=(0.72, 0.15), angle=16, warmth=0.0),
-    AUTUMN: dict(pos=(0.92, 0.50), angle=58, warmth=1.0),
-    WINTER: dict(pos=(0.62, 0.19), angle=8, warmth=-1.0),
-}
-
-
-def blended_key_light(w):
-    px = sum(KEY_LIGHT[s]["pos"][0] * w[s] for s in range(4))
-    py = sum(KEY_LIGHT[s]["pos"][1] * w[s] for s in range(4))
-    ang = sum(KEY_LIGHT[s]["angle"] * w[s] for s in range(4))
-    warmth = sum(KEY_LIGHT[s]["warmth"] * w[s] for s in range(4))
-    return px, py, ang, warmth
-
-
-# --------------------------------------------------------------------------
-# Tree skeleton generation (built once, deterministic)
-# --------------------------------------------------------------------------
-
-MAX_DEPTH = 9
-LEAF_MIN_DEPTH = 5
-
-
-class Branch:
-    __slots__ = (
-        "id", "parent", "depth", "local_angle", "length", "thickness",
-        "curvature", "curvature2", "wind_amp", "taper_wobble", "outsideness",
-    )
-
-    def __init__(self, id_, parent, depth, local_angle, length, thickness,
-                 curvature, curvature2, wind_amp, taper_wobble):
-        self.id = id_
-        self.parent = parent
-        self.depth = depth
-        self.local_angle = local_angle
-        self.length = length
-        self.thickness = thickness
-        self.curvature = curvature
-        self.curvature2 = curvature2
-        self.wind_amp = wind_amp
-        self.taper_wobble = taper_wobble
-        # 0 = trunk/interior, 1 = outermost twig; drives frost-creep order
-        # (outer twigs frost first) and feeds cluster phase-advance.
-        self.outsideness = clamp(depth / MAX_DEPTH)
-
-
-class LeafCluster:
-    __slots__ = (
-        "node_id", "t_local", "is_blossom", "hue_shift", "offset_s",
-        "outsideness", "anchors",
-    )
-
-    def __init__(self, node_id, t_local, is_blossom, hue_shift, offset_s, outsideness):
-        self.node_id = node_id
-        self.t_local = t_local
-        self.is_blossom = is_blossom
-        self.hue_shift = hue_shift
-        self.offset_s = offset_s
-        self.outsideness = outsideness
-        # list of (along_off, perp_off, size, rot, variant, is_blossom,
-        #          anchor_offset_s, hue_jitter, curl_seed, sag_seed)
-        self.anchors = []
-
-
-def rest_endpoint(base_xy, abs_angle_deg, length):
-    rad = math.radians(abs_angle_deg)
-    return (base_xy[0] + math.sin(rad) * length, base_xy[1] - math.cos(rad) * length)
-
-
-# Build-time safety buffer around the true widget quiet-zone: bigger than
-# QUIET_X/QUIET_Y so that after adding wind sway, cluster scatter radius, and
-# camera breathing, animated foliage still never visually enters the zone
-# used by draw_vignette/the widget overlay.
-BUILD_QUIET_X = QUIET_X + 150
-BUILD_QUIET_Y = QUIET_Y + 110
-
-
-def _in_zone(x, y):
-    return x < BUILD_QUIET_X and y < BUILD_QUIET_Y
-
-
-def keep_out_of_quiet_zone(base_xy, parent_abs_angle, local_angle, length, max_iter=10):
-    """Nudges local_angle (in +angle / rightward direction) until both the
-    rest (sway=0) endpoint *and* the segment midpoint clear a buffered
-    upper-left quiet zone, so a branch can never visually cut across the
-    widget corner even once wind sway and cluster scatter are added."""
-    angle = local_angle
-    for _ in range(max_iter):
-        aa = parent_abs_angle + angle
-        ex, ey = rest_endpoint(base_xy, aa, length)
-        mx, my = (base_xy[0] + ex) * 0.5, (base_xy[1] + ey) * 0.5
-        if not (_in_zone(ex, ey) or _in_zone(mx, my)):
-            return angle, aa, (ex, ey)
-        angle += 7.0
-    aa = parent_abs_angle + angle
-    ex, ey = rest_endpoint(base_xy, aa, length)
-    return angle, aa, (ex, ey)
-
-
-def build_tree(rng: np.random.RandomState):
-    branches: list[Branch] = []
-    clusters: list[LeafCluster] = []
-    next_id = [0]
-
-    root_local_angle = 3.0
-    root = Branch(
-        id_=0, parent=-1, depth=0, local_angle=root_local_angle,
-        length=0.315 * HEIGHT, thickness=0.021 * WIDTH,
-        curvature=rng.uniform(-5, 5), curvature2=rng.uniform(-4, 4),
-        wind_amp=1.0, taper_wobble=rng.uniform(0.94, 1.06),
-    )
-    branches.append(root)
-    next_id[0] = 1
-    root_abs_angle = root_local_angle
-    root_end = rest_endpoint(TRUNK_BASE, root_abs_angle, root.length)
-
-    def recurse(parent_id, depth, length, thickness, parent_abs_angle, parent_end_xy):
-        if depth >= MAX_DEPTH or length < 15 or thickness < 1.05:
-            return
-        n = 3 if (depth <= 2 and rng.uniform() < 0.4) else 2
-        for i in range(n):
-            side = (-1, 0, 1)[i] if n == 3 else (-1, 1)[i]
-            if side < 0:
-                # graceful inward arcs -- modest range; kept away from the
-                # quiet zone by keep_out_of_quiet_zone below, and given
-                # gentler wind (see sway_mult) since they sit close to the
-                # widget boundary.
-                local_angle = rng.uniform(-24, -6) - depth * 0.55
-                len_mult = rng.uniform(0.63, 0.74)
-                sway_mult = 0.45
-            elif side == 0:
-                local_angle = rng.uniform(-7, 9)
-                len_mult = rng.uniform(0.70, 0.80)
-                sway_mult = 0.85
+    def _measure(self):
+        pos, parent = self.pos, self.parent
+        n = len(pos)
+        children = [[] for _ in range(n)]
+        for i in range(1, n):
+            children[parent[i]].append(i)
+        self.children = children
+        # Pipe model: a limb carries the cross-section of everything it feeds.
+        radius = np.zeros(n)
+        order = np.arange(n)[::-1]          # children always come after parents
+        exponent = 2.35
+        for i in order:
+            if not children[i]:
+                radius[i] = 0.0055 if self.kind[i] == 1 else 0.008
             else:
-                local_angle = rng.uniform(18, 44) + depth * 0.45
-                len_mult = rng.uniform(0.72, 0.84)
-                sway_mult = 1.0
+                radius[i] = (sum(radius[c] ** exponent for c in children[i])) ** (1.0 / exponent)
+                if self.kind[i] == 1:
+                    radius[i] = min(radius[i], 0.014)
+        scaffold = self.kind == 0
+        twig = 0.011
+        share = np.clip((radius[scaffold] - twig) / (radius[0] - twig), 0.0, 1.0)
+        radius[scaffold] = twig + (TRUNK_RADIUS - twig) * share ** 0.72
+        flare = 1.0 + 0.55 * np.exp(-pos[:, 1] / 0.28)
+        radius[scaffold] *= flare[scaffold]
+        self.radius = radius
 
-            local_angle, child_abs_angle, child_end = keep_out_of_quiet_zone(
-                parent_end_xy, parent_abs_angle, local_angle, length * len_mult
-            )
+        path = np.zeros(n)
+        for i in range(1, n):
+            path[i] = path[parent[i]] + np.linalg.norm(pos[i] - pos[parent[i]])
+        self.path = path
 
-            child_len = length * len_mult
-            child_thick = thickness * rng.uniform(0.63, 0.75)
-            curvature = rng.uniform(-16, 16)
-            curvature2 = rng.uniform(-10, 10)
-            wind_amp = min(1.0 + depth * 1.15, 9.0) * sway_mult
-            taper_wobble = rng.uniform(0.90, 1.10)
-
-            child = Branch(
-                id_=next_id[0], parent=parent_id, depth=depth + 1,
-                local_angle=local_angle, length=child_len,
-                thickness=child_thick, curvature=curvature,
-                curvature2=curvature2, wind_amp=wind_amp,
-                taper_wobble=taper_wobble,
-            )
-            branches.append(child)
-            cid = next_id[0]
-            next_id[0] += 1
-
-            if depth + 1 >= LEAF_MIN_DEPTH:
-                cluster_prob = clamp(0.30 + 0.11 * (depth + 1 - LEAF_MIN_DEPTH))
-                if rng.uniform() < cluster_prob:
-                    t_local = rng.uniform(0.5, 1.0)
-                    is_blossom = rng.uniform() < 0.34
-                    hue_shift = rng.uniform(-12, 12)
-                    offset_s = rng.uniform(-2.2, 2.2)
-                    outsideness = clamp(0.55 * child.outsideness + 0.45 * t_local)
-                    cluster = LeafCluster(cid, t_local, is_blossom, hue_shift, offset_s, outsideness)
-                    m = rng.randint(6, 13)
-                    radius_scale = 15.0 + depth * 1.4
-                    for _ in range(m):
-                        r = min(abs(rng.normal(0, 1.0)) * radius_scale, radius_scale * 2.1)
-                        theta = rng.uniform(0, 2 * math.pi)
-                        along_off = math.cos(theta) * r
-                        perp_off = math.sin(theta) * r
-                        size = rng.uniform(11, 19) * (1.0 - 0.03 * depth)
-                        rot = rng.uniform(0, 360)
-                        variant = int(rng.randint(0, 3))
-                        anchor_is_blossom = is_blossom
-                        if rng.uniform() < 0.12:
-                            anchor_is_blossom = not anchor_is_blossom
-                        anchor_offset_s = rng.uniform(-0.7, 0.7)
-                        hue_jitter = rng.uniform(-14, 14)
-                        curl_seed = rng.uniform(0.0, 1.0)
-                        sag_seed = rng.uniform(0.6, 1.4)
-                        cluster.anchors.append(
-                            (along_off, perp_off, max(size, 6.0), rot, variant,
-                             anchor_is_blossom, anchor_offset_s, hue_jitter,
-                             curl_seed, sag_seed)
-                        )
-                    clusters.append(cluster)
-
-            recurse(cid, depth + 1, child_len, child_thick, child_abs_angle, child_end)
-
-    recurse(0, 0, root.length, root.thickness, root_abs_angle, root_end)
-    return branches, clusters
+        # Flex: how far wind may carry a node. Strands swing like pendulums.
+        flex = np.zeros(n)
+        top_path = path[self.trunk_top]
+        for i in range(1, n):
+            if self.kind[i] == 0:
+                reach = max(path[i] - top_path, 0.0)
+                flex[i] = 0.10 * min(reach / 3.5, 1.0) ** 1.6
+            else:
+                step = np.linalg.norm(pos[i] - pos[parent[i]])
+                flex[i] = flex[parent[i]] + 0.30 * step * (1.0 + 0.35 * (flex[parent[i]] > 0.12))
+        self.flex = np.minimum(flex, 1.35)
 
 
-# --------------------------------------------------------------------------
-# Particle systems (deterministic, periodic over DURATION_S)
-# --------------------------------------------------------------------------
+TUBE_SUBDIVISIONS = 3
 
 
-class ParticlePool:
-    def __init__(self, rng, kind, count):
-        self.kind = kind
-        self.count = count
-        self.x0 = rng.uniform(0.0, 1.0, count)
-        self.phase = rng.uniform(0.0, DURATION_S, count)
-        raw_period = rng.uniform(6.0, 15.0, count)
-        # Snap each particle's private fall-loop period so DURATION_S is an
-        # exact integer multiple of it -> guarantees perfectly seamless
-        # per-particle motion (position AND rotation) at the master loop
-        # boundary; both position and spin below must use this snapped
-        # value, not the raw one, or the wrap would be discontinuous.
-        n_loops = np.maximum(1, np.round(DURATION_S / raw_period))
-        self.period = DURATION_S / n_loops
-        self.sway_amp = rng.uniform(16, 66, count)
-        self.size = rng.uniform(0.55, 1.35, count)
-        self.rot0 = rng.uniform(0, 360, count)
-        self.depth = rng.uniform(0.35, 1.0, count)  # parallax / blur factor
-        self.sway_harm, self.sway_phase = make_harmonics(rng, count, n_octaves=2)
-        self.sway_amps = octave_amps(2)
-        # quiet-zone damping: particles whose spawn column sits in the
-        # widget corner are drawn much fainter (faint atmosphere only).
-        self.quiet_mask = (self.x0 * WIDTH < QUIET_X).astype(np.float64)
-
-
-def make_particle_pools():
-    pools = {}
-    pools["petal"] = ParticlePool(np.random.RandomState(SEED + 11), "petal", 50)
-    pools["pollen"] = ParticlePool(np.random.RandomState(SEED + 12), "pollen", 64)
-    pools["leaf_fall"] = ParticlePool(np.random.RandomState(SEED + 13), "leaf_fall", 56)
-    pools["snow"] = ParticlePool(np.random.RandomState(SEED + 14), "snow", 110)
-    pools["dust"] = ParticlePool(np.random.RandomState(SEED + 15), "dust", 80)
-    return pools
-
-
-def particle_positions(pool: ParticlePool, t, drag=False):
-    """Vectorized per-frame position/rotation/fade for a whole pool. Uses the
-    pre-snapped ``pool.period`` (see ParticlePool.__init__) for both position
-    and spin so the loop wrap is exact. ``drag`` (used for tumbling autumn
-    leaves) warps the fall as a deterministic function of the already-
-    periodic ``frac``, so it adds air-resistance flutter/hesitation without
-    breaking the exact loop seam."""
-    local_t = (t + pool.phase) % pool.period
-    frac = local_t / pool.period
-    sway_vals = periodic_batch(t, pool.sway_harm, pool.sway_phase, pool.sway_amps)
-    sway = pool.sway_amp * sway_vals
-    spin = 360.0 * (t / np.maximum(pool.period * 0.5, 0.5)) + pool.rot0
-    if drag:
-        flutter = 0.06 * np.sin(2 * np.pi * 3 * frac + np.radians(pool.rot0))
-        frac_fall = np.clip(frac + flutter, 0.0, 1.0)
-        sway = sway + pool.sway_amp * 0.55 * np.sin(2 * np.pi * 5 * frac)
-        spin = spin + 45.0 * np.sin(2 * np.pi * 2 * frac + np.radians(pool.rot0))
-    else:
-        frac_fall = frac
-    x = pool.x0 * WIDTH + sway
-    y = frac_fall * HEIGHT
-    fade = np.sin(np.clip(frac, 0, 1) * math.pi)
-    return x, y, spin, np.clip(fade, 0.0, 1.0)
-
-
-# --------------------------------------------------------------------------
-# Drawing helpers (cairo) — organic bezier shapes, never plain circles
-# --------------------------------------------------------------------------
-
-
-def set_rgba(ctx, color, alpha):
-    r, g, b = color
-    ctx.set_source_rgba(r / 255.0, g / 255.0, b / 255.0, clamp(alpha))
-
-
-def draw_leaf(ctx, cx, cy, size, angle_deg, color, alpha, variant=0, curl=0.0):
-    """Three distinct silhouettes (rounded / slender-pointed / small
-    three-lobe) instead of one uniform almond stamp; ``curl`` (0..1) skews
-    the tip and narrows one side to read as a drying/curling autumn leaf."""
-    if alpha <= 0.004:
-        return
-    ctx.save()
-    ctx.translate(cx, cy)
-    ctx.rotate(math.radians(angle_deg))
-    curl = clamp(curl)
-    tip_bend = size * 0.22 * curl  # tip hooks sideways as it dries/curls
-
-    if variant == 0:
-        w, h = size * 0.56, size * 0.92
-        ctx.move_to(0, -h)
-        ctx.curve_to(w, -h * 0.5, w * (0.86 - 0.3 * curl), h * 0.4, tip_bend, h)
-        ctx.curve_to(-w * (0.86 - 0.55 * curl), h * 0.4, -w * (1.0 - 0.35 * curl), -h * 0.5, 0, -h)
-    elif variant == 1:
-        w, h = size * 0.36, size * 1.16
-        ctx.move_to(0, -h)
-        ctx.curve_to(w * 0.9, -h * 0.35, w * (0.58 - 0.3 * curl), h * 0.55, tip_bend, h)
-        ctx.curve_to(-w * (0.58 - 0.55 * curl), h * 0.55, -w * 0.9, -h * 0.35, 0, -h)
-    else:
-        w, h = size * 0.62, size * 0.82
-        ctx.move_to(0, -h)
-        ctx.curve_to(w * 0.95, -h * 0.2, w * 0.58, h * 0.15, w * (0.6 - 0.25 * curl), h * 0.55)
-        ctx.curve_to(w * 0.28, h * 0.85, -w * 0.28, h * 0.85, -w * (0.6 - 0.45 * curl), h * 0.55)
-        ctx.curve_to(-w * 0.58, h * 0.15, -w * 0.95, -h * 0.2, 0, -h)
-    ctx.close_path()
-    set_rgba(ctx, color, alpha)
-    ctx.fill_preserve()
-    set_rgba(ctx, (max(color[0] - 30, 0), max(color[1] - 30, 0), max(color[2] - 30, 0)), alpha * 0.5)
-    ctx.set_line_width(max(size * 0.04, 0.4))
-    ctx.stroke()
-    if curl < 0.55:
-        set_rgba(ctx, (min(color[0] + 25, 255), min(color[1] + 25, 255), min(color[2] + 25, 255)), alpha * 0.35)
-        ctx.set_line_width(max(size * 0.03, 0.3))
-        ctx.move_to(0, -h * 0.85)
-        ctx.curve_to(tip_bend * 0.3, 0, tip_bend * 0.6, h * 0.5, tip_bend, h * 0.85)
-        ctx.stroke()
-    ctx.restore()
-
-
-def draw_leaf_glow(ctx, cx, cy, size, angle_deg, color, alpha):
-    """Small additive highlight for the bloom pass — a soft core, not the
-    full leaf silhouette."""
-    if alpha <= 0.006:
-        return
-    grad = cairo.RadialGradient(cx, cy, 0, cx, cy, size * 0.7)
-    r, g, b = color
-    grad.add_color_stop_rgba(0, r / 255.0, g / 255.0, b / 255.0, alpha)
-    grad.add_color_stop_rgba(1, r / 255.0, g / 255.0, b / 255.0, 0.0)
-    ctx.set_source(grad)
-    ctx.arc(cx, cy, size * 0.7, 0, 2 * math.pi)
-    ctx.fill()
-
-
-def draw_blossom(ctx, cx, cy, size, angle_deg, color, hi_color, alpha):
-    if alpha <= 0.004 or size <= 0.3:
-        return
-    ctx.save()
-    ctx.translate(cx, cy)
-    ctx.rotate(math.radians(angle_deg))
-    petal_len = size * 0.62
-    petal_w = size * 0.42
-    for i in range(5):
-        ctx.save()
-        ctx.rotate(math.radians(72 * i))
-        ctx.move_to(0, 0)
-        ctx.curve_to(petal_w, petal_len * 0.35, petal_w * 0.55, petal_len, 0, petal_len)
-        ctx.curve_to(-petal_w * 0.55, petal_len, -petal_w, petal_len * 0.35, 0, 0)
-        ctx.close_path()
-        set_rgba(ctx, color, alpha)
-        ctx.fill()
-        ctx.restore()
-    set_rgba(ctx, hi_color, alpha)
-    ctx.arc(0, 0, size * 0.14, 0, 2 * math.pi)
-    ctx.fill()
-    ctx.restore()
-
-
-def draw_snowflake(ctx, cx, cy, size, angle_deg, color, alpha):
-    if alpha <= 0.004:
-        return
-    ctx.save()
-    ctx.translate(cx, cy)
-    ctx.rotate(math.radians(angle_deg))
-    set_rgba(ctx, color, alpha)
-    ctx.set_line_width(max(size * 0.16, 0.6))
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-    for i in range(3):
-        ctx.save()
-        ctx.rotate(math.radians(60 * i))
-        ctx.move_to(0, -size)
-        ctx.line_to(0, size)
-        ctx.move_to(0, -size * 0.55)
-        ctx.line_to(size * 0.28, -size * 0.8)
-        ctx.move_to(0, -size * 0.55)
-        ctx.line_to(-size * 0.28, -size * 0.8)
-        ctx.stroke()
-        ctx.restore()
-    ctx.restore()
-
-
-def draw_petal_particle(ctx, cx, cy, size, angle_deg, color, alpha):
-    ctx.save()
-    ctx.translate(cx, cy)
-    ctx.rotate(math.radians(angle_deg))
-    w = size * 3.2
-    h = size * 5.5
-    ctx.move_to(0, -h * 0.5)
-    ctx.curve_to(w, -h * 0.2, w * 0.7, h * 0.35, 0, h * 0.5)
-    ctx.curve_to(-w * 0.7, h * 0.35, -w, -h * 0.2, 0, -h * 0.5)
-    ctx.close_path()
-    set_rgba(ctx, color, alpha)
-    ctx.fill()
-    ctx.restore()
-
-
-def draw_leaf_particle(ctx, cx, cy, size, angle_deg, color, alpha):
-    draw_leaf(ctx, cx, cy, size * 5.5, angle_deg, color, alpha)
-
-
-def draw_glow_dot(ctx, cx, cy, r, color, alpha):
-    if alpha <= 0.004 or r <= 0.2:
-        return
-    grad = cairo.RadialGradient(cx, cy, 0, cx, cy, r)
-    rr, gg, bb = color
-    grad.add_color_stop_rgba(0, rr / 255.0, gg / 255.0, bb / 255.0, alpha)
-    grad.add_color_stop_rgba(1, rr / 255.0, gg / 255.0, bb / 255.0, 0.0)
-    ctx.set_source(grad)
-    ctx.arc(cx, cy, r, 0, 2 * math.pi)
-    ctx.fill()
-
-
-def draw_ribbon(ctx, t, seed, color, base_x, base_y, width, height, drift_amp, alpha):
-    """A soft, low-alpha watercolor-like current: a tall, gently curved band
-    filled with a linear gradient that fades at both long edges."""
-    drift = drift_amp * eval_signal(t, RIBBON_DRIFT_PARAMS)
-    rng_local = np.random.RandomState(seed)
-    bow1 = rng_local.uniform(-1, 1) * width * 0.9
-    bow2 = rng_local.uniform(-1, 1) * width * 0.9
-    x = base_x + drift
-    ctx.save()
-    ctx.move_to(x - width * 0.5, base_y)
-    ctx.curve_to(x - width * 0.5 + bow1, base_y - height * 0.33,
-                 x - width * 0.5 + bow2, base_y - height * 0.66,
-                 x - width * 0.5, base_y - height)
-    ctx.line_to(x + width * 0.5, base_y - height)
-    ctx.curve_to(x + width * 0.5 + bow2, base_y - height * 0.66,
-                 x + width * 0.5 + bow1, base_y - height * 0.33,
-                 x + width * 0.5, base_y)
-    ctx.close_path()
-    grad = cairo.LinearGradient(x - width * 0.5, 0, x + width * 0.5, 0)
-    r, g, b = color
-    grad.add_color_stop_rgba(0.0, r / 255.0, g / 255.0, b / 255.0, 0.0)
-    grad.add_color_stop_rgba(0.5, r / 255.0, g / 255.0, b / 255.0, alpha)
-    grad.add_color_stop_rgba(1.0, r / 255.0, g / 255.0, b / 255.0, 0.0)
-    ctx.set_source(grad)
-    ctx.fill()
-    ctx.restore()
-
-
-# --------------------------------------------------------------------------
-# Background field: 2-4 low-luminance, strongly defocused secondary
-# tree/canopy forms at distinct depths, bleeding off the left/bottom edges,
-# built once (deterministic) and heavily Gaussian-blurred so the composition
-# reads as an atmospheric field rather than a single corner-slab silhouette.
-# --------------------------------------------------------------------------
-
-BG_SCALE = 0.28
-BG_W = max(int(WIDTH * BG_SCALE), 2)
-BG_H = max(int(HEIGHT * BG_SCALE), 2)
-
-
-def build_organic_blob_path(ctx, cx, cy, rx, ry, rng, n=9, wobble=0.32):
-    """A smooth closed wobbly blob (Catmull-Rom -> bezier) around an
-    ellipse -- reads as an organic canopy mass, never a circle/ellipse."""
-    pts = []
+def tube_mesh(tree):
+    """Tapered tubes swept along Catmull-Rom splines through the nodes, so limbs
+    and strands bend as curves instead of showing their growth steps. Rings are
+    parallel-transported; vertex rows hold the centre, the offset from it, the
+    normal, flex, path length, radius and the position around the ring."""
+    pos, parent, radius = tree.pos, tree.parent, tree.radius
+    n = len(pos)
+    main_child = np.full(n, -1)
     for i in range(n):
-        theta = 2 * math.pi * i / n
-        rr = 1.0 + rng.uniform(-wobble, wobble)
-        pts.append((cx + math.cos(theta) * rx * rr, cy + math.sin(theta) * ry * rr))
-    n_pts = len(pts)
-    ctx.move_to(*pts[0])
-    for i in range(n_pts):
-        p0 = pts[(i - 1) % n_pts]
-        p1 = pts[i]
-        p2 = pts[(i + 1) % n_pts]
-        p3 = pts[(i + 2) % n_pts]
-        c1 = (p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0)
-        c2 = (p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0)
-        ctx.curve_to(c1[0], c1[1], c2[0], c2[1], p2[0], p2[1])
-    ctx.close_path()
+        if tree.children[i]:
+            main_child[i] = max(tree.children[i], key=lambda c: radius[c])
+    node = np.arange(1, n)
+    p = parent[node]
+    continues = (main_child[p] == node) & (parent[p] >= 0)
+    onward = main_child[node]
+    p1, p2 = pos[p], pos[node]
+    # A limb that carries on through a node bends smoothly; a side shoot starts straight.
+    p0 = np.where(continues[:, None], pos[np.maximum(parent[p], 0)], 2.0 * p1 - p2)
+    p3 = np.where((onward >= 0)[:, None], pos[np.maximum(onward, 0)], 2.0 * p2 - p1)
+    s = np.linspace(0.0, 1.0, TUBE_SUBDIVISIONS + 1)
+    s1, s2, s3 = s[None, :, None], (s ** 2)[None, :, None], (s ** 3)[None, :, None]
+    a, b, c = (p2 - p0)[:, None], (2 * p0 - 5 * p1 + 4 * p2 - p3)[:, None], (-p0 + 3 * p1 - 3 * p2 + p3)[:, None]
+    centre = 0.5 * (2.0 * p1[:, None] + a * s1 + b * s2 + c * s3)
+    tangent = a + 2.0 * b * s1 + 3.0 * c * s2
+    tangent /= np.maximum(np.linalg.norm(tangent, axis=2, keepdims=True), 1e-9)
 
+    # Parallel transport one side vector from the root outward (parents come first).
+    side = np.empty((n - 1, len(s), 3))
+    carried = np.zeros((n, 3))
+    carried[0] = (1.0, 0.0, 0.0)
+    for j in range(n - 1):
+        v = carried[p[j]]
+        for k in range(len(s)):
+            axis = tangent[j, k]
+            v = v - axis * (v @ axis)
+            length = math.sqrt(v @ v)
+            if length < 1e-6:
+                v = np.cross(axis, (0.0, 0.0, 1.0))
+                length = math.sqrt(v @ v)
+            v = v / length
+            side[j, k] = v
+        carried[node[j]] = v
+    other = np.cross(tangent, side)
 
-class BgLayer:
-    __slots__ = ("mask", "parallax", "alpha", "drift_amp", "drift_phase_s", "tint_mix")
+    r_start = np.where(main_child[p] == node, radius[p], np.minimum(radius[node] * 1.15, radius[p]))
+    ring_sides = np.where(r_start > 0.09, 12, np.where(r_start > 0.035, 8, np.where(r_start > 0.012, 5, 4)))
+    blend = s[None, :]
+    ring_radius = r_start[:, None] + (radius[node] - r_start)[:, None] * blend
+    ring_flex = tree.flex[p][:, None] + (tree.flex[node] - tree.flex[p])[:, None] * blend
+    ring_path = tree.path[p][:, None] + (tree.path[node] - tree.path[p])[:, None] * blend
 
-    def __init__(self, mask, parallax, alpha, drift_amp, drift_phase_s, tint_mix):
-        self.mask = mask  # (BG_H, BG_W) float32 in [0,1]
-        self.parallax = parallax
-        self.alpha = alpha
-        self.drift_amp = drift_amp
-        self.drift_phase_s = drift_phase_s
-        self.tint_mix = tint_mix
-
-
-# (cx_frac, cy_frac, rx, ry, n_blobs, trunk, alpha, parallax, drift_amp, drift_phase, tint_mix, seed)
-BG_LAYER_SPECS = [
-    (0.03, 0.34, 190, 150, 2, False, 0.13, 0.20, 5.0, 2.0, 0.20, SEED + 301),
-    (-0.05, 0.66, 300, 250, 3, True, 0.25, 0.42, 9.0, 8.0, 0.32, SEED + 302),
-    (0.16, 0.92, 260, 210, 2, True, 0.21, 0.60, 12.0, 14.0, 0.40, SEED + 303),
-    (0.32, 0.80, 170, 150, 2, False, 0.13, 0.75, 14.0, 19.0, 0.28, SEED + 304),
-]
-
-
-def build_bg_layers():
-    """Bakes each background form once into a heavily-blurred low-res alpha
-    mask (deterministic, seeded). Kept well clear of the widget rectangle
-    (all cy_frac anchors sit at/below y=0.34H) and mostly bleeding off the
-    left/bottom edges per the art direction."""
-    layers = []
-    for (cxf, cyf, rx, ry, n_blobs, trunk, alpha, parallax, drift_amp,
-         drift_phase, tint_mix, seed) in BG_LAYER_SPECS:
-        rng = np.random.RandomState(seed)
-        cx, cy = cxf * WIDTH, cyf * HEIGHT
-        surf = cairo.ImageSurface(cairo.FORMAT_A8, BG_W, BG_H)
-        bctx = cairo.Context(surf)
-        bctx.scale(BG_SCALE, BG_SCALE)
-        bctx.set_source_rgba(0, 0, 0, 1.0)
-        if trunk:
-            bctx.set_line_cap(cairo.LINE_CAP_ROUND)
-            bctx.set_line_width(rx * 0.16)
-            bctx.move_to(cx, cy + ry * 1.7)
-            bctx.curve_to(cx + rx * 0.22, cy + ry * 0.9, cx - rx * 0.18, cy + ry * 0.35, cx, cy)
-            bctx.stroke()
-        for i in range(n_blobs):
-            ang = rng.uniform(0, 2 * math.pi)
-            bx = cx + math.cos(ang) * rx * 0.32 * i
-            by = cy + math.sin(ang) * ry * 0.28 * i - ry * 0.15 * i
-            build_organic_blob_path(bctx, bx, by, rx * rng.uniform(0.78, 1.05),
-                                     ry * rng.uniform(0.78, 1.05), rng)
-            bctx.fill()
-        surf.flush()
-        stride = surf.get_stride()
-        raw = np.ndarray(shape=(BG_H, stride), dtype=np.uint8, buffer=surf.get_data())
-        mask = raw[:, :BG_W].astype(np.float32) / 255.0
-        sigma = max(BG_W, BG_H) * 0.045
-        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=sigma)
-        layers.append(BgLayer(mask, parallax, alpha, drift_amp, drift_phase, tint_mix))
-    return layers
-
-
-def draw_bg_layers(ctx, t, pal, bg_layers):
-    """Composites the pre-baked, pre-blurred background forms as tinted
-    soft masks with per-layer drift (distinct depths), well behind the ridge
-    and hero tree. Drift/resize happens at the cheap low-res mask size; only
-    the final full-res alpha buffer feed to cairo is upsampled."""
-    base_tint = lerp_color(pal["ground"], pal["leaf"], 0.30)
-    for layer in bg_layers:
-        drift_px = layer.drift_amp * eval_signal(t + layer.drift_phase_s, RIBBON_DRIFT_PARAMS)
-        tint = lerp_color(base_tint, pal["glow"], layer.tint_mix)
-        tint = tuple(c * (0.45 + 0.15 * layer.parallax) for c in tint)
-
-        M = np.array([[1, 0, drift_px * BG_SCALE], [0, 1, 0]], dtype=np.float32)
-        shifted = cv2.warpAffine(layer.mask, M, (BG_W, BG_H), borderMode=cv2.BORDER_REPLICATE)
-        full_mask = cv2.resize(shifted, (WIDTH, HEIGHT), interpolation=cv2.INTER_LINEAR)
-
-        stride = cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_A8, WIDTH)
-        buf = np.zeros((HEIGHT, stride), dtype=np.uint8)
-        buf[:, :WIDTH] = np.clip(full_mask * layer.alpha * 255.0, 0, 255).astype(np.uint8)
-        surf = cairo.ImageSurface.create_for_data(buf, cairo.FORMAT_A8, WIDTH, HEIGHT, stride)
-
-        ctx.save()
-        set_rgba(ctx, tint, 1.0)
-        ctx.mask_surface(surf, 0, 0)
-        ctx.restore()
-
-
-def draw_light_shafts(ctx, glow_x, glow_y, angle_deg, warmth, pal, strength):
-    """Faint, intentional canopy-gap light shafts anchored to the seasonal
-    key light -- a few soft tapered gradient beams, not a static flare."""
-    if strength <= 0.01:
-        return
-    warm = clamp(0.5 + 0.5 * warmth)
-    base_col = lerp_color((150, 190, 235), (255, 220, 170), warm)
-    base_col = lerp_color(pal["glow"], base_col, 0.55)
-    rad = math.radians(angle_deg)
-    dirx, diry = -math.sin(rad), math.cos(rad)
-    perp = (diry, -dirx)
-    ctx.save()
-    for off, length, width, a in (
-        (-38, HEIGHT * 0.50, 58, 0.032),
-        (26, HEIGHT * 0.60, 44, 0.026),
-        (86, HEIGHT * 0.42, 34, 0.020),
-    ):
-        ox, oy = glow_x + perp[0] * off, glow_y + perp[1] * off
-        ex, ey = ox + dirx * length, oy + diry * length
-        grad = cairo.LinearGradient(ox, oy, ex, ey)
-        r, g, b = base_col
-        alpha = a * strength
-        grad.add_color_stop_rgba(0.0, r / 255.0, g / 255.0, b / 255.0, alpha)
-        grad.add_color_stop_rgba(1.0, r / 255.0, g / 255.0, b / 255.0, 0.0)
-        ctx.move_to(ox - perp[0] * width * 0.5, oy - perp[1] * width * 0.5)
-        ctx.line_to(ox + perp[0] * width * 0.5, oy + perp[1] * width * 0.5)
-        ctx.line_to(ex + perp[0] * width * 0.12, ey + perp[1] * width * 0.12)
-        ctx.line_to(ex - perp[0] * width * 0.12, ey - perp[1] * width * 0.12)
-        ctx.close_path()
-        ctx.set_source(grad)
-        ctx.fill()
-    ctx.restore()
-
-
-def draw_foreground_fragments(ctx, t, pal):
-    """A couple of very-low-alpha out-of-focus branch fragments bleeding
-    from the frame edges -- a foreground depth cue, kept far from the
-    widget rectangle (both fragments sit below y=0.24H, one on each side)."""
-    drift = 6.0 * eval_signal(t + 23.0, RIBBON_DRIFT_PARAMS)
-    frag_col = lerp_color(pal["bark"], (10, 12, 16), 0.15)
-    specs = [
-        (WIDTH * 1.05, HEIGHT * 0.46, WIDTH * 0.80, HEIGHT * 0.64, 46, 0.11),
-        (WIDTH * -0.05, HEIGHT * 0.52, WIDTH * 0.16, HEIGHT * 0.70, 38, 0.095),
-    ]
-    ctx.save()
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-    for (sx, sy, ex, ey, w, a) in specs:
-        mx, my = (sx + ex) * 0.5 + drift, (sy + ey) * 0.5
-        set_rgba(ctx, frag_col, a)
-        ctx.set_line_width(w * 0.075)
-        ctx.move_to(sx, sy)
-        ctx.curve_to(mx, my, mx, my, ex, ey)
-        ctx.stroke()
-    ctx.restore()
+    rows, indices, base = [], [], 0
+    for count in (12, 8, 5, 4):
+        sel = np.nonzero(ring_sides == count)[0]
+        if not len(sel):
+            continue
+        # The seam vertex is doubled so the position around the ring runs 0..1 unbroken.
+        stride = count + 1
+        angle = 2 * math.pi * np.arange(stride) / count
+        normal = (side[sel][:, :, None, :] * np.cos(angle)[None, None, :, None]
+                  + other[sel][:, :, None, :] * np.sin(angle)[None, None, :, None])
+        block = np.empty((len(sel), len(s), stride, 13), dtype=np.float32)
+        block[..., 0:3] = centre[sel][:, :, None, :]
+        block[..., 3:6] = normal * ring_radius[sel][:, :, None, None]
+        block[..., 6:9] = normal
+        block[..., 9] = ring_flex[sel][:, :, None]
+        block[..., 10] = ring_path[sel][:, :, None]
+        block[..., 11] = ring_radius[sel][:, :, None]
+        block[..., 12] = (np.arange(stride) / count)[None, None, :]
+        rows.append(block.reshape(-1, 13))
+        seg = np.arange(len(sel))[:, None, None]
+        ring = np.arange(len(s) - 1)[None, :, None]
+        k = np.arange(count)[None, None, :]
+        q00 = base + (seg * len(s) + ring) * stride + k
+        q01, q10, q11 = q00 + 1, q00 + stride, q00 + stride + 1
+        indices.append(np.stack([q00, q01, q10, q01, q11, q10], axis=-1).reshape(-1))
+        base += len(sel) * len(s) * stride
+    return np.concatenate(rows).astype(np.float32), np.concatenate(indices).astype(np.int32)
 
 
 # --------------------------------------------------------------------------
-# Frame composition
+# Camera
 # --------------------------------------------------------------------------
 
 
-def draw_background(ctx, t, pal, season_w, bg_layers):
-    drift = 18.0 * eval_signal(t, RIBBON_DRIFT_PARAMS)
-    grad = cairo.LinearGradient(0, 0, WIDTH * 0.25 + drift, HEIGHT)
-    grad.add_color_stop_rgb(0, *(c / 255.0 for c in pal["sky_top"]))
-    grad.add_color_stop_rgb(1, *(c / 255.0 for c in pal["sky_bot"]))
-    ctx.set_source(grad)
-    ctx.paint()
-
-    # Seasonal key light: position + rake angle genuinely move (warm/low in
-    # autumn, cool/diffuse/high in winter) instead of a static flare.
-    lp_x, lp_y, light_angle, warmth = blended_key_light(season_w)
-    glow_x = lp_x * WIDTH + 22 * eval_signal(t + 3.1, RIBBON_DRIFT_PARAMS)
-    glow_y = lp_y * HEIGHT + 12 * eval_signal(t + 7.7, RIBBON_DRIFT_PARAMS)
-    draw_glow_dot(ctx, glow_x, glow_y, WIDTH * 0.62, pal["glow"], 0.10)
-    draw_glow_dot(ctx, glow_x, glow_y, WIDTH * 0.24, pal["glow"], 0.11)
-    draw_glow_dot(ctx, glow_x, glow_y, WIDTH * 0.09, pal["glow"], 0.09)
-    draw_light_shafts(ctx, glow_x, glow_y, light_angle, warmth, pal, 0.55 + 0.45 * season_w[AUTUMN])
-
-    # Background field: low-luminance, strongly defocused secondary
-    # tree/canopy forms at distinct depths, bleeding off left/bottom edges.
-    draw_bg_layers(ctx, t, pal, bg_layers)
-
-    ridge_drift = 8.0 * eval_signal(t + 11.0, RIBBON_DRIFT_PARAMS)
-    ctx.save()
-    pts = [0.0, 0.08, 0.15, 0.24, 0.32, 0.41, 0.50, 0.59, 0.68, 0.76, 0.83, 0.92, 1.0]
-    heights = [0.90, 0.885, 0.87, 0.878, 0.885, 0.865, 0.86,
-               0.868, 0.875, 0.858, 0.855, 0.87, 0.90]
-    ridge_pts = [(px * WIDTH + ridge_drift, hy * HEIGHT) for px, hy in zip(pts, heights)]
-    # smooth painterly horizon (Catmull-Rom through the ridge points) rather
-    # than a jagged low-poly polyline.
-    ctx.set_source_rgba(*(c / 255.0 for c in pal["ground"]), 0.85)
-    ctx.move_to(0, HEIGHT * 0.90)
-    ctx.line_to(*ridge_pts[0])
-    n_r = len(ridge_pts)
-    for i in range(n_r - 1):
-        p0 = ridge_pts[max(i - 1, 0)]
-        p1 = ridge_pts[i]
-        p2 = ridge_pts[i + 1]
-        p3 = ridge_pts[min(i + 2, n_r - 1)]
-        c1 = (p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0)
-        c2 = (p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0)
-        ctx.curve_to(c1[0], c1[1], c2[0], c2[1], p2[0], p2[1])
-    ctx.line_to(WIDTH, HEIGHT)
-    ctx.line_to(0, HEIGHT)
-    ctx.close_path()
-    ctx.fill()
-    # soft mist band along the horizon for a painterly (not hard-edged) join
-    mist = cairo.LinearGradient(0, HEIGHT * 0.80, 0, HEIGHT * 0.90)
-    mg = lerp_color(pal["ground"], pal["sky_bot"], 0.5)
-    mist.add_color_stop_rgba(0.0, mg[0] / 255.0, mg[1] / 255.0, mg[2] / 255.0, 0.0)
-    mist.add_color_stop_rgba(1.0, mg[0] / 255.0, mg[1] / 255.0, mg[2] / 255.0, 0.22)
-    ctx.set_source(mist)
-    ctx.rectangle(0, HEIGHT * 0.78, WIDTH, HEIGHT * 0.14)
-    ctx.fill()
-    ctx.restore()
-
-    draw_foreground_fragments(ctx, t, pal)
-
-    # Drifting volumetric light ribbons -- watercolor-like currents, kept
-    # low-alpha and mostly right-of-quiet-zone.
-    ribbon_specs = [
-        (401, WIDTH * 0.62, HEIGHT * 1.05, WIDTH * 0.42, HEIGHT * 0.95, 26, 0.05),
-        (402, WIDTH * 0.86, HEIGHT * 1.0, WIDTH * 0.30, HEIGHT * 1.05, 20, 0.045),
-        (403, WIDTH * 0.42, HEIGHT * 1.1, WIDTH * 0.55, HEIGHT * 1.05, 34, 0.032),
-    ]
-    for seed, bx, by, w, h, drift_amp, alpha in ribbon_specs:
-        draw_ribbon(ctx, t, seed, pal["ribbon"], bx, by, w, h, drift_amp, alpha)
+def orbit_angle(t):
+    return ORBIT_START + 2 * math.pi * (t % DURATION_S) / DURATION_S
 
 
-def sample_bezier(sx, sy, c1x, c1y, c2x, c2y, ex, ey, n=6):
-    """Samples a cubic bezier at n+1 points, returning (x, y, nx, ny, u) with
-    (nx, ny) the unit normal to the *local tangent* (oriented "upward" where
-    possible). Used to build offset ribbons that hug the true curve exactly
-    -- never a floating straight-line segment across a curved branch."""
-    pts = []
-    for i in range(n + 1):
-        u = i / n
-        mu = 1.0 - u
-        x = mu ** 3 * sx + 3 * mu * mu * u * c1x + 3 * mu * u * u * c2x + u ** 3 * ex
-        y = mu ** 3 * sy + 3 * mu * mu * u * c1y + 3 * mu * u * u * c2y + u ** 3 * ey
-        dx = 3 * mu * mu * (c1x - sx) + 6 * mu * u * (c2x - c1x) + 3 * u * u * (ex - c2x)
-        dy = 3 * mu * mu * (c1y - sy) + 6 * mu * u * (c2y - c1y) + 3 * u * u * (ey - c2y)
-        dlen = math.hypot(dx, dy) or 1.0
-        tx, ty = dx / dlen, dy / dlen
-        nx, ny = -ty, tx
-        if ny > 0:
-            nx, ny = -nx, -ny
-        pts.append((x, y, nx, ny, u))
-    return pts
+def camera_matrices(t):
+    import artwork_gl as agl
+    angle = orbit_angle(t)
+    phase = 2 * math.pi * (t % DURATION_S) / DURATION_S
+    radius = ORBIT_RADIUS + 0.5 * math.sin(2 * phase + 0.7)
+    height = EYE_HEIGHT + 0.22 * math.sin(3 * phase + 1.9)
+    eye = np.array([radius * math.sin(angle), height, radius * math.cos(angle)])
+    target = np.array([0.0, height, 0.0])
+    view = agl.look_at(eye, target)
+    proj = agl.perspective(FOV_Y, ASPECT, NEAR, FAR)
+    proj[0, 2] = -LENS_SHIFT_X
+    proj[1, 2] = -LENS_SHIFT_Y
+    return eye, view, proj
 
 
-def draw_curve_rim_solid(ctx, samples, half_width_fn, color, alpha):
-    """Tapered ribbon hugging one side of ``samples`` at uniform alpha (bark
-    rim-light): inner edge rides the curve itself, outer edge offsets by
-    ``half_width_fn(u)`` along the local normal, so the highlight follows the
-    bark's true bow/curvature instead of a straight chord."""
-    if alpha <= 0.004:
-        return
-    outer = [(x + nx * half_width_fn(u), y + ny * half_width_fn(u)) for (x, y, nx, ny, u) in samples]
-    ctx.move_to(*outer[0])
-    for p in outer[1:]:
-        ctx.line_to(*p)
-    for (x, y, nx, ny, u) in reversed(samples):
-        ctx.line_to(x, y)
-    ctx.close_path()
-    set_rgba(ctx, color, alpha)
-    ctx.fill()
+# --------------------------------------------------------------------------
+# Wind: gusts arrive at chosen moments; everything is periodic over the loop
+# --------------------------------------------------------------------------
+
+# (time, strength, width in seconds)
+GUSTS = ((19.0, 1.0, 2.2), (25.5, 1.35, 2.4), (31.0, 0.9, 2.0), (47.0, 0.45, 3.0),
+         (76.0, 0.9, 2.2), (84.0, 1.35, 2.5), (92.0, 1.0, 2.2), (108.0, 0.4, 3.0))
+PETAL_GUSTS = ((19.0, 0.30), (25.5, 0.45), (31.0, 0.25))
+LEAF_GUSTS = ((76.0, 0.28), (84.0, 0.42), (92.0, 0.30))
+WIND_FRONT_SPEED = 2.4
+
+WATER_Y = 0.0
+FALL_TAU = 0.7
+WIND_TAU = 1.2
 
 
-def draw_frost_rim(ctx, samples, half_width_fn, color, alpha, coverage, soft=0.16):
-    """Same tapered curve-following ribbon as ``draw_curve_rim_solid``, but
-    with a directional coverage gradient (0=bare, 1=fully frosted) along the
-    branch so frost visibly *creeps* from the tip toward the base rather than
-    popping on/off uniformly."""
-    if alpha <= 0.004 or coverage <= 0.004:
-        return
-    outer = [(x + nx * half_width_fn(u), y + ny * half_width_fn(u)) for (x, y, nx, ny, u) in samples]
-    ctx.move_to(*outer[0])
-    for p in outer[1:]:
-        ctx.line_to(*p)
-    for (x, y, nx, ny, u) in reversed(samples):
-        ctx.line_to(x, y)
-    ctx.close_path()
-
-    edge = clamp(1.0 - coverage)  # frost creeps from the tip (u=1) toward base (u=0)
-    lo = clamp(edge - soft)
-    hi = clamp(edge + soft)
-    x0, y0 = samples[0][0], samples[0][1]
-    x1, y1 = samples[-1][0], samples[-1][1]
-    grad = cairo.LinearGradient(x0, y0, x1, y1)
-    r, g, b = color
-    for s in sorted({0.0, lo, hi, 1.0}):
-        a = 0.0 if s <= lo else (alpha if s >= hi else alpha * (s - lo) / max(hi - lo, 1e-6))
-        grad.add_color_stop_rgba(s, r / 255.0, g / 255.0, b / 255.0, clamp(a))
-    ctx.set_source(grad)
-    ctx.fill()
+def cyclic(dt):
+    """Signed shortest time difference on the loop."""
+    return (np.asarray(dt) + DURATION_S / 2.0) % DURATION_S - DURATION_S / 2.0
 
 
-def frost_hash(node_id):
-    """Deterministic per-branch jitter in [0,1] (no RandomState reconstruction)."""
-    return (node_id * 2246822519 % 1000) / 1000.0
+def gust_level(t):
+    t = np.asarray(t, dtype=np.float64)
+    level = np.full(t.shape, 0.55)
+    for when, strength, width in GUSTS:
+        level = level + strength * np.exp(-(cyclic(t - when) / width) ** 2)
+    return level
 
 
-def branch_frost_coverage(branch, winter_w):
-    """Fraction (0..1) of a branch currently frosted. Outer twigs
-    (higher ``outsideness``) start frosting at a lower winter weight than
-    inner wood, and a small per-branch hash jitter keeps the wave organic
-    rather than a synchronized on/off switch across the whole canopy."""
-    jitter = (frost_hash(branch.id) - 0.5) * 0.16
-    onset = (1.0 - branch.outsideness) * 0.62 + jitter
-    span = 0.34
-    return smoothstep(onset, onset + span, winter_w)
+def sway_np(rest, flex, t, gust):
+    """NumPy twin of the shader's ``sway`` (same constants)."""
+    w = 2 * math.pi / DURATION_S
+    x, y, z = rest[:, 0], rest[:, 1], rest[:, 2]
+    a = np.sin(w * 17.0 * t + 0.55 * x + 0.35 * z + y * 0.30)
+    b = np.sin(w * 29.0 * t - 0.40 * x + 0.75 * z + y * 0.55 + 1.7)
+    c = np.sin(w * 46.0 * t + 0.95 * x - 0.60 * z + y * 0.90 + 0.4)
+    push = (np.array([0.62, 0.0, 0.34])[None] * (a * 0.26 + 0.12)[:, None]
+            + np.array([-0.30, 0.0, 0.58])[None] * (b * 0.13)[:, None]
+            + np.array([0.45, 0.0, -0.50])[None] * (c * 0.06)[:, None])
+    f = flex * (0.55 + 0.45 * flex)
+    d = push * (gust * f)[:, None]
+    d[:, 1] = -(d[:, 0] ** 2 + d[:, 2] ** 2) * 0.55 / np.maximum(flex * 2.2, 0.3)
+    return d
 
 
-def compute_skeleton(branches, harmonics, phases, amps, t):
-    """Returns dict node_id -> (start_xy, end_xy, abs_angle_deg)."""
-    envelope = global_wind_envelope(t)
-    sway_all = periodic_batch(t, harmonics, phases, amps) * envelope
+def wind_direction(t):
+    """Gusts blow across the frame and a little toward the lens, wherever the
+    orbiting camera happens to be when they arrive."""
+    angle = ORBIT_START + 2 * math.pi * ((np.asarray(t) + 3.0) % DURATION_S) / DURATION_S
+    toward = np.stack([np.sin(angle), np.zeros_like(angle), np.cos(angle)], axis=-1)
+    right = np.stack([np.cos(angle), np.zeros_like(angle), -np.sin(angle)], axis=-1)
+    return right * 0.92 + toward * 0.34
 
-    abs_angle = {}
-    end_pt = {}
-    out = {}
-    for b in branches:
-        sway = b.wind_amp * sway_all[b.id]
-        if b.parent == -1:
-            aa = b.local_angle + sway
-            sx, sy = TRUNK_BASE
-        else:
-            aa = abs_angle[b.parent] + b.local_angle + sway
-            sx, sy = end_pt[b.parent]
-        rad = math.radians(aa)
-        ex, ey = sx + math.sin(rad) * b.length, sy - math.cos(rad) * b.length
-        abs_angle[b.id] = aa
-        end_pt[b.id] = (ex, ey)
-        out[b.id] = (sx, sy, ex, ey, aa)
+
+# --------------------------------------------------------------------------
+# Foliage: every petal and leaf carries its whole year as constants
+# --------------------------------------------------------------------------
+
+
+def matrix_to_quat(m):
+    """(n, 3, 3) rotation matrices to (n, 4) quaternions x, y, z, w."""
+    q = np.empty((len(m), 4))
+    trace = m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2]
+    q[:, 3] = np.sqrt(np.maximum(1.0 + trace, 1e-12)) * 0.5
+    q[:, 0] = np.sqrt(np.maximum(1.0 + m[:, 0, 0] - m[:, 1, 1] - m[:, 2, 2], 1e-12)) * 0.5
+    q[:, 1] = np.sqrt(np.maximum(1.0 - m[:, 0, 0] + m[:, 1, 1] - m[:, 2, 2], 1e-12)) * 0.5
+    q[:, 2] = np.sqrt(np.maximum(1.0 - m[:, 0, 0] - m[:, 1, 1] + m[:, 2, 2], 1e-12)) * 0.5
+    q[:, 0] = np.copysign(q[:, 0], m[:, 2, 1] - m[:, 1, 2])
+    q[:, 1] = np.copysign(q[:, 1], m[:, 0, 2] - m[:, 2, 0])
+    q[:, 2] = np.copysign(q[:, 2], m[:, 1, 0] - m[:, 0, 1])
+    return q / np.linalg.norm(q, axis=1, keepdims=True)
+
+
+def frames_from_axis(rng, axis):
+    """Random right-handed frames (columns x, y, z) whose z column is ``axis``."""
+    axis = axis / np.linalg.norm(axis, axis=1, keepdims=True)
+    helper = rng.normal(size=axis.shape)
+    x = np.cross(helper, axis)
+    x /= np.maximum(np.linalg.norm(x, axis=1, keepdims=True), 1e-9)
+    y = np.cross(axis, x)
+    return np.stack([x, y, axis], axis=2)
+
+
+def mixture_times(rng, n, lo, hi, peaks, width, background):
+    """Release moments: a thin steady fall plus bursts when the gusts arrive."""
+    out = rng.uniform(lo, hi, n)
+    weights = np.array([w for _, w in peaks])
+    pick = rng.choice(len(peaks), n, p=weights / weights.sum())
+    burst = np.array([peaks[i][0] for i in pick]) + rng.normal(0.0, width, n)
+    use = rng.uniform(size=n) > background
+    out[use] = burst[use]
     return out
 
 
-def draw_tree(ctx, glow_ctx, branches, skel, pal, winter_w, t):
-    for b in branches:
-        sx, sy, ex, ey, aa = skel[b.id]
-        rad = math.radians(aa)
-        perp = (math.cos(rad), math.sin(rad))
-        mx, my = (sx + ex) * 0.5, (sy + ey) * 0.5
-        bow1 = b.curvature * 0.95
-        bow2 = b.curvature2 * 0.95
-        c1x, c1y = sx + (mx - sx) * 0.55 + perp[0] * bow1, sy + (my - sy) * 0.55 + perp[1] * bow1
-        c2x, c2y = mx + (ex - mx) * 0.45 + perp[0] * bow2, my + (ey - my) * 0.45 + perp[1] * bow2
-
-        t_frac = clamp(b.depth / MAX_DEPTH)
-        thickness = max(b.thickness * b.taper_wobble, 0.9)
-        bark_col = lerp_color(pal["bark"], pal["bark_hi"], 0.35 * (1 - t_frac))
-
-        ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-        ctx.set_line_width(thickness)
-        set_rgba(ctx, bark_col, 0.97)
-        ctx.move_to(sx, sy)
-        ctx.curve_to(c1x, c1y, c2x, c2y, ex, ey)
-        ctx.stroke()
-
-        needs_rim = b.depth <= 6
-        needs_frost = winter_w > 0.05 and b.depth >= 2
-        if needs_rim or needs_frost:
-            samples = sample_bezier(sx, sy, c1x, c1y, c2x, c2y, ex, ey, n=6)
-
-        # Subtle bark rim-light feeding the bloom pass -- follows the true
-        # curve (not a straight chord) so it never drifts off the bark.
-        if needs_rim:
-            glow_alpha = (0.05 + 0.05 * winter_w) * (1.0 - t_frac * 0.4)
-            rim_hw = thickness * 0.32
-            draw_curve_rim_solid(glow_ctx, samples, lambda u: rim_hw, pal["bark_glow"], glow_alpha)
-
-        # crystalline winter glints on the outer twigs (exact-period twinkle:
-        # k=6 harmonics over the full DURATION_S loop, so it wraps cleanly)
-        if winter_w > 0.2 and b.depth >= MAX_DEPTH - 2 and (b.id % 2 == 0):
-            twinkle = 0.5 + 0.5 * math.sin(2 * math.pi * 6 * t / DURATION_S + glint_phase(b.id))
-            spark_alpha = clamp((winter_w - 0.2) / 0.8) * 0.6 * twinkle
-            draw_glow_dot(glow_ctx, ex, ey, thickness * 1.6 + 2.0, pal["bark_glow"], spark_alpha)
-
-        # Frost/rim-of-snow that hugs the branch's own spline and creeps
-        # directionally (tip -> base) as winter deepens, with a controlled
-        # taper -- replaces the old floating straight-line snow cap that
-        # could overshoot joints on curved branches.
-        if needs_frost:
-            coverage = branch_frost_coverage(b, winter_w)
-            if coverage > 0.004:
-                frost_alpha = 0.55 * clamp(winter_w / 0.6)
-                frost_hw = thickness * 0.42
-                draw_frost_rim(ctx, samples, lambda u: frost_hw, (250, 250, 255), frost_alpha, coverage)
+PETAL_OPEN_ELEV = math.radians(16.0)
+INSTANCE_FLOATS = 28
 
 
-def glint_phase(node_id):
-    """Deterministic per-branch phase offset (no RandomState reconstruction;
-    a cheap integer hash keeps winter glints staggered across the canopy)."""
-    return (node_id * 2654435761 % 1000) / 1000.0 * 2 * math.pi
+class Foliage:
+    def __init__(self, tree):
+        rng = np.random.RandomState(SEED + 11)
+        hosts = np.nonzero((tree.kind == 1) | ((tree.radius < 0.02) & (tree.pos[:, 1] > 3.0)))[0]
+        self.crown_top = tree.pos[hosts, 1].max()
+        self.crown_low = tree.pos[hosts, 1].min()
+        self.petals = self._blossoms(tree, rng, hosts)
+        self.leaves = self._leaves(tree, rng, hosts)
+
+    @staticmethod
+    def _outward(pos):
+        out = pos * np.array([1.0, 0.0, 1.0])
+        return out / np.maximum(np.linalg.norm(out, axis=1, keepdims=True), 1e-6)
+
+    def _exposure(self, rng, pos):
+        radial = np.hypot(pos[:, 0], pos[:, 2])
+        shell = np.clip(radial / 2.3, 0.0, 1.0) ** 1.5
+        return (0.30 + 0.70 * shell) * rng.uniform(0.55, 1.20, len(pos)) ** 1.3
+
+    def _fall(self, rng, release, base_speed, wind_gain, flutter, tumble):
+        n = len(release)
+        gust = gust_level(release)
+        wind = wind_direction(release) + rng.normal(0.0, 0.16, (n, 3))
+        fall = np.stack([rng.uniform(*base_speed, n), gust * rng.uniform(0.45, 1.4, n) * wind_gain,
+                         rng.uniform(*flutter, n), rng.uniform(0.5, 1.1, n)], axis=1)
+        fall2 = np.stack([wind[:, 0], wind[:, 2], rng.uniform(*tumble, n) * rng.choice((-1.0, 1.0), n), gust], axis=1)
+        return fall, fall2
+
+    def _blossoms(self, tree, rng, hosts):
+        sites = hosts[rng.uniform(size=len(hosts)) < 0.50]
+        per_site = rng.choice((2, 3, 4, 5), len(sites), p=(0.25, 0.35, 0.25, 0.15))
+        node = np.repeat(sites, per_site)
+        n = len(node)
+        stalk = rng.normal(size=(n, 3)) + np.array([0.0, -0.7, 0.0])
+        stalk /= np.linalg.norm(stalk, axis=1, keepdims=True)
+        centre = tree.pos[node] + stalk * rng.uniform(0.02, 0.09, (n, 1))
+        axis = self._outward(centre) * 0.5 + np.array([0.0, -0.4, 0.0]) + rng.normal(0.0, 0.75, (n, 3))
+        frame = frames_from_axis(rng, axis)
+        size = rng.uniform(0.036, 0.058, n)
+        tint = rng.uniform(0.0, 1.0, n) ** 1.2
+        exposure = self._exposure(rng, centre)
+
+        # Blossoms open in a wave that runs from the crown down the strands.
+        depth = np.clip((self.crown_top - centre[:, 1]) / (self.crown_top - self.crown_low), 0.0, 1.0)
+        t_open = (117.0 + 12.5 * depth + rng.normal(0.0, 1.2, n)) % DURATION_S
+        t_bud = (103.0 + 9.0 * depth + rng.normal(0.0, 1.5, n)) % DURATION_S
+
+        petals = 5
+        k = np.tile(np.arange(petals), n)
+        b = np.repeat(np.arange(n), petals)
+        m = len(b)
+        psi = k * 2 * math.pi / petals + rng.normal(0.0, 0.05, m)
+        radial = np.stack([np.cos(psi), np.sin(psi), np.zeros(m)], axis=1)
+        zed = np.array([0.0, 0.0, 1.0])
+        e = PETAL_OPEN_ELEV + rng.normal(0.0, 0.06, m)
+        y_p = radial * np.cos(e)[:, None] + zed * np.sin(e)[:, None]
+        z_p = -radial * np.sin(e)[:, None] + zed * np.cos(e)[:, None]
+        x_p = np.cross(y_p, z_p)
+        local = np.stack([x_p, y_p, z_p], axis=2)
+        world = frame[b] @ local
+        anchor = centre[b] + np.einsum("nij,nj->ni", frame[b], radial) * (0.10 * size[b])[:, None]
+
+        release = mixture_times(rng, m, 15.0, 35.0, PETAL_GUSTS, 1.3, background=0.22)
+        front = np.einsum("ni,ni->n", anchor, wind_direction(release)) / WIND_FRONT_SPEED
+        release = (release + front) % DURATION_S
+        fall, fall2 = self._fall(rng, release, (0.55, 0.95), 1.0, (0.10, 0.28), (1.5, 4.0))
+
+        data = np.empty((m, INSTANCE_FLOATS), dtype=np.float32)
+        data[:, 0:3], data[:, 3] = anchor, tree.flex[node][b]
+        data[:, 4:8] = matrix_to_quat(world)
+        data[:, 8], data[:, 9], data[:, 10], data[:, 11] = psi, size[b] * rng.uniform(0.92, 1.06, m), exposure[b], rng.uniform(0, 1, m)
+        data[:, 12], data[:, 13], data[:, 14], data[:, 15] = t_bud[b], t_open[b], release, rng.uniform(7.0, 13.0, m)
+        data[:, 16:20], data[:, 20:24] = fall, fall2
+        data[:, 24], data[:, 25], data[:, 26], data[:, 27] = tint[b], 0.0, 0.0, tree.path[node][b]
+        return data
+
+    def _leaves(self, tree, rng, hosts):
+        node = np.concatenate([hosts[rng.uniform(size=len(hosts)) < 0.62], hosts[rng.uniform(size=len(hosts)) < 0.40]])
+        n = len(node)
+        parent = tree.parent[node]
+        along = tree.pos[node] - tree.pos[parent]
+        along /= np.maximum(np.linalg.norm(along, axis=1, keepdims=True), 1e-9)
+        # Leaves hang: their length follows the strand and gravity.
+        hang = along * 0.55 + np.array([0.0, -0.75, 0.0]) + rng.normal(0.0, 0.42, (n, 3))
+        hang /= np.linalg.norm(hang, axis=1, keepdims=True)
+        helper = rng.normal(size=(n, 3))
+        x = np.cross(hang, helper)
+        x /= np.maximum(np.linalg.norm(x, axis=1, keepdims=True), 1e-9)
+        z = np.cross(x, hang)
+        world = np.stack([x, hang, z], axis=2)
+        anchor = tree.pos[node] + x * rng.uniform(-0.02, 0.02, (n, 1))
+        size = rng.uniform(0.12, 0.21, n)
+        exposure = self._exposure(rng, anchor)
+
+        tipward = np.clip(tree.flex[node] / 1.2, 0.0, 1.0)
+        t_bud = (24.0 + 10.0 * rng.uniform(size=n) + 2.0 * tipward) % DURATION_S
+        t_open = (t_bud + 1.2) % DURATION_S
+        t_turn = 60.5 + 15.0 * (1.0 - tipward) + rng.normal(0.0, 1.6, n)
+        release = mixture_times(rng, n, 71.0, 99.0, LEAF_GUSTS, 1.5, background=0.30)
+        front = np.einsum("ni,ni->n", anchor, wind_direction(release)) / WIND_FRONT_SPEED
+        release = np.maximum(release + front, t_turn + 4.5)
+        fall, fall2 = self._fall(rng, release, (0.80, 1.35), 0.72, (0.15, 0.40), (1.0, 2.6))
+
+        data = np.empty((n, INSTANCE_FLOATS), dtype=np.float32)
+        data[:, 0:3], data[:, 3] = anchor, tree.flex[node]
+        data[:, 4:8] = matrix_to_quat(world)
+        data[:, 8], data[:, 9], data[:, 10], data[:, 11] = rng.uniform(0, 2 * math.pi, n), size, exposure, rng.uniform(0, 1, n)
+        data[:, 12], data[:, 13], data[:, 14], data[:, 15] = t_bud, t_open, release % DURATION_S, rng.uniform(9.0, 15.0, n)
+        data[:, 16:20], data[:, 20:24] = fall, fall2
+        data[:, 24], data[:, 25], data[:, 26], data[:, 27] = rng.uniform(0, 1, n), rng.uniform(0, 1, n) ** 0.8, t_turn % DURATION_S, tree.path[node]
+        return data
 
 
-def draw_foliage(ctx, glow_ctx, clusters, skel, pal, season_w, t):
-    leaf_col_base = lerp_color(pal["leaf"], pal["leaf_hi"], 0.18)
-    autumn_w = season_w[AUTUMN]
-    summer_w = season_w[SUMMER]
-    for cl in clusters:
-        if cl.node_id not in skel:
-            continue
-        sx, sy, ex, ey, aa = skel[cl.node_id]
-        bx, by = sx + (ex - sx) * cl.t_local, sy + (ey - sy) * cl.t_local
-        rad = math.radians(aa)
-        tangent = (math.sin(rad), -math.cos(rad))
-        perp = (math.cos(rad), math.sin(rad))
-
-        # Outside clusters are phase-advanced: they bud first in spring and
-        # shed first in autumn -- one mechanism drives both the staggered
-        # spring wave and the outside-in autumn thinning-with-gaps.
-        phase_off = cl.offset_s - cl.outsideness * OUTSIDE_PHASE_ADVANCE_S
-
-        hue = cl.hue_shift
-        blossom_col = tuple(clamp(c + hue * 0.5, 0, 255) for c in pal["blossom"])
-
-        cluster_leaf_p = leaf_presence(t, phase_off)
-        cluster_blossom_p = blossom_presence(t, phase_off)
-        if cluster_leaf_p <= 0.004 and cluster_blossom_p <= 0.004:
-            continue
-
-        sag = summer_w * 10.0  # heavy, closed canopy sags downward in summer
-
-        for (along_off, perp_off, size, rot, variant, is_blossom,
-             anchor_off_s, hue_jitter, curl_seed, sag_seed) in cl.anchors:
-            leaf_p = leaf_presence(t, phase_off + anchor_off_s)
-            blossom_p = blossom_presence(t, phase_off + anchor_off_s)
-            if leaf_p <= 0.006 and blossom_p <= 0.006:
-                continue
-
-            px = bx + tangent[0] * along_off + perp[0] * perp_off
-            py = by + tangent[1] * along_off + perp[1] * perp_off + sag * sag_seed
-            angle = aa + rot * 0.12
-
-            if is_blossom:
-                if blossom_p <= 0.006:
-                    continue
-                grow = clamp(blossom_p / 0.5)
-                draw_blossom(ctx, px, py, size * (0.35 + 0.65 * grow), angle,
-                             blossom_col, pal["blossom_hi"], blossom_p)
-                draw_leaf_glow(glow_ctx, px, py, size * 0.9, angle, pal["blossom_hi"], blossom_p * 0.4)
-            else:
-                if leaf_p <= 0.006:
-                    continue
-                grow = clamp(leaf_p / 0.5)
-                # Autumn broadens per-anchor hue variance (less flat/yellow)
-                # and introduces a curling/drying silhouette per leaf.
-                leaf_col = tuple(
-                    clamp(c + hue + hue_jitter * (0.3 + 0.7 * autumn_w), 0, 255)
-                    for c in leaf_col_base
-                )
-                curl = clamp(autumn_w * (0.3 + 0.7 * curl_seed))
-                draw_leaf(ctx, px, py, size * (0.55 + 0.45 * grow), angle,
-                          leaf_col, leaf_p, variant, curl)
-                if leaf_p > 0.5:
-                    draw_leaf_glow(glow_ctx, px, py, size * 0.7, angle, pal["leaf_hi"], (leaf_p - 0.5) * 0.5)
+RIPPLE_LIFE_S = 6.5
+RIPPLE_CAP = 96              # rings alive at once where petals and leaves land
+SNOW_RING = 0.035            # share of a snowflake's fall for which its ring lasts
+MAX_RIPPLES = 128            # with the snow's; the size of the shader's array
 
 
-def season_pos(t):
-    return (t % DURATION_S) / SEASON_LEN
+def thin_events(events, min_gap):
+    """Rows of ``events`` (x, z, when, strength) at least ``min_gap`` seconds
+    apart around the loop. In a storm hundreds of petals land every second; the
+    water shows a bounded number of rings, and every ring that starts also gets
+    to spread and fade instead of being pushed out by the next."""
+    order = np.argsort(events[:, 2], kind="stable")
+    kept, last = [], -math.inf
+    for i in order:
+        if events[i, 2] - last >= min_gap:
+            kept.append(i)
+            last = events[i, 2]
+    while len(kept) > 1 and events[kept[0], 2] + DURATION_S - events[kept[-1], 2] < min_gap:
+        kept.pop()
+    return events[kept]
 
 
-def emitter_gate(pos, center, half_width=0.42, power=1.6):
-    """Narrow, mutually-exclusive activity window for a seasonal particle
-    emitter (steeper falloff than the broad palette crossfade). With
-    half_width=0.42 and season centers 1.0 apart, adjacent emitters cannot
-    overlap -- petal/leaf_fall/snow can never be simultaneously active, so
-    inappropriate emitters (snow in spring, snow while leaves still falling)
-    fully die out before the next one begins."""
-    d = abs(wrapped_delta(pos, center, 4.0))
-    g = clamp(1.0 - d / half_width)
-    return g ** power
-
-
-def draw_particles(ctx, glow_ctx, t, pools, season_w, pal):
-    pos = season_pos(t)
-    kind_weight = {
-        "petal": emitter_gate(pos, 0.5),
-        "pollen": emitter_gate(pos, 1.15, half_width=0.62, power=1.2),
-        "leaf_fall": emitter_gate(pos, 2.5),
-        "snow": emitter_gate(pos, 3.5),
-        "dust": 1.0,
-    }
-    kind_base_alpha = {
-        "petal": 0.85, "pollen": 0.5, "leaf_fall": 0.9, "snow": 0.85, "dust": 0.22,
-    }
-    for kind, pool in pools.items():
-        wgt = clamp(kind_weight[kind], 0.0, 1.0)
-        if wgt < 0.015:
-            continue
-        drag = kind == "leaf_fall"
-        xs, ys, spins, fades = particle_positions(pool, t, drag=drag)
-        base_alpha = kind_base_alpha[kind]
-        for i in range(pool.count):
-            depth_scale = 0.6 + 0.7 * pool.depth[i]
-            size = pool.size[i] * depth_scale
-            quiet_damp = lerp(1.0, 0.22, pool.quiet_mask[i])
-            alpha = wgt * fades[i] * quiet_damp
-            if alpha < 0.01:
-                continue
-            x, y, spin = xs[i], ys[i], spins[i]
-            far = pool.depth[i] < 0.55  # depth-band: far particles read soft/out-of-focus
-            if kind == "petal":
-                if far:
-                    draw_glow_dot(glow_ctx, x, y, size * 3.0 + 1.5, pal["particle"], alpha * base_alpha * 0.8)
-                else:
-                    draw_petal_particle(ctx, x, y, size, spin, pal["particle"], alpha * base_alpha)
-            elif kind == "pollen":
-                draw_glow_dot(glow_ctx, x, y, 3.4 * size + 2, pal["particle"], alpha * base_alpha)
-            elif kind == "leaf_fall":
-                if far:
-                    draw_glow_dot(glow_ctx, x, y, size * 3.4 + 1.5, pal["particle"], alpha * base_alpha * 0.75)
-                else:
-                    draw_leaf_particle(ctx, x, y, size, spin, pal["particle"], alpha * base_alpha)
-            elif kind == "snow":
-                if far:
-                    draw_glow_dot(glow_ctx, x, y, size * 2.8 + 1.5, (255, 255, 255), alpha * 0.30)
-                else:
-                    draw_snowflake(ctx, x, y, 3.4 * size + 1.4, spin, pal["particle"], alpha * base_alpha)
-                    draw_glow_dot(glow_ctx, x, y, size * 2.4 + 1.0, (255, 255, 255), alpha * 0.18)
-            elif kind == "dust":
-                draw_glow_dot(glow_ctx, x, y, 1.6 * size + 0.8, pal["particle"], alpha * base_alpha)
-
-
-def draw_vignette(ctx):
-    grad = cairo.RadialGradient(
-        WIDTH * 0.30, HEIGHT * 0.28, HEIGHT * 0.15,
-        WIDTH * 0.30, HEIGHT * 0.28, HEIGHT * 0.95,
-    )
-    grad.add_color_stop_rgba(0, 0, 0, 0, 0.0)
-    grad.add_color_stop_rgba(1, 0, 0, 0, 0.42)
-    ctx.set_source(grad)
-    ctx.paint()
-
-    corner = cairo.RadialGradient(
-        WIDTH * 0.06, HEIGHT * 0.06, 0,
-        WIDTH * 0.06, HEIGHT * 0.06, WIDTH * 0.9,
-    )
-    corner.add_color_stop_rgba(0, 0, 0, 0, 0.55)
-    corner.add_color_stop_rgba(1, 0, 0, 0, 0.0)
-    ctx.set_source(corner)
-    ctx.paint()
-
-
-def apply_grain(arr, frame_idx):
-    rng = np.random.RandomState(SEED + 90000 + frame_idx)
-    noise = rng.normal(0, 2.2, size=(arr.shape[0], arr.shape[1], 1)).astype(np.float32)
-    out = arr.astype(np.float32) + noise
-    np.clip(out, 0, 255, out=out)
-    return out.astype(np.uint8)
-
-
-_WX0, _WX1 = int(WIDGET_X0), int(WIDGET_X1)
-_WY0, _WY1 = int(WIDGET_Y0), int(WIDGET_Y1)
-
-
-def enforce_widget_zone(bgr):
-    """Hard numeric guarantee for the widget-legibility rectangle
-    (x 2-40%, y 3-24%): mean luminance stays under WIDGET_LUMA_MAX and any
-    high-frequency detail is smoothed away, regardless of what atmosphere or
-    background layers bleed nearby. Returns (frame, region_mean_luma)."""
-    region = bgr[_WY0:_WY1, _WX0:_WX1].astype(np.float32)
-    # Kill high-frequency detail first (branch fragments/foliage texture),
-    # then hard-clamp brightness to guarantee the luminance ceiling.
-    region = cv2.GaussianBlur(region, (0, 0), sigmaX=9.0)
-    luma = region[:, :, 0] * 0.114 + region[:, :, 1] * 0.587 + region[:, :, 2] * 0.299
-    mean_luma = float(luma.mean())
-    if mean_luma > WIDGET_LUMA_MAX:
-        region *= (WIDGET_LUMA_MAX / mean_luma)
-        luma = region[:, :, 0] * 0.114 + region[:, :, 1] * 0.587 + region[:, :, 2] * 0.299
-        mean_luma = float(luma.mean())
-    bgr[_WY0:_WY1, _WX0:_WX1] = np.clip(region, 0, 255).astype(np.uint8)
-    return bgr, mean_luma
-
-
-def surface_to_bgr(surface):
-    stride = surface.get_stride()
-    buf = surface.get_data()
-    arr = np.ndarray(shape=(surface.get_height(), stride // 4, 4), dtype=np.uint8, buffer=buf)
-    return np.ascontiguousarray(arr[:, :surface.get_width(), :3])
-
-
-def clear_surface(ctx, w, h):
-    ctx.save()
-    ctx.identity_matrix()
-    ctx.set_operator(cairo.OPERATOR_SOURCE)
-    ctx.set_source_rgba(0, 0, 0, 0)
-    ctx.rectangle(0, 0, w, h)
-    ctx.fill()
-    ctx.set_operator(cairo.OPERATOR_OVER)
-    ctx.restore()
+def landings(data, centre_offset):
+    """Where and when released foliage meets the water (CPU twin of the shader)."""
+    anchor, flex = data[:, 0:3].astype(np.float64), data[:, 3].astype(np.float64)
+    release = data[:, 14].astype(np.float64)
+    p0 = anchor + sway_np(anchor, flex, release, data[:, 23].astype(np.float64))
+    height = np.maximum(p0[:, 1] + centre_offset - WATER_Y, 0.05)
+    a_land = height / data[:, 16] + FALL_TAU
+    travel = a_land - WIND_TAU * (1.0 - np.exp(-a_land / WIND_TAU))
+    xz = p0[:, [0, 2]] + data[:, 20:22] * (data[:, 17] * travel)[:, None]
+    return xz, (release + a_land) % DURATION_S
 
 
 # --------------------------------------------------------------------------
-# Main render loop
+# GPU programs
 # --------------------------------------------------------------------------
 
+TREE_COMMON = """
+uniform float u_time;
+uniform float u_duration;
 
-def render_frame(ctx, glow_ctx, frame_idx, branches, clusters, pools,
-                  branch_harm, branch_phase, branch_amps, bg_layers):
-    t = frame_idx / FPS
-    w = season_weights(t)
-    pal = blended_palette(w)
+float since(float t, float t0) { return mod(t - t0 + u_duration, u_duration); }
 
-    ctx.save()
-    apply_camera(ctx, t)
-    draw_background(ctx, t, pal, w, bg_layers)
-    skel = compute_skeleton(branches, branch_harm, branch_phase, branch_amps, t)
+// Wind is a sum of travelling waves with whole cycles per loop, so every
+// branch returns exactly to where it started.
+vec3 sway(vec3 rest, float flex, float t, float gust) {
+    float w = TAU / u_duration;
+    vec2 p = rest.xz;
+    float a = sin(w * 17.0 * t + dot(p, vec2(0.55, 0.35)) + rest.y * 0.30);
+    float b = sin(w * 29.0 * t + dot(p, vec2(-0.40, 0.75)) + rest.y * 0.55 + 1.7);
+    float c = sin(w * 46.0 * t + dot(p, vec2(0.95, -0.60)) + rest.y * 0.90 + 0.4);
+    vec3 push = vec3(0.62, 0.0, 0.34) * (a * 0.26 + 0.12) + vec3(-0.30, 0.0, 0.58) * b * 0.13
+              + vec3(0.45, 0.0, -0.50) * c * 0.06;
+    float f = flex * (0.55 + 0.45 * flex);
+    vec3 d = push * gust * f;
+    d.y = -dot(d.xz, d.xz) * 0.55 / max(flex * 2.2, 0.3);
+    return d;
+}
+"""
 
-    glow_ctx.save()
-    apply_camera(glow_ctx, t)
+BRANCH_VS = TREE_COMMON + """
+uniform mat4 u_view;
+uniform mat4 u_proj;
+uniform vec2 u_jitter;
+uniform vec2 u_size;
+uniform float u_mirror;
+uniform float u_gust;
+in vec3 in_center;
+in vec3 in_offset;
+in vec3 in_normal;
+in vec4 in_data;      // flex, path, radius, around
+out vec3 v_wpos;
+out vec3 v_normal;
+out vec4 v_data;
+out float v_thin;
+void main() {
+    vec3 centre = in_center + sway(in_center, in_data.x, u_time, u_gust);
+    vec4 vc = u_view * vec4(centre * vec3(1.0, u_mirror, 1.0), 1.0);
+    // Hair-thin strands keep a minimum on-screen width and give up brightness instead.
+    float px = in_data.z * u_proj[1][1] * u_size.y * 0.5 / max(-vc.z, 1e-3);
+    float widen = max(1.0, 0.60 / max(px, 1e-4));
+    vec3 wp = centre + in_offset * widen;
+    wp.y *= u_mirror;
+    v_thin = 1.0 / widen;
+    v_wpos = wp;
+    v_normal = in_normal * vec3(1.0, u_mirror, 1.0);
+    v_data = in_data;
+    vec4 clip = u_proj * u_view * vec4(wp, 1.0);
+    clip.xy += u_jitter * clip.w;
+    gl_Position = clip;
+}
+"""
 
-    draw_tree(ctx, glow_ctx, branches, skel, pal, w[WINTER], t)
-    draw_foliage(ctx, glow_ctx, clusters, skel, pal, w, t)
-    draw_particles(ctx, glow_ctx, t, pools, w, pal)
+BRANCH_FS = """
+uniform vec3 u_eye;
+uniform vec3 u_tint;
+uniform float u_time;
+uniform float u_duration;
+uniform float u_snow;
+uniform float u_level;
+uniform float u_axis_dist;
+in vec3 v_wpos;
+in vec3 v_normal;
+in vec4 v_data;
+in float v_thin;
+out vec4 f_color;
 
-    glow_ctx.restore()
-    ctx.restore()
+// Value noise that closes around the limb, so the grain has no seam.
+float ring_noise(vec2 p, float period) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 w = f * f * (3.0 - 2.0 * f);
+    float x0 = mod(i.x, period), x1 = mod(i.x + 1.0, period);
+    return mix(mix(hash12(vec2(x0, i.y)), hash12(vec2(x1, i.y)), w.x),
+               mix(hash12(vec2(x0, i.y + 1.0)), hash12(vec2(x1, i.y + 1.0)), w.x), w.y);
+}
 
-    draw_vignette(ctx)
+const float STROKES = 30.0;
 
+void main() {
+    vec3 N = normalize(v_normal);
+    vec3 V = normalize(u_eye - v_wpos);
+    float ndv = clamp(abs(dot(N, V)), 0.0, 1.0);
+    float rim = pow(1.0 - ndv, 2.6);
+    float path = v_data.y, around = v_data.w, radius = v_data.z;
+    float thick = smoothstep(0.012, 0.06, radius);
+    // The wood is drawn rather than lit: long brush strokes of light follow the
+    // grain over a dark body, wander, break off and gather toward the silhouette.
+    float grain = ring_noise(vec2(around * 4.0 + path * 0.15, path * 0.55), 4.0);
+    float wander = 2.6 * (grain - 0.5) + 1.0 * (ring_noise(vec2(around * 9.0, path * 1.7 + 5.0), 9.0) - 0.5);
+    float x = around * STROKES + wander;
+    float id = mod(floor(x), STROKES);
+    float tone = 0.12 + 0.88 * pow(hash12(vec2(id, 3.0)), 1.6);
+    float dash = smoothstep(0.30, 0.62, vnoise(vec2(path * 0.85 + id * 13.0, id * 7.0)));
+    float crowd = max(fwidth(x), 1e-4);
+    float d = abs(fract(x) - 0.5) / crowd;
+    float ink = ((1.0 - smoothstep(0.40, 1.25, d)) + 0.20 * exp(-d * d * 0.09)) * tone * dash;
+    ink = mix(ink, min(crowd * 0.55, 0.30), smoothstep(0.20, 0.48, crowd));
+    float fine = ring_noise(vec2(around * 40.0, path * 5.0), 40.0);
+    // Pulses of light climb from the roots to the strand tips.
+    float w = TAU / u_duration;
+    float pulse = pow(0.5 + 0.5 * sin(path * 1.10 - w * 15.0 * u_time), 8.0);
+    float slow = 0.5 + 0.5 * sin(path * 0.33 - w * 4.0 * u_time + 1.0);
+    float limb = 0.004 + ink * (0.22 + 0.16 * slow + 1.10 * pulse)
+               + rim * (0.22 + 0.50 * grain) * (1.0 + 0.7 * pulse);
+    float strand = 0.16 + 0.30 * rim * (0.45 + 0.8 * grain) + 0.45 * pulse + 0.05 * slow;
+    vec3 col = u_tint * mix(strand, limb, thick);
+    // Snow settles on whatever faces the sky.
+    float cap = smoothstep(0.20, 0.80, N.y + 0.3 * (fine - 0.5)) * u_snow;
+    float sparkle = pow(hash13(floor(v_wpos * 70.0)), 50.0) * 4.0;
+    col = mix(col, vec3(0.74, 0.86, 1.0) * (0.50 + 0.30 * fine + sparkle), cap * mix(0.75, 1.0, thick));
+    // The far side of the crown sinks into the dark.
+    float depth = length((u_eye - v_wpos).xz) - u_axis_dist;
+    col *= mix(1.20, 0.30, smooth01(depth / 4.4 + 0.5));
+    col *= u_level * mix(v_thin, 1.0, 0.2);
+    f_color = vec4(col, 1.0);
+}
+"""
 
-def composite_bloom(base_bgr, glow_surface):
-    glow_bgr = surface_to_bgr(glow_surface).astype(np.float32)
-    tight = cv2.GaussianBlur(glow_bgr, (0, 0), sigmaX=3.2)
-    wide = cv2.GaussianBlur(glow_bgr, (0, 0), sigmaX=11.0)
-    bloom_half = tight * 0.65 + wide * 0.85
-    bloom = cv2.resize(bloom_half, (WIDTH, HEIGHT), interpolation=cv2.INTER_LINEAR)
-    out = base_bgr.astype(np.float32) + bloom * 0.9
-    np.clip(out, 0, 255, out=out)
-    return out.astype(np.uint8)
+FOLIAGE_VS = TREE_COMMON + """
+uniform mat4 u_view;
+uniform mat4 u_proj;
+uniform vec2 u_jitter;
+uniform vec3 u_eye;
+uniform float u_mirror;
+uniform float u_gust;
+uniform float u_kind;          // 0 petal, 1 leaf
+uniform vec3 u_slab;           // previous, own, next blur coordinate
+uniform vec2 u_slab_range;
+uniform vec4 u_lens;           // focus, scale, sharp range, near fade
+in vec2 in_uv;
+in vec4 i_anchor;   // rest xyz, flex
+in vec4 i_quat;     // frame at full bloom
+in vec4 i_params;   // azimuth or phase, size, exposure, seed
+in vec4 i_times;    // bud, open, release, float duration
+in vec4 i_fall;     // terminal speed, wind travel, flutter amplitude, flutter hz
+in vec4 i_fall2;    // wind x, wind z, tumble rate, gust at release
+in vec4 i_color;    // tint, autumn target, turn time, path
+out vec2 v_uv;
+out vec3 v_wpos;
+out vec3 v_normal;
+flat out vec4 v_tone;     // rgb, brightness
+flat out vec4 v_state;    // alpha, kind, seed, ember
 
+const float FALL_TAU = 0.7;
+const float WIND_TAU = 1.2;
 
-def build_ffmpeg_cmd(output_path):
-    return [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-y",
-        "-f", "rawvideo",
-        "-pixel_format", "bgr24",
-        "-video_size", f"{WIDTH}x{HEIGHT}",
-        "-framerate", str(FPS),
-        "-i", "-",
-        "-an",
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-level:v", "4.1",
-        "-pix_fmt", "yuv420p",
-        "-preset", "medium",
-        "-b:v", f"{TARGET_BITRATE_KBPS}k",
-        "-maxrate", f"{MAXRATE_KBPS}k",
-        "-bufsize", f"{BUFSIZE_KBPS}k",
-        "-g", str(FPS * 2),
-        "-keyint_min", str(FPS),
-        "-bf", "2",
-        "-refs", "3",
-        "-sc_threshold", "0",
-        "-movflags", "+faststart",
-        output_path,
-    ]
+float profile(float u, float p, float q) {
+    float norm = pow(p / (p + q), p) * pow(q / (p + q), q);
+    return pow(max(u, 1e-5), p) * pow(max(1.0 - u, 0.0), q) / norm;
+}
 
+vec4 leaf_flutter(float t, float gust, float seed, float phase) {
+    float w = TAU / u_duration;
+    float n1 = 58.0 + floor(seed * 40.0), n2 = 37.0 + floor(seed * 23.0);
+    float twist = (0.30 * sin(w * n1 * t + phase) + 0.12 * sin(w * (n1 + 31.0) * t + 2.0 * phase)) * gust;
+    float swing = 0.22 * sin(w * n2 * t + 1.7 * phase) * gust;
+    return quat_mul(quat_axis(vec3(0.0, 1.0, 0.0), twist), quat_axis(vec3(1.0, 0.0, 0.0), swing));
+}
 
-def main():
-    n_frames = N_FRAMES
-    contact_sheet = "--contact-sheet" in sys.argv
-    pos_args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if pos_args:
-        n_frames = int(pos_args[0])
+vec3 leaf_colour(float tint, float target, float turned, float young) {
+    vec3 emerald = vec3(0.012, 0.30, 0.085), jade = vec3(0.010, 0.27, 0.17), lime = vec3(0.17, 0.46, 0.035);
+    vec3 green = tint < 0.5 ? mix(emerald, jade, tint * 2.0) : mix(jade, lime, (tint - 0.5) * 2.0);
+    vec3 bronze = vec3(0.55, 0.36, 0.08);
+    vec3 col = mix(bronze, green, young);
+    vec3 gold = vec3(1.0, 0.62, 0.05), amber = vec3(1.0, 0.27, 0.02), crimson = vec3(0.72, 0.030, 0.035);
+    vec3 final = target < 0.5 ? mix(gold, amber, target * 2.0) : mix(amber, crimson, (target - 0.5) * 2.0);
+    vec3 autumn = turned < 0.5 ? mix(col, gold, smooth01(turned * 2.0)) : mix(gold, final, smooth01(turned * 2.0 - 1.0));
+    return turned > 0.0 ? autumn : col;
+}
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+void main() {
+    float kind = u_kind;
+    float seed = i_params.w;
+    float size = i_params.y;
+    float span = since(i_times.z, i_times.x);            // bud to release
+    float a_bud = since(u_time, i_times.x);
+    float a_rel = since(u_time, i_times.z);
+    bool attached = a_bud < span;
 
-    t_start = time.time()
-    rng = np.random.RandomState(SEED)
-    branches, clusters = build_tree(rng)
-    branch_harm, branch_phase = make_harmonics(rng, len(branches), n_octaves=3)
-    branch_amps = octave_amps(3)
-    pools = make_particle_pools()
-    bg_layers = build_bg_layers()
-    n_anchors = sum(len(c.anchors) for c in clusters)
-    print(f"[render] tree: {len(branches)} branches, {len(clusters)} clusters, "
-          f"{n_anchors} leaf/blossom anchors, {len(bg_layers)} bg layers")
+    float width = kind < 0.5 ? 0.84 : 0.40;
+    float p = kind < 0.5 ? 1.10 : 0.85, q = kind < 0.5 ? 0.42 : 1.05;
+    float cup = kind < 0.5 ? 0.28 : 0.0;
+    float fold = kind < 0.5 ? 0.0 : 0.16;
+    float curl = kind < 0.5 ? 0.10 : 0.22;
 
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
-    ctx = cairo.Context(surface)
-    glow_surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, GLOW_W, GLOW_H)
-    glow_ctx = cairo.Context(glow_surface)
-    glow_ctx.scale(GLOW_SCALE, GLOW_SCALE)
+    float a_open = a_bud - since(i_times.y, i_times.x);
+    float open_s = kind < 0.5 ? 5.5 : 7.5;
+    float open = attached ? (a_open > 0.0 ? smooth01(a_open / open_s) : 0.0) : 1.0;
+    float grow = attached ? smooth01(a_bud / 5.0) : 1.0;
+    float scale = (kind < 0.5 ? mix(0.36, 1.0, open) : mix(0.10, 1.0, open)) * grow;
+    fold = mix(1.1, fold, open);
+    float tuck = kind < 0.5 ? mix(radians(64.0), 0.0, open) : mix(radians(28.0), 0.0, open);
 
-    if contact_sheet:
-        out_dir = os.path.join(os.path.dirname(OUTPUT_PATH), "previews")
-        os.makedirs(out_dir, exist_ok=True)
-        n_shots = 16
-        indices = [int(i * N_FRAMES / n_shots) for i in range(n_shots)]
-        for k, frame_idx in enumerate(indices):
-            clear_surface(glow_ctx, GLOW_W, GLOW_H)
-            render_frame(ctx, glow_ctx, frame_idx, branches, clusters, pools,
-                         branch_harm, branch_phase, branch_amps, bg_layers)
-            base_bgr = surface_to_bgr(surface)
-            final = composite_bloom(base_bgr, glow_surface)
-            final = apply_grain(final, frame_idx)
-            final, wz_luma = enforce_widget_zone(final)
-            t = frame_idx / FPS
-            png_path = os.path.join(out_dir, f"preview_{k:02d}_f{frame_idx:04d}_t{t:05.1f}s.png")
-            cv2.imwrite(png_path, final)
-            print(f"[preview] frame {frame_idx} t={t:.1f}s widget_luma={wz_luma:.2f} -> {png_path}")
-        print(f"[preview] {n_shots} frames written to {out_dir}")
-        return
+    // Local surface.
+    float u = in_uv.x, v = in_uv.y;
+    float L = size * scale, W = L * width;
+    float hw = profile(u, p, q);
+    float x = v * hw * W * 0.5;
+    float z = cup * x * x / max(W * 0.5, 1e-5) + fold * abs(x) - curl * L * u * u;
+    vec3 lp = vec3(x, u * L, z);
+    vec3 ln = normalize(vec3(-(2.0 * cup * x / max(W * 0.5, 1e-5) + fold * sign(x)), 2.0 * curl * u, 1.0));
+    float ct = cos(tuck), st = sin(tuck);
+    lp = vec3(lp.x, lp.y * ct - lp.z * st, lp.y * st + lp.z * ct);
+    ln = vec3(ln.x, ln.y * ct - ln.z * st, ln.y * st + ln.z * ct);
 
-    if n_frames == N_FRAMES:
-        output_path = OUTPUT_PATH
-    else:
-        smoke_dir = os.path.join(os.path.dirname(OUTPUT_PATH), "previews")
-        os.makedirs(smoke_dir, exist_ok=True)
-        output_path = os.path.join(
-            smoke_dir, f"four-seasons-cinematic-smoke-{n_frames}.mp4")
-    cmd = build_ffmpeg_cmd(output_path)
-    print("[render] ffmpeg cmd:", " ".join(cmd))
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.PIPE)
+    vec4 q_rest = i_quat;
+    vec3 wp, wn;
+    float alpha = 1.0, ember = 0.0, flash = 1.0;
+    vec3 rest = i_anchor.xyz;
+    if (attached) {
+        vec4 ql = kind < 0.5 ? q_rest : quat_mul(q_rest, leaf_flutter(u_time, u_gust, seed, i_params.x));
+        wp = rest + sway(rest, i_anchor.w, u_time, u_gust) + quat_rotate(ql, lp);
+        wn = quat_rotate(ql, ln);
+    } else {
+        float gust0 = i_fall2.w;
+        vec4 q0 = kind < 0.5 ? q_rest : quat_mul(q_rest, leaf_flutter(i_times.z, gust0, seed, i_params.x));
+        vec3 mid = vec3(0.0, 0.5 * size, 0.0);
+        vec3 c0 = rest + sway(rest, i_anchor.w, i_times.z, gust0) + quat_rotate(q0, mid);
+        float height = max(c0.y - """ + repr(WATER_Y) + """, 0.05);
+        float a_land = height / i_fall.x + FALL_TAU;
+        float a = min(a_rel, a_land);
+        float fallen = (a - FALL_TAU * (1.0 - exp(-a / FALL_TAU))) / (a_land - FALL_TAU * (1.0 - exp(-a_land / FALL_TAU)));
+        float travel = a - WIND_TAU * (1.0 - exp(-a / WIND_TAU));
+        float after = max(a_rel - a_land, 0.0);
+        float h1 = hash11(seed * 91.7 + 3.1), h2 = hash11(seed * 47.3 + 9.2), h3 = hash11(seed * 13.9 + 5.5);
+        vec2 wind = i_fall2.xy;
+        float phase = TAU * h1;
+        float env = (1.0 - exp(-a / 0.8)) * (1.0 - smooth01((a - a_land + 0.6) / 0.6));
+        vec3 flutter = i_fall.z * env * vec3(cos(phase + TAU * i_fall.w * a) - cos(phase),
+                                             0.22 * sin(2.0 * (phase + TAU * i_fall.w * a)) - 0.22 * sin(2.0 * phase),
+                                             sin(phase + TAU * i_fall.w * a) - sin(phase));
+        vec3 c = c0;
+        c.xz += wind * i_fall.y * travel + vec2(wind.y, -wind.x) * (h2 - 0.5) * 0.6 * travel;
+        c.y = mix(c0.y, """ + repr(WATER_Y) + """ + 0.012, fallen);
+        c += flutter * vec3(1.0, fallen < 1.0 ? 1.0 : 0.0, 1.0);
+        // Afloat: a slow current and the faintest bob.
+        c.xz += (wind * 0.045 + vec2(h2 - 0.5, h3 - 0.5) * 0.05) * after;
 
-    render_t0 = time.time()
-    wz_min, wz_max, wz_sum = 255.0, 0.0, 0.0
-    try:
-        for frame_idx in range(n_frames):
-            clear_surface(glow_ctx, GLOW_W, GLOW_H)
-            render_frame(ctx, glow_ctx, frame_idx, branches, clusters, pools,
-                         branch_harm, branch_phase, branch_amps, bg_layers)
-
-            base_bgr = surface_to_bgr(surface)
-            final = composite_bloom(base_bgr, glow_surface)
-            final = apply_grain(final, frame_idx)
-            final, wz_luma = enforce_widget_zone(final)
-            wz_min = min(wz_min, wz_luma)
-            wz_max = max(wz_max, wz_luma)
-            wz_sum += wz_luma
-            proc.stdin.write(final.tobytes())
-
-            if frame_idx % 96 == 0:
-                elapsed = time.time() - render_t0
-                print(f"[render] frame {frame_idx}/{n_frames} ({elapsed:.1f}s elapsed)")
-    finally:
-        proc.stdin.close()
-        stderr_out = proc.stderr.read().decode("utf-8", "ignore")
-        ret = proc.wait()
-    render_t1 = time.time()
-
-    if ret != 0:
-        print(stderr_out[-4000:])
-        raise RuntimeError(f"ffmpeg exited with code {ret}")
-
-    total_elapsed = time.time() - t_start
-    render_elapsed = render_t1 - render_t0
-    file_size = os.path.getsize(output_path)
-    wz_mean = wz_sum / n_frames if n_frames else 0.0
-    print(f"[render] done. frames={render_elapsed:.1f}s total={total_elapsed:.1f}s "
-          f"size={file_size/1_000_000:.2f}MB -> {output_path}")
-    print(f"[render] widget-zone luminance: min={wz_min:.2f} mean={wz_mean:.2f} "
-          f"max={wz_max:.2f} (ceiling={WIDGET_LUMA_MAX})")
-
-    if n_frames == N_FRAMES:
-        validate_output(output_path, render_elapsed, total_elapsed)
-        report_seam_metrics(output_path)
-    else:
-        print(f"[render] smoke test ({n_frames} frames) — skipping full validation.")
-
-
-def validate_output(path, render_elapsed, total_elapsed):
-    cmd = [
-        "ffprobe", "-hide_banner", "-v", "error", "-print_format", "json",
-        "-show_format", "-show_streams", path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    info = json.loads(result.stdout)
-    stream = next(s for s in info["streams"] if s["codec_type"] == "video")
-    fmt = info["format"]
-
-    duration = float(fmt.get("duration", stream.get("duration", 0)))
-    size_bytes = int(fmt.get("size", os.path.getsize(path)))
-    fps_num, fps_den = (stream.get("r_frame_rate", "0/1")).split("/")
-    fps_val = float(fps_num) / float(fps_den) if float(fps_den) else 0.0
-    has_audio = any(s["codec_type"] == "audio" for s in info["streams"])
-
-    report = {
-        "codec_name": stream.get("codec_name"),
-        "profile": stream.get("profile"),
-        "level": stream.get("level"),
-        "pix_fmt": stream.get("pix_fmt"),
-        "width": stream.get("width"),
-        "height": stream.get("height"),
-        "fps": round(fps_val, 3),
-        "duration_s": round(duration, 3),
-        "size_bytes": size_bytes,
-        "size_mb": round(size_bytes / 1_000_000, 2),
-        "has_audio": has_audio,
-        "render_time_s": round(render_elapsed, 2),
-        "total_time_s": round(total_elapsed, 2),
+        vec3 axis = normalize(vec3(1.0, 0.6 * (h2 - 0.5), 0.9 * (h3 - 0.5)));
+        float spun = i_fall2.z * (a - FALL_TAU * (1.0 - exp(-a / FALL_TAU)));
+        vec4 qf = quat_mul(q0, quat_axis(axis, spun));
+        vec4 flat_q = quat_mul(quat_axis(vec3(0.0, 1.0, 0.0), TAU * h1 + 0.05 * after),
+                               quat_axis(vec3(1.0, 0.0, 0.0), h3 < 0.5 ? -0.5 * PI : 0.5 * PI));
+        if (dot(qf, flat_q) < 0.0) flat_q = -flat_q;
+        vec4 qn = normalize(mix(qf, flat_q, smooth01((a_rel - a_land + 0.9) / 0.9)));
+        wp = c + quat_rotate(qn, lp - mid);
+        wn = quat_rotate(qn, ln);
+        float float_s = i_times.w;
+        ember = smooth01(after / (0.5 * float_s));
+        alpha = 1.0 - smooth01((after - 0.40 * float_s) / (0.60 * float_s));
+        // Wet petals rock on the water and catch the light for an instant.
+        float rock = TAU / u_duration * (44.0 + floor(h2 * 60.0)) * u_time + TAU * h3;
+        float glint = pow(0.5 + 0.5 * sin(rock), 40.0) * smooth01(after / 0.8);
+        flash = 1.25 + (kind < 0.5 ? 12.0 : 2.5) * glint;
+        if (a_rel > a_land + float_s) alpha = 0.0;
+        // What is about to touch the water joins its own reflection: the mirrored
+        // copy fades over the last of the fall instead of vanishing at the surface.
+        if (u_mirror < 0.0) alpha *= 1.0 - smooth01((a_rel - a_land + 0.9) / 0.6);
     }
 
-    print("\n===== VALIDATION REPORT =====")
-    for k, v in report.items():
-        print(f"{k:>14}: {v}")
-    print("==============================")
+    // Colour over the year.
+    vec3 col;
+    if (kind < 0.5) {
+        vec3 pale = vec3(1.0, 0.80, 0.86), rose = vec3(1.0, 0.30, 0.52), bud = vec3(0.90, 0.10, 0.34);
+        col = mix(bud, mix(pale, rose, i_color.x), smooth01(open * 1.2));
+        col = mix(col, col * vec3(0.95, 0.55, 0.70), 0.6 * ember);
+    } else {
+        float a_turn = since(u_time, i_color.z);
+        float turned = a_turn < since(i_times.x, i_color.z) ? clamp(a_turn / 9.0, 0.0, 1.0) : 0.0;
+        float young = smooth01(max(a_open, 0.0) / 16.0);
+        col = leaf_colour(i_color.x, i_color.y, attached || turned > 0.0 ? turned : 1.0, young);
+        col = mix(col, vec3(0.55, 0.05, 0.01), 0.75 * ember);
+    }
 
-    assert report["width"] == WIDTH and report["height"] == HEIGHT, "dimension mismatch"
-    assert abs(report["fps"] - FPS) < 0.01, "fps mismatch"
-    assert report["pix_fmt"] == "yuv420p", "pix_fmt mismatch"
-    assert report["codec_name"] == "h264", "codec mismatch"
-    assert not report["has_audio"], "unexpected audio stream"
-    assert 26.0 <= report["size_mb"] <= 28.8, f"size out of target range: {report['size_mb']}MB"
-    assert 47.0 <= report["duration_s"] <= 49.0, "duration out of expected range"
+    // Light travels out from the trunk through the crown.
+    float w = TAU / u_duration;
+    float wave = 0.5 + 0.5 * sin(i_color.w * 0.33 - w * 4.0 * u_time + 1.0);
+    float brightness = i_params.z * (0.78 + 0.40 * wave) * flash * (1.0 - 0.55 * ember);
 
-    return report
+    wp.y *= u_mirror;
+    wn.y *= u_mirror;
+    vec4 vp = u_view * vec4(wp, 1.0);
+    float dist = max(-vp.z, 1e-3);
+    float s = (1.0 / dist - 1.0 / u_lens.x) * u_lens.y;
+    s = sign(s) * max(abs(s) - u_lens.z, 0.0);
+    s = clamp(s, u_slab_range.x, u_slab_range.y);
+    float weight = s <= u_slab.y ? (u_slab.y - u_slab.x > 1e-6 ? (s - u_slab.x) / (u_slab.y - u_slab.x) : 1.0)
+                                 : (u_slab.z - u_slab.y > 1e-6 ? (u_slab.z - s) / (u_slab.z - u_slab.y) : 1.0);
+    alpha *= clamp(weight, 0.0, 1.0) * smoothstep(u_lens.w * 0.5, u_lens.w, dist);
+
+    v_uv = vec2(u, v);
+    v_wpos = wp;
+    v_normal = wn;
+    v_tone = vec4(col, brightness);
+    v_state = vec4(alpha, kind, seed, ember);
+    vec4 clip = u_proj * vp;
+    clip.xy += u_jitter * clip.w;
+    gl_Position = alpha > 0.002 && scale > 0.001 ? clip : vec4(2.0, 2.0, 2.0, 1.0);
+}
+"""
+
+FOLIAGE_FS = """
+uniform vec3 u_eye;
+uniform vec3 u_key;
+uniform float u_axis_dist;
+in vec2 v_uv;
+in vec3 v_wpos;
+in vec3 v_normal;
+flat in vec4 v_tone;
+flat in vec4 v_state;
+out vec4 f_color;
+
+float profile(float u, float p, float q) {
+    float norm = pow(p / (p + q), p) * pow(q / (p + q), q);
+    return pow(max(u, 1e-5), p) * pow(max(1.0 - u, 0.0), q) / norm;
+}
+
+void main() {
+    // Edge-on petals are thinner than a pixel; keep extrapolated samples inside the surface.
+    float u = clamp(v_uv.x, 0.0, 1.0), v = clamp(v_uv.y, -1.0, 1.0);
+    float kind = v_state.y, seed = v_state.z;
+    float cover = 1.0;
+    vec3 col = v_tone.rgb;
+    float detail = 1.0;
+    if (kind < 0.5) {
+        // Cherry petals are notched at the tip and deepen toward the heart.
+        float xn = v * profile(u, 1.10, 0.42);
+        float cut = 1.0 - 0.17 * exp(-(xn * xn) / 0.05);
+        float aa = max(fwidth(cut - u), 1e-4);
+        cover = smoothstep(-aa, aa, cut - u);
+        col = mix(col * vec3(0.95, 0.42, 0.55), col, smooth01(u * 1.7 + 0.1));
+        col += vec3(1.0, 0.75, 0.30) * 0.55 * exp(-u * 11.0);
+        detail = 0.88 + 0.24 * fbm(vec2(xn * 9.0 + seed * 40.0, u * 3.0));
+    } else {
+        // Leaves: a bright midrib, pinnate veins and a paler serrated margin.
+        float side = abs(v);
+        float rib = exp(-v * v / 0.004);
+        float veins = abs(fract((u * 1.1 - side * 0.55) * 7.0 + seed) - 0.5) * 2.0;
+        float fw = fwidth((u * 1.1 - side * 0.55) * 7.0);
+        float vein = (1.0 - smoothstep(0.10, 0.10 + max(2.0 * fw, 0.08), veins)) * clamp(1.0 - fw * 1.5, 0.0, 1.0);
+        float margin = smoothstep(0.70, 1.0, side);
+        detail = 0.80 + 0.40 * rib + 0.20 * vein * (1.0 - margin) + 0.12 * margin * margin
+               + 0.30 * (fbm(vec2(v * 5.0 + seed * 30.0, u * 4.0)) - 0.5);
+    }
+    if (cover <= 0.002) discard;
+
+    vec3 V = normalize(u_eye - v_wpos);
+    vec3 N = normalize(v_normal);
+    float facing = dot(N, V);
+    vec3 Nf = facing < 0.0 ? -N : N;
+    float fres = pow(clamp(1.0 - abs(facing), 0.0, 1.0), 2.2);
+    float wrap = smooth01(dot(Nf, u_key) * 0.5 + 0.5);
+    float through = pow(clamp(0.5 - 0.5 * dot(Nf, u_key), 0.0, 1.0), 2.0);
+    float gloss = kind < 0.5 ? 0.0 : pow(clamp(dot(Nf, normalize(u_key + V)), 0.0, 1.0), 18.0) * 1.1;
+    float light = (0.34 + 0.70 * wrap + 0.50 * fres + 0.45 * through) * detail + gloss;
+    if (facing < 0.0) light *= 0.78;
+
+    // The far side of the crown sinks into the dark; the near side glows.
+    float depth = length((u_eye - v_wpos).xz) - u_axis_dist;
+    light *= mix(1.30, 0.26, smooth01(depth / 4.4 + 0.5));
+
+    float alpha = v_state.x * cover;
+    f_color = vec4(col * light * v_tone.a * alpha, alpha);
+}
+"""
+
+WATER_VS = """
+uniform mat4 u_view;
+uniform mat4 u_proj;
+in vec2 in_pos;
+out vec3 v_wpos;
+void main() {
+    v_wpos = vec3(in_pos.x, """ + repr(WATER_Y) + """, in_pos.y);
+    gl_Position = u_proj * u_view * vec4(v_wpos, 1.0);
+}
+"""
+
+WATER_FS = """
+uniform sampler2D u_reflection;
+uniform vec2 u_size;
+uniform vec3 u_eye;
+uniform float u_time;
+uniform float u_duration;
+uniform float u_level;
+uniform int u_ripple_count;
+uniform vec4 u_ripples[""" + str(MAX_RIPPLES) + """];      // x, z, age, strength
+uniform vec3 u_ripple_tint;
+in vec3 v_wpos;
+out vec4 f_color;
+
+// A barely breathing surface: a few crossing swells, whole cycles per loop.
+vec2 swell(vec2 p) {
+    float w = TAU / u_duration * u_time;
+    return 0.010 * vec2(cos(p.x * 2.1 + p.y * 0.7 + w * 23.0), cos(p.y * 2.6 - p.x * 0.9 + w * 31.0))
+         + 0.006 * vec2(cos(p.x * 5.3 - p.y * 1.9 - w * 41.0), cos(p.y * 4.7 + p.x * 2.3 + w * 37.0))
+         + 0.004 * vec2(cos(p.x * 8.9 + p.y * 6.1 + w * 53.0), cos(p.y * 9.7 - p.x * 5.3 - w * 47.0));
+}
+
+void main() {
+    vec2 p = v_wpos.xz;
+    // Rings spread where petals, leaves and snow touch down.
+    vec2 slope = vec2(0.0);
+    float crest = 0.0;
+    for (int i = 0; i < u_ripple_count; ++i) {
+        vec4 r = u_ripples[i];
+        vec2 d = p - r.xy;
+        float dist = length(d);
+        float front = 0.12 + 0.36 * r.z;
+        float fade = r.w * exp(-r.z * 0.70) * smoothstep(0.0, 0.25, r.z)
+                   * (1.0 - smoothstep(""" + repr(RIPPLE_LIFE_S - 1.5) + """, """ + repr(RIPPLE_LIFE_S) + """, r.z));
+        float x = (dist - front) * 14.0;
+        float ring = fade * exp(-x * x * 0.12) * step(dist, front + 1.2);
+        slope += (d / max(dist, 1e-3)) * cos(x) * ring * 0.10;
+        crest += ring * pow(0.5 + 0.5 * cos(x), 6.0) * smoothstep(0.15, 0.9, r.z);
+    }
+    float range = length(p);
+    float view_dist = length(u_eye - v_wpos);
+    // At this grazing angle one pixel covers a long stretch of water, so the
+    // reflection is gathered along the line of sight: it smears downward into
+    // soft streaks the way lights do on a night harbour.
+    vec2 screen = gl_FragCoord.xy / u_size;
+    vec2 along = normalize(p - u_eye.xz);
+    float footprint = 0.030 * view_dist;
+    vec3 refl = vec3(0.0);
+    float total = 0.0;
+    for (int k = -8; k <= 8; ++k) {
+        float f = float(k) / 8.0;
+        float weight = 1.0 - 0.6 * f * f;
+        vec2 tilt = slope + swell(p + along * f * footprint);
+        vec2 uv = screen + tilt * vec2(0.8, 2.2) * 6.0 / view_dist;
+        refl += texture(u_reflection, uv).rgb * weight;
+        total += weight;
+    }
+    refl /= total;
+    // The pool has no shore: it thins out around the tree and toward the lower edge of the glass.
+    float reach = (1.0 - smoothstep(3.5, 9.5, range)) * smoothstep(0.0, 0.075, screen.y);
+    vec3 col = refl * 0.42 * reach + u_ripple_tint * crest * 0.13 * (1.0 - smoothstep(5.0, 11.0, range)) * smoothstep(0.0, 0.05, screen.y);
+    f_color = vec4(col * u_level, 0.0);
+}
+"""
+
+BRANCH_TINTS = ((1.00, 0.78, 0.72), (0.80, 0.92, 0.62), (1.00, 0.68, 0.36), (0.70, 0.85, 1.00))
+BRANCH_LEVELS = (0.55, 0.45, 0.75, 1.05)
+RIPPLE_TINTS = ((1.00, 0.72, 0.82), (0.75, 1.00, 0.80), (1.00, 0.66, 0.30), (0.80, 0.90, 1.00))
+KEY_LIGHT_LOCAL = np.array([-0.40, 0.62, 0.68]) / np.linalg.norm([-0.40, 0.62, 0.68])
+SUBFRAMES = 6
+SHUTTER = 0.55
+FOLIAGE_GRID = (5, 2)
 
 
-def report_seam_metrics(path):
-    """Numerically confirms the loop seam is no more jarring than any other
-    adjacent-frame cut, by decoding and diffing frames near the wrap point."""
-    cap = cv2.VideoCapture(path)
-    wanted = {0, 1, N_FRAMES - 2, N_FRAMES - 1}
-    frames = {}
-    i = 0
-    while True:
-        ok, f = cap.read()
-        if not ok or i > max(wanted):
-            break
-        if i in wanted:
-            frames[i] = f
-        i += 1
-    cap.release()
+class Particles:
+    """Snow, fireflies, drifting motes and frost: closed paths of light."""
 
-    if not all(k in frames for k in wanted):
-        print("[seam] could not decode all required frames for seam check")
-        return
+    def __init__(self, tree):
+        rng = np.random.RandomState(SEED + 23)
+        n = 1500
+        self.snow_xz = rng.uniform(-1.0, 1.0, (n, 2)) * np.array([9.0, 9.0])
+        self.snow_top = 9.5
+        self.snow_cycles = np.round(rng.uniform(5.0, 10.0, n))
+        self.snow_phase = rng.uniform(0.0, 1.0, n)
+        self.snow_sway = rng.uniform(0.10, 0.45, (n, 2))
+        self.snow_sway_cycles = np.round(rng.uniform(9.0, 26.0, (n, 2)))
+        self.snow_sway_phase = rng.uniform(0, 2 * math.pi, (n, 2))
+        self.snow_radius = rng.uniform(0.006, 0.016, n) * np.where(rng.uniform(size=n) < 0.10, 2.2, 1.0)
+        self.snow_gain = rng.uniform(0.25, 1.0, n) ** 1.5
 
-    def mad(a, b):
-        return float(np.mean(np.abs(a.astype(np.int16) - b.astype(np.int16))))
+        f = 46
+        self.fly_centre = np.stack([rng.uniform(-3.4, 3.4, f), rng.uniform(0.35, 3.4, f), rng.uniform(-3.4, 3.4, f)], axis=1)
+        self.fly_amp = rng.uniform(0.35, 1.3, (f, 3)) * np.array([1.0, 0.45, 1.0])
+        self.fly_cycles = np.round(rng.uniform(2.0, 6.0, (f, 3)))
+        self.fly_cycles2 = np.round(rng.uniform(7.0, 13.0, (f, 3)))
+        self.fly_phase = rng.uniform(0, 2 * math.pi, (f, 6))
+        self.fly_blink = np.round(rng.uniform(34.0, 62.0, f))
+        self.fly_blink_phase = rng.uniform(0, 2 * math.pi, f)
 
-    d_start = mad(frames[0], frames[1])
-    d_end = mad(frames[N_FRAMES - 2], frames[N_FRAMES - 1])
-    d_wrap = mad(frames[N_FRAMES - 1], frames[0])
+        m = 110
+        self.mote_centre = np.stack([rng.uniform(-5.0, 5.0, m), rng.uniform(0.2, 7.5, m), rng.uniform(-5.0, 5.0, m)], axis=1)
+        self.mote_amp = rng.uniform(0.2, 0.9, (m, 3))
+        self.mote_cycles = np.round(rng.uniform(1.0, 5.0, (m, 3)))
+        self.mote_phase = rng.uniform(0, 2 * math.pi, (m, 3))
+        self.mote_twinkle = np.round(rng.uniform(15.0, 50.0, m))
+        self.mote_radius = rng.uniform(0.007, 0.018, m)
+        self.mote_gain = rng.uniform(0.2, 1.0, m) ** 1.5
 
-    print("\n===== SEAM METRICS (mean abs pixel diff) =====")
-    print(f"  frame0 -> frame1 (normal adjacent):        {d_start:.3f}")
-    print(f"  frame{N_FRAMES-2} -> frame{N_FRAMES-1} (normal adjacent): {d_end:.3f}")
-    print(f"  frame{N_FRAMES-1} -> frame0 (loop wrap):    {d_wrap:.3f}")
-    ratio = d_wrap / max((d_start + d_end) / 2.0, 1e-6)
-    print(f"  wrap/adjacent ratio: {ratio:.2f}x")
-    print("===============================================")
+        tips = np.nonzero(tree.kind == 1)[0]
+        tips = tips[rng.uniform(size=len(tips)) < 0.055]
+        self.frost_pos = tree.pos[tips]
+        self.frost_flex = tree.flex[tips]
+        self.frost_cycles = np.round(rng.uniform(20.0, 70.0, len(tips)))
+        self.frost_phase = rng.uniform(0, 2 * math.pi, len(tips))
+
+    def snow(self, t, amount):
+        frac = (self.snow_phase + self.snow_cycles * t / DURATION_S) % 1.0
+        y = self.snow_top * (1.0 - frac)
+        phase = 2 * math.pi * t / DURATION_S
+        xz = self.snow_xz + self.snow_sway * np.sin(self.snow_sway_cycles * phase + self.snow_sway_phase)
+        edge = np.clip(np.minimum(frac, 1.0 - frac) / 0.06, 0.0, 1.0)
+        data = np.empty((len(y), 8))
+        data[:, 0], data[:, 1], data[:, 2], data[:, 3] = xz[:, 0], y, xz[:, 1], self.snow_radius
+        data[:, 4:7] = (0.80, 0.90, 1.0)
+        data[:, 7] = self.snow_gain * edge * amount * 1.5
+        return data, xz, frac
+
+    def fireflies(self, t, amount):
+        phase = 2 * math.pi * t / DURATION_S
+        pos = (self.fly_centre + self.fly_amp * np.sin(self.fly_cycles * phase + self.fly_phase[:, :3])
+               + 0.3 * self.fly_amp * np.sin(self.fly_cycles2 * phase + self.fly_phase[:, 3:]))
+        pos[:, 1] = np.maximum(pos[:, 1], 0.12)
+        blink = np.clip(np.sin(self.fly_blink * phase + self.fly_blink_phase) * 1.6 - 0.2, 0.0, 1.0) ** 2
+        data = np.empty((len(pos), 8))
+        data[:, 0:3], data[:, 3] = pos, 0.030
+        data[:, 4:7] = (0.62, 1.0, 0.22)
+        data[:, 7] = blink * amount * 3.2
+        return data
+
+    def motes(self, t, tint, amount):
+        phase = 2 * math.pi * t / DURATION_S
+        pos = self.mote_centre + self.mote_amp * np.sin(self.mote_cycles * phase + self.mote_phase)
+        twinkle = 0.55 + 0.45 * np.sin(self.mote_twinkle * phase + self.mote_phase[:, 0])
+        data = np.empty((len(pos), 8))
+        data[:, 0:3], data[:, 3] = pos, self.mote_radius
+        data[:, 4:7] = tint
+        data[:, 7] = self.mote_gain * twinkle * amount
+        return data
+
+    def frost(self, t, gust, amount):
+        phase = 2 * math.pi * t / DURATION_S
+        pos = self.frost_pos + sway_np(self.frost_pos, self.frost_flex, t, np.full(len(self.frost_pos), gust))
+        glint = np.clip(np.sin(self.frost_cycles * phase + self.frost_phase), 0.0, 1.0) ** 12
+        data = np.empty((len(pos), 8))
+        data[:, 0:3], data[:, 3] = pos, 0.016
+        data[:, 4:7] = (0.80, 0.92, 1.0)
+        data[:, 7] = glint * amount * 5.0
+        return data
+
+
+class FrameRenderer:
+    def __init__(self):
+        import moderngl
+        import artwork_gl as agl
+        self.agl, self.moderngl = agl, moderngl
+        self.tree = Tree()
+        self.foliage = Foliage(self.tree)
+        self.particles = Particles(self.tree)
+        self.stage = agl.Stage(WIDTH, HEIGHT, margin=MARGIN)
+        self.dof = agl.DepthOfField(ORBIT_RADIUS, DOF_SCALE, DOF_FAR_SIGMAS, DOF_NEAR_SIGMAS, sharp=DOF_SHARP_RANGE)
+        ctx = self.stage.ctx
+        verts, idx = tube_mesh(self.tree)
+        self.branch_prog = self.stage.program(BRANCH_VS, BRANCH_FS)
+        self.branch_vao = ctx.vertex_array(self.branch_prog, [
+            (ctx.buffer(verts.tobytes()), "3f 3f 3f 4f", "in_center", "in_offset", "in_normal", "in_data"),
+        ], index_buffer=ctx.buffer(idx.tobytes()), skip_errors=True)
+
+        self.foliage_prog = self.stage.program(FOLIAGE_VS, FOLIAGE_FS)
+        grid, grid_idx = agl.grid_mesh(*FOLIAGE_GRID)
+        grid_vbo, grid_ibo = ctx.buffer(grid.tobytes()), ctx.buffer(grid_idx.tobytes())
+        names = ("i_anchor", "i_quat", "i_params", "i_times", "i_fall", "i_fall2", "i_color")
+        self.sets = []
+        for kind, data in ((0.0, self.foliage.petals), (1.0, self.foliage.leaves)):
+            vao = ctx.vertex_array(self.foliage_prog, [
+                (grid_vbo, "2f", "in_uv"),
+                (ctx.buffer(np.ascontiguousarray(data).tobytes()), "4f 4f 4f 4f 4f 4f 4f/i", *names),
+            ], index_buffer=grid_ibo, skip_errors=True)
+            self.sets.append((kind, vao, len(data)))
+
+        self.water_prog = self.stage.program(WATER_VS, WATER_FS)
+        quad = np.array([[-60, -60], [60, -60], [-60, 60], [60, 60]], dtype=np.float32)
+        self.water_vao = ctx.vertex_array(self.water_prog, [(ctx.buffer(quad.tobytes()), "2f", "in_pos")])
+        self.reflection_tex, self.reflection = self.stage.depth_target((self.stage.width // 2, self.stage.height // 2))
+
+        # Ripples: a sample of the real landings, each where and when it happens.
+        rng = np.random.RandomState(SEED + 31)
+        events = []
+        for data, offset, share in ((self.foliage.petals, 0.04, 0.035), (self.foliage.leaves, 0.11, 0.10)):
+            xz, when = landings(data, offset)
+            keep = (rng.uniform(size=len(when)) < share) & (np.hypot(xz[:, 0], xz[:, 1]) < 9.0)
+            events.append(np.column_stack([xz[keep], when[keep], rng.uniform(0.5, 1.0, keep.sum())]))
+        self.ripple_events = thin_events(np.concatenate(events), RIPPLE_LIFE_S / RIPPLE_CAP)
+        agl.settle(self.render)
+
+    # -- per-frame state ---------------------------------------------------------
+
+    def ripples(self, t, snow_xz=None, snow_frac=None, snow_amount=0.0):
+        ev = self.ripple_events
+        age = (t - ev[:, 2]) % DURATION_S
+        live = age < RIPPLE_LIFE_S
+        rows = np.column_stack([ev[live, 0], ev[live, 1], age[live], ev[live, 3]])
+        if snow_amount > 0.0 and snow_xz is not None:
+            # Every third snowflake rings as it touches down: tiny, short-lived
+            # rings that are gone again before the flake sets out anew.
+            landed = np.nonzero((snow_frac < SNOW_RING) & (np.arange(len(snow_frac)) % 3 == 0)
+                                & (np.hypot(snow_xz[:, 0], snow_xz[:, 1]) < 7.0))[0]
+            period = DURATION_S / self.particles.snow_cycles[landed]
+            spent = snow_frac[landed] / SNOW_RING
+            snow_rows = np.column_stack([snow_xz[landed], snow_frac[landed] * period,
+                                         0.35 * snow_amount * (1.0 - smooth((spent - 0.5) / 0.5))])
+            rows = np.concatenate([rows, snow_rows])
+        return rows[np.argsort(rows[:, 2], kind="stable")][:MAX_RIPPLES]
+
+    def _foliage_uniforms(self, prog, t, view, proj, eye, gust, mirror, jitter, slab):
+        agl = self.agl
+        prog["u_view"].write(agl.mat_bytes(view))
+        prog["u_proj"].write(agl.mat_bytes(proj))
+        prog["u_eye"].value = tuple(float(v) for v in eye)
+        prog["u_time"].value = t
+        prog["u_duration"].value = DURATION_S
+        prog["u_gust"].value = gust
+        prog["u_mirror"].value = mirror
+        prog["u_jitter"].value = (jitter[0] * 2.0 / self.stage.width, jitter[1] * 2.0 / self.stage.height)
+        prog["u_slab"].value = slab
+        prog["u_slab_range"].value = (float(self.dof.coords[0]), float(self.dof.coords[-1]))
+        prog["u_lens"].value = (self.dof.focus, self.dof.scale, self.dof.sharp, 2.6)
+
+    def draw_tree(self, t, view, proj, eye, state, *, mirror=1.0, jitter=(0.0, 0.0), slab=None, branches=True):
+        mgl, ctx = self.moderngl, self.stage.ctx
+        ctx.enable(mgl.DEPTH_TEST)
+        ctx.disable(mgl.CULL_FACE)
+        ctx.depth_func = "<="
+        axis_dist = float(np.hypot(eye[0], eye[2]))
+        if branches:
+            prog = self.branch_prog
+            ctx.disable(mgl.BLEND)
+            prog["u_view"].write(self.agl.mat_bytes(view))
+            prog["u_proj"].write(self.agl.mat_bytes(proj))
+            prog["u_eye"].value = tuple(float(v) for v in eye)
+            prog["u_time"].value = t
+            prog["u_duration"].value = DURATION_S
+            prog["u_size"].value = (self.stage.width, self.stage.height)
+            prog["u_gust"].value = state["gust"]
+            prog["u_tint"].value = state["branch_tint"]
+            prog["u_snow"].value = state["snow_cap"]
+            prog["u_level"].value = state["branch_level"]
+            prog["u_mirror"].value = mirror
+            prog["u_axis_dist"].value = axis_dist
+            prog["u_jitter"].value = (jitter[0] * 2.0 / self.stage.width, jitter[1] * 2.0 / self.stage.height)
+            self.branch_vao.render(mgl.TRIANGLES)
+        prog = self.foliage_prog
+        ctx.enable(mgl.BLEND)
+        ctx.blend_func = mgl.ONE, mgl.ONE_MINUS_SRC_ALPHA
+        focus = self.dof.slab_uniform(self.dof.focus_index)
+        self._foliage_uniforms(prog, t, view, proj, eye, state["gust"], mirror, jitter, slab or focus)
+        prog["u_key"].value = state["key"]
+        prog["u_axis_dist"].value = axis_dist
+        for kind, vao, count in self.sets:
+            prog["u_kind"].value = kind
+            vao.render(mgl.TRIANGLES, instances=count)
+        ctx.disable(mgl.BLEND)
+
+    def render(self, frame_idx):
+        """The finished frame (BGR) and the mean luma left in its widget zone."""
+        with self.stage.ctx:        # a process may hold several renderers, each with a context of its own
+            return self._render(frame_idx)
+
+    def _render(self, frame_idx):
+        agl, mgl = self.agl, self.moderngl
+        stage, ctx = self.stage, self.stage.ctx
+        t = (frame_idx % N_FRAMES) / FPS
+        eye, view, proj = camera_matrices(t)
+        proj = stage.expand(proj)
+        weights = season_weights(t)
+        gust = float(gust_level(t))
+        winter_t = cyclic(t - 105.0)
+        snow_fall = float(smooth((winter_t + 13.5) / 5.0) * (1.0 - smooth((winter_t - 9.0) / 5.0)))
+        snow_cap = float(smooth((winter_t + 9.0) / 9.0) * (1.0 - smooth((winter_t - 7.0) / 7.0)))
+        summer_t = cyclic(t - 49.0)
+        fireflies = float(smooth((summer_t + 14.0) / 6.0) * (1.0 - smooth((summer_t - 9.0) / 6.0)))
+        # The key light rides with the camera so form reads the same all the way round.
+        right, up, back = view[0, :3], view[1, :3], view[2, :3]
+        key = KEY_LIGHT_LOCAL[0] * right + KEY_LIGHT_LOCAL[1] * up + KEY_LIGHT_LOCAL[2] * back
+        state = dict(
+            gust=gust, snow_cap=snow_cap, key=tuple(float(v) for v in key),
+            branch_tint=tuple(float(sum(weights[s] * BRANCH_TINTS[s][c] for s in range(4))) for c in range(3)),
+            branch_level=float(sum(weights[s] * BRANCH_LEVELS[s] for s in range(4))),
+        )
+        snow, snow_xz, snow_frac = self.particles.snow(t, snow_fall)
+        if snow_fall > 0.0:
+            # Falling snow is smeared across the open shutter like everything else.
+            smear = [self.particles.snow((t + dt * SHUTTER / FPS) % DURATION_S, snow_fall / 3.0)[0] for dt in (-0.5, 0.0, 0.5)]
+            snow = np.concatenate(smear)
+        flies = self.particles.fireflies(t, fireflies)
+
+        # 1. The mirrored tree, for the water.
+        mirror_view = view @ np.diag([1.0, -1.0, 1.0, 1.0])
+        self.reflection.use()
+        self.reflection.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
+        ctx.viewport = (0, 0, stage.width // 2, stage.height // 2)
+        self.draw_tree(t, view, proj, eye, state, mirror=-1.0)
+        stage.draw_sprites("flies-mirror", flies, mirror_view, proj, self.dof, target=self.reflection, min_px=0.6)
+        ctx.viewport = (0, 0, stage.width, stage.height)
+        reflection = stage.blur(self.reflection_tex, 1.6)
+
+        # 2. Still water under everything.
+        stage.begin()
+        ripples = self.ripples(t, snow_xz, snow_frac, snow_fall)
+        prog = self.water_prog
+        prog["u_view"].write(agl.mat_bytes(view))
+        prog["u_proj"].write(agl.mat_bytes(proj))
+        prog["u_size"].value = (stage.width, stage.height)
+        prog["u_eye"].value = tuple(float(v) for v in eye)
+        prog["u_time"].value = t
+        prog["u_duration"].value = DURATION_S
+        prog["u_level"].value = 1.0
+        prog["u_ripple_count"].value = len(ripples)
+        packed = np.zeros((MAX_RIPPLES, 4), dtype=np.float32)
+        packed[:len(ripples)] = ripples
+        prog["u_ripples"].write(packed.tobytes())
+        prog["u_ripple_tint"].value = tuple(float(sum(weights[s] * RIPPLE_TINTS[s][c] for s in range(4))) for c in range(3))
+        reflection.use(location=0)
+        prog["u_reflection"].value = 0
+        stage.hdr.use()
+        ctx.disable(mgl.DEPTH_TEST | mgl.BLEND)
+        self.water_vao.render(mgl.TRIANGLE_STRIP)
+
+        # 3. The tree in focus, then whatever flies between it and the lens.
+        for k, sigma in enumerate(self.dof.sigmas):
+            if k < self.dof.focus_index:
+                continue
+            slab = self.dof.slab_uniform(k)
+            is_focus = k == self.dof.focus_index
+
+            def draw(sub, jitter, slab=slab, is_focus=is_focus):
+                ts = (t + (sub / SUBFRAMES - 0.5) * SHUTTER / FPS) % DURATION_S
+                self.draw_tree(ts, view, proj, eye, state, jitter=jitter, slab=slab, branches=is_focus)
+
+            stage.render_slab(sigma, draw, subframes=SUBFRAMES)
+
+        # 4. Points of light, each with its own circle of confusion.
+        mote_tint = sum(weights[s] * np.array(c) for s, c in enumerate(
+            ((1.0, 0.72, 0.62), (0.80, 1.0, 0.55), (1.0, 0.60, 0.22), (0.78, 0.88, 1.0))))
+        lights = np.concatenate([
+            snow, flies, self.particles.motes(t, mote_tint, 0.8 * (1.0 - 0.6 * snow_fall)),
+            self.particles.frost(t, gust, snow_cap),
+        ])
+        stage.draw_sprites("lights", lights, view, proj, self.dof, coc_max=42.0, min_px=0.75, near_fade=2.5)
+        frame = stage.finish(frame_idx % N_FRAMES, bloom_threshold=0.62, bloom_knee=0.30, bloom_gain=0.42,
+                             quiet_rect=artwork.WIDGET_RECT, quiet_feather=QUIET_FEATHER, quiet_floor=0.03)
+        return artwork.enforce_widget_zone(frame)
+
+
+_RENDERER = None
+
+
+def worker_init():
+    global _RENDERER
+    _RENDERER = FrameRenderer()
+
+
+def worker_frame(frame_idx):
+    return _RENDERER.render(frame_idx)
+
+
+SPEC = artwork.ArtworkSpec(
+    description=__doc__,
+    slug=SLUG,
+    output_path=OUTPUT_PATH,
+    n_frames=N_FRAMES,
+    worker_init=worker_init,
+    worker_frame=worker_frame,
+    default_workers=3,
+)
+
+
+def main(argv=None):
+    return artwork.run_cli(SPEC, argv)
 
 
 if __name__ == "__main__":

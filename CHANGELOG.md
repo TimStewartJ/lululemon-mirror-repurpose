@@ -20,6 +20,15 @@
   a slice of the depth buffer, keeping translucent objects in a stable order.
   Renderers settle against provisional first-use shader results, and GL
   resources are freed only while their own context is current.
+- Rebuild the optional four-seasons film as a real 3D GPU scene of light on
+  true black. A weeping cherry grown by space colonization lives through a
+  year while the camera makes one level orbit per loop. Blossoms and leaves
+  animate on the GPU, release into gusts, land on still water that mirrors the
+  tree, and ring where they touch down; snow, frost and fireflies close the
+  year. Depth of field and an open shutter soften near particles and fast
+  motion. Output is `generated/background-videos/four-seasons-spatial-120s.mp4`,
+  a 120-second, native 1080x1920, 30 FPS loop. `moderngl` and OpenGL 4.3 replace
+  `pycairo`; the earlier film is never overwritten.
 
 ## 2.1.0 - 2026-09-15
 
