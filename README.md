@@ -21,6 +21,12 @@ branches; it is not a claim of clean-room stock-device validation.
 
 Already installed? Use the [User guide](docs/user-guide.md).
 
+[GitHub Releases](https://github.com/TimStewartJ/lululemon-mirror-repurpose/releases)
+provide versioned source and optional project-signed Home APKs with checksums and
+build provenance. Read [signing compatibility](docs/getting-started.md#published-apks-and-signing-compatibility)
+before using a downloaded APK. Owner-signed source builds remain the recommended
+path for owner-controlled updates and optional OTA supervisor enrollment.
+
 This is an independent project with no affiliation to, or endorsement by,
 lululemon athletica, Mirror, or Curiouser Products. MIRROR and lululemon are
 trademarks of their respective owners and are used here only to identify the
