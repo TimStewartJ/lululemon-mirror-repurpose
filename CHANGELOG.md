@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Add `tools/artwork_video.py`, a shared offline pipeline for the optional
+  artwork films: parallel, ordered frame rendering in a bounded window,
+  capped-CRF H.264 within the hardware and upload envelope, output validation,
+  loop-seam checks, a numeric guard that keeps the widget zone dark and smooth,
+  contact sheets, `--frames` previews, JSON render reports, and mirror metrics
+  (near-black, fog and bright shares). Films run at 30 FPS: every frame is held
+  for exactly two refreshes of the 60 Hz panel, so slow drifts do not judder the
+  way 24 FPS does. Every render reports continuity, the largest one-step changes
+  that stand apart from the motion around them, with their frame and place, so
+  a pop can be found without watching the whole film.
+
 ## 2.1.0 - 2026-09-15
 
 - Schedule background videos by time of day. **Display > Video schedule** holds
