@@ -29,6 +29,15 @@
   motion. Output is `generated/background-videos/four-seasons-spatial-120s.mp4`,
   a 120-second, native 1080x1920, 30 FPS loop. `moderngl` and OpenGL 4.3 replace
   `pycairo`; the earlier film is never overwritten.
+- Add an optional luminous flowers film: ten species of curved, cupped, veined
+  petal meshes with translucent shading around glowing stamens, drifting toward
+  a lens with depth of field and parallax. Flowers unfurl from twisted buds,
+  breathe, then release petals toward the viewer to tumble and dissolve into
+  light. Each flower keeps a fixed depth layer and hands released petals over
+  sample by sample, so neither draw order nor blur slabs cause one-frame pops.
+  Output is `generated/background-videos/luminous-flowers-spatial-180s.mp4`,
+  a 180-second, native 1080x1920, 30 FPS loop on true black. An 11 Mbps VBV cap
+  keeps the longer film within the 256 MiB upload limit.
 
 ## 2.1.0 - 2026-09-15
 

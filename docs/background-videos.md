@@ -142,14 +142,14 @@ manual selection, marks each video with `showing` and `scheduledStarts`, and
 includes `schedule` with the saved times, `current` and `next` slots,
 `nextChangeAt`, and any `hold`.
 
-## Optional artwork film
+## Optional artwork films
 
-The artwork renderer makes a background film offline; it is not part of the
-Android build or a runtime dependency. It renders a real 3D scene on the GPU and
-requires Python with `moderngl`, `numpy` and `opencv-python`, a graphics device
+The artwork renderers make background films offline; they are not part of the
+Android build or a runtime dependency. They render real 3D scenes on the GPU and
+require Python with `moderngl`, `numpy` and `opencv-python`, a graphics device
 with OpenGL 4.3, plus `ffmpeg` and `ffprobe` on PATH. No window is opened.
 
-The film is designed for a two-way mirror: light on a true-black stage.
+Both films are designed for a two-way mirror: light on a true-black stage.
 Black pixels leave the glass reflective, so the imagery appears to float in the
 room instead of lighting the whole panel. Nothing references or reproduces a
 specific third-party artwork.
@@ -198,6 +198,54 @@ metrics. The full render writes
 limited-range output, and no audio. The earlier `four-seasons-cinematic.mp4`
 is never overwritten.
 
+### Luminous flowers
+
+`tools\render_luminous_flowers.py` renders a garden of original, procedurally
+generated flowers drifting toward the viewer through a lens with real depth of
+field:
+
+- every petal is a curved, cupped, ruffled surface with veins, painterly streaks
+  and translucent shading: a soft key light models its form and light from
+  behind shines through it
+- ten forms (among them cosmos, camellia, lily, narcissus, chrysanthemum and
+  lotus) are built from rings of such petals around glowing stamens or a disc of
+  florets
+- each flower is born as a point of light, unfurls from a twisted bud, breathes
+  in full bloom, then lets its petals go one by one: they tumble toward the
+  lens on a slow breeze and dissolve into light from the tips inward
+- far flowers are dim, cool and soft, hero flowers bloom on the focal plane, and
+  released petals pass the lens as large, soft shapes; the camera sways slowly,
+  so everything moves with true parallax
+- species and colors follow the season in which a flower is born: blush and
+  coral cherry, peony and camellia; violet, blue and mint lotus, lily and
+  cosmos; ember chrysanthemums and asters; then ice-white plum and narcissus
+  with a few crimson camellias
+
+Every flower slot lives a whole number of cycles per loop, and each cycle is a
+different seeded flower at a different position, so the garden keeps changing
+while the frame after the last still equals frame 0.
+
+Translucent things must be drawn in order, and an order that is sorted again
+for every frame swaps, which shows as a pop. Here the order never changes: all
+flowers drift at one speed, so they keep one far-to-near order for life; each
+flower owns a slice of the depth buffer in which depth sorts its petals; and a
+released petal is handed over to a slice of its own, giving up its samples in
+the flower one by one while its free copy gathers light.
+
+```powershell
+python .\tools\render_luminous_flowers.py 30
+python .\tools\render_luminous_flowers.py 180 --start-frame 2850
+python .\tools\render_luminous_flowers.py --contact-sheet
+python .\tools\render_luminous_flowers.py
+```
+
+The full render writes
+`generated\background-videos\luminous-flowers-spatial-180s.mp4`: native
+1080x1920, 30 FPS, 180 seconds (45 seconds per season), with the same codec,
+color and hardware settings. Mostly-black flowers encode well below the cap, so
+this film spends that headroom on a longer loop and caps VBV at 11 Mbps with a
+16 Mbit buffer, which keeps the worst case below 256 MiB.
+
 ### Shared pipeline
 
 `tools\artwork_video.py` holds what the films share. Frames render in parallel
@@ -241,8 +289,11 @@ A JSON report is written next to the previews.
 Every render also reports continuity: the largest one-step changes in any patch
 of the picture that stand apart from the motion around them, with the frame and
 place of each. Motion, however fast, changes a patch by similar amounts on
-successive steps; something switching state in a single frame does not. A high
-score is a frame worth looking at (`--frames`), not a verdict.
+successive steps; something switching state in a single frame does not. Draw
+order swapping or a blur gathering what had just crossed the edge of the frame
+scored 12 to 25 among the flowers, whose honest motion stays below 8, while a
+gust full of tumbling leaves reaches 13 by itself: a high score is a frame worth
+looking at (`--frames`), not a verdict.
 
 Focused optional tests skip if the artwork-only Python dependencies or a
 suitable graphics device are absent:
@@ -251,6 +302,7 @@ suitable graphics device are absent:
 python -m unittest discover -s tools\tests -p "test_artwork_video.py" -v
 python -m unittest discover -s tools\tests -p "test_artwork_gl.py" -v
 python -m unittest discover -s tools\tests -p "test_render_seasonal_video.py" -v
+python -m unittest discover -s tools\tests -p "test_render_luminous_flowers.py" -v
 ```
 
 Upload a new film with the CLI or control application like any other background
