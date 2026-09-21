@@ -12,6 +12,14 @@
   way 24 FPS does. Every render reports continuity, the largest one-step changes
   that stand apart from the motion around them, with their frame and place, so
   a pop can be found without watching the whole film.
+- Add `tools/artwork_gl.py`, the shared GPU stage: multisampled HDR rendering,
+  depth of field as cross-faded blur slabs, bokeh points of light, gaussian
+  bloom, and a display transform with luminance-weighted grain that keeps black
+  exact. Frames render with a margin and are cropped, so blur and bloom can
+  gather light before it crosses the edge of the frame. Each depth layer owns
+  a slice of the depth buffer, keeping translucent objects in a stable order.
+  Renderers settle against provisional first-use shader results, and GL
+  resources are freed only while their own context is current.
 
 ## 2.1.0 - 2026-09-15
 
