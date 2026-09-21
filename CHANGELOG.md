@@ -15,6 +15,12 @@
 - Fade the glass through black whenever the background video changes instead of
   cutting while the decoder switches.
 
+### Distribution maintenance - 2026-09-20
+
+- Update the optional companion to Express 4.22.3, body-parser 1.20.8 and
+  qs 6.16.0, resolving the known query-parser dependency advisories while
+  retaining Express 4 compatibility. Mirror Home's Android code is unchanged.
+
 ## 2.0.0 - 2026-09-04
 
 - Add a production background-video library stored separately from the APK.
