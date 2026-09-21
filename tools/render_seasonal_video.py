@@ -1226,7 +1226,9 @@ class FrameRenderer:
             keep = (rng.uniform(size=len(when)) < share) & (np.hypot(xz[:, 0], xz[:, 1]) < 9.0)
             events.append(np.column_stack([xz[keep], when[keep], rng.uniform(0.5, 1.0, keep.sum())]))
         self.ripple_events = thin_events(np.concatenate(events), RIPPLE_LIFE_S / RIPPLE_CAP)
-        agl.settle(self.render)
+        if not agl.settle(self.render):
+            self.stage.release()
+            raise RuntimeError("The four-seasons renderer did not settle into deterministic frames")
 
     # -- per-frame state ---------------------------------------------------------
 

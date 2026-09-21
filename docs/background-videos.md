@@ -264,7 +264,8 @@ rendered with a margin around the frame and cropped, because blur and bloom can
 only gather what has been drawn: without it, whatever drifts in over the edge
 would appear all at once. A renderer settles before it hands out frames, since a
 driver may run a freshly compiled shader through a provisional build the first
-time it is used.
+time it is used. If repeated renders never agree, construction fails with an
+explicit error and releases the GPU context instead of returning unstable frames.
 
 Films run at 30 FPS, half the panel's 60 Hz, so every frame is held for exactly
 two refreshes and slow drifts stay even; 24 FPS would alternate between two and

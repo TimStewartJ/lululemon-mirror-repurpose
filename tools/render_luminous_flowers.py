@@ -883,7 +883,9 @@ class FrameRenderer:
             (ctx.buffer(verts.tobytes()), "2f", "in_uv"),
             (self.instances, INSTANCE_FORMAT, *INSTANCE_NAMES),
         ], index_buffer=ctx.buffer(idx.tobytes()), skip_errors=True)
-        agl.settle(self.render)
+        if not agl.settle(self.render):
+            self.stage.release()
+            raise RuntimeError("The luminous-flowers renderer did not settle into deterministic frames")
 
     # -- per-frame state -----------------------------------------------------
 

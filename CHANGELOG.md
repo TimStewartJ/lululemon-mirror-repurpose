@@ -38,6 +38,9 @@
   Output is `generated/background-videos/luminous-flowers-spatial-180s.mp4`,
   a 180-second, native 1080x1920, 30 FPS loop on true black. An 11 Mbps VBV cap
   keeps the longer film within the 256 MiB upload limit.
+- Refuse to render either artwork film if repeated warm-up frames never agree.
+  Report the failure explicitly and release the GPU context instead of silently
+  returning nondeterministic frames.
 
 ## 2.1.0 - 2026-09-15
 

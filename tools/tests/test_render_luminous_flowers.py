@@ -3,6 +3,7 @@ import math
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
@@ -36,6 +37,16 @@ class LuminousFlowersTest(unittest.TestCase):
         return self.renderer.stream(t, view)
 
     # -- the finished picture ------------------------------------------------
+
+    def test_unstable_renderer_fails_and_releases_its_context(self):
+        release_context = artwork_gl.Stage.release
+        with mock.patch.object(artwork_gl, "settle", return_value=False) as settle, \
+                mock.patch.object(artwork_gl.Stage, "release", autospec=True,
+                                  side_effect=release_context) as release:
+            with self.assertRaisesRegex(RuntimeError, "luminous-flowers renderer did not settle"):
+                flowers.FrameRenderer()
+        settle.assert_called_once()
+        release.assert_called_once_with(settle.call_args.args[0].__self__.stage)
 
     def test_full_frame_loop_is_pixel_exact_and_deterministic(self):
         first = self.frame(0)
