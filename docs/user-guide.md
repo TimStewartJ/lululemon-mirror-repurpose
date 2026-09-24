@@ -205,10 +205,12 @@ discards every frame, and performs no recording, face recognition, or network
 upload. If camera permission or the camera itself is unavailable, presence
 automation fails open and leaves the display awake inside its schedule.
 
-Sleep stops media when entered by schedule or manual action, shows a black
-overlay, and turns the physical panel backlight completely off while Android,
-the camera monitor, and network controls remain active. Wake restores the
-selected brightness.
+Sleep fades the display to black over three seconds, dimming the picture and
+the backlight together, then stops media entered by schedule or manual action
+and turns the physical panel backlight completely off while Android, the
+camera monitor, and network controls remain active. Wake fades back in to the
+selected brightness over two seconds. A change of mind mid-fade reverses
+smoothly from the current level.
 
 ## Media
 

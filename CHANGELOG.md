@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fade the display smoothly when it sleeps and wakes instead of switching
+  instantly. One eased curve dims a black overlay and the backlight together
+  (three seconds to sleep, two to wake), so video and the dashboard sink into
+  the mirror evenly and a reversal mid-fade continues from the current level.
+  Background video keeps playing, and sleep stops media and lowers the stored
+  brightness, only once the panel is black. Waking with ambient brightness
+  restores the last ambient level instead of staying at the sleep level.
 - Add `tools/artwork_video.py`, a shared offline pipeline for the optional
   artwork films: parallel, ordered frame rendering in a bounded window,
   capped-CRF H.264 within the hardware and upload envelope, output validation,

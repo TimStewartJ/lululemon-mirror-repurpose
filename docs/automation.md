@@ -65,6 +65,8 @@ failure is fail-open, so it does not leave the mirror unexpectedly black.
 Sleep keeps Android and the camera monitor running but sets the physical panel
 backlight to zero. This is distinct from suspending the Android device and is
 what allows motion to restore the configured wake brightness immediately.
+Transitions fade: three seconds to sleep, two seconds to wake. The API reports
+`sleeping` as soon as sleep begins; media stops once the fade reaches black.
 
 `GET /api/v1/automation` reports camera availability, permission, monitoring
 state, low-resolution preview dimensions, current change score, and the last

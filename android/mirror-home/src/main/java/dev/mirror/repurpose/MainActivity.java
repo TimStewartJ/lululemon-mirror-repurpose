@@ -1,5 +1,8 @@
 package dev.mirror.repurpose;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.Manifest;
 import android.app.Activity;
@@ -16,11 +19,14 @@ import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.webkit.WebSettings;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -94,6 +100,10 @@ public final class MainActivity extends Activity {
             if (nativeCode != null) {
                 nativeCode.setText(groupedPairingCode());
             }
+            if (displayFade == null && displayVisibility == 1f) {
+                // Releases a held wake override once a brightness retry succeeds.
+                applyDisplayVisibility(1f);
+            }
             statusHandler.postDelayed(this, STATUS_REFRESH_INTERVAL_MS);
         }
     };
@@ -141,6 +151,11 @@ public final class MainActivity extends Activity {
     private boolean renderedAmbientDashboardSelected;
     private String ambientBackgroundFit = "cover";
     private boolean activityResumed;
+    private ValueAnimator displayFade;
+    private float displayFadeTarget;
+    private float displayVisibility = -1f;
+    private int displayAwakeLevel = DisplayFadePolicy.MAX_BACKLIGHT;
+    private long lastBacklightUpdateUptime;
 
     @Override
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -273,6 +288,7 @@ public final class MainActivity extends Activity {
         scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
         ambientCurtain.animate().cancel();
+        cancelDisplayFade();
         unregisterReceiver(stateReceiver);
         media.detachAmbient(ambientVideoView);
         media.detach(playerView);
@@ -664,19 +680,132 @@ public final class MainActivity extends Activity {
     }
 
     private void updateSleepVisibility() {
-        if (sleepOverlay != null) {
-            sleepOverlay.setVisibility(automation.isSleeping() ? View.VISIBLE : View.GONE);
-            sleepOverlay.bringToFront();
+        if (sleepOverlay == null) {
+            return;
         }
+        sleepOverlay.bringToFront();
+        float target = automation.isSleeping() ? 0f : 1f;
+        if (displayFade != null) {
+            if (Float.compare(displayFadeTarget, target) == 0) {
+                return;
+            }
+            cancelDisplayFade();
+        }
+        if (displayVisibility < 0f || !activityResumed) {
+            // Nothing is on screen to fade (first frame or covered); settle at once.
+            displayAwakeLevel = awakeBacklightLevel(target);
+            applyDisplayVisibility(target);
+            updateAmbientVideoState();
+            return;
+        }
+        if (Float.compare(displayVisibility, target) == 0) {
+            applyDisplayVisibility(target);
+            updateAmbientVideoState();
+            return;
+        }
+        if (displayVisibility == 1f) {
+            // Awake without an override: fade from whatever the panel shows now.
+            displayAwakeLevel = currentSystemBrightness();
+        } else if (target == 1f) {
+            displayAwakeLevel = awakeBacklightLevel(target);
+        }
+        startDisplayFade(target);
+        updateAmbientVideoState();
+    }
+
+    private void startDisplayFade(float target) {
+        float from = displayVisibility;
+        ValueAnimator fade = ValueAnimator.ofFloat(from, target);
+        fade.setDuration(Math.max(1L, DisplayFadePolicy.duration(from, target)));
+        fade.setInterpolator(new AccelerateDecelerateInterpolator());
+        fade.addUpdateListener(animation ->
+                applyDisplayVisibility((Float) animation.getAnimatedValue()));
+        fade.addListener(new AnimatorListenerAdapter() {
+            private boolean cancelled;
+
+            @Override
+            public void onAnimationCancel(Animator animation) {
+                cancelled = true;
+            }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (displayFade != animation) {
+                    return;
+                }
+                displayFade = null;
+                if (!cancelled) {
+                    applyDisplayVisibility(displayFadeTarget);
+                    updateAmbientVideoState();
+                }
+            }
+        });
+        displayFade = fade;
+        displayFadeTarget = target;
+        // Pin the starting level as an explicit override before the first frame,
+        // so a stored-brightness change cannot show through.
+        applyDisplayVisibility(from);
+        fade.start();
+    }
+
+    private void cancelDisplayFade() {
+        if (displayFade != null) {
+            ValueAnimator fade = displayFade;
+            displayFade = null;
+            fade.cancel();
+        }
+    }
+
+    private void applyDisplayVisibility(float visibility) {
+        displayVisibility = DisplayFadePolicy.clampVisibility(visibility);
+        // A translucent background avoids an offscreen layer that view alpha needs.
+        sleepOverlay.setBackgroundColor(Color.argb(
+                Math.round(255 * DisplayFadePolicy.overlayAlpha(displayVisibility)), 0, 0, 0));
+        sleepOverlay.setVisibility(displayVisibility < 1f ? View.VISIBLE : View.GONE);
+        boolean settled = displayVisibility == 0f || displayVisibility == 1f;
+        long now = SystemClock.uptimeMillis();
+        if (!settled && now - lastBacklightUpdateUptime
+                < DisplayFadePolicy.BACKLIGHT_UPDATE_INTERVAL_MS) {
+            // Each override is a window relayout; Android's own brightness ramp
+            // interpolates between these steps.
+            return;
+        }
+        boolean releaseOverride = displayVisibility >= 1f
+                && displayFade == null
+                && automation.isBrightnessApplied();
+        float brightness = releaseOverride
+                ? WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                : DisplayFadePolicy.windowBrightness(DisplayFadePolicy.backlightLevel(
+                        displayAwakeLevel, displayVisibility));
         WindowManager.LayoutParams attributes = getWindow().getAttributes();
-        float brightness = automation.isSleeping()
-                ? 0f
-                : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
         if (Float.compare(attributes.screenBrightness, brightness) != 0) {
             attributes.screenBrightness = brightness;
             getWindow().setAttributes(attributes);
+            lastBacklightUpdateUptime = now;
         }
-        updateAmbientVideoState();
+        if (displayVisibility == 0f && displayFade == null && automation.isSleeping()) {
+            automation.onDisplayFadedOut();
+        }
+    }
+
+    private int awakeBacklightLevel(float target) {
+        return target == 1f
+                ? automation.awakeBrightness()
+                : currentSystemBrightness();
+    }
+
+    private int currentSystemBrightness() {
+        try {
+            return Settings.System.getInt(
+                    getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+        } catch (Settings.SettingNotFoundException error) {
+            return configStore.getWakeBrightness();
+        }
+    }
+
+    /** Ambient video keeps playing until the panel has actually gone dark. */
+    private boolean displayDark() {
+        return automation.isSleeping() && displayVisibility == 0f;
     }
 
     private void updateAmbientVideoState() {
@@ -687,7 +816,7 @@ public final class MainActivity extends Activity {
                 ambientDashboardSelected,
                 media.isPresentationActive(),
                 activityResumed,
-                automation.isSleeping());
+                displayDark());
         ambientVideoView.setResizeMode(
                 "contain".equals(ambientBackgroundFit)
                         ? AspectRatioFrameLayout.RESIZE_MODE_FIT

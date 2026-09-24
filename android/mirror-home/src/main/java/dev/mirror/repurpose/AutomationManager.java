@@ -42,6 +42,16 @@ public final class AutomationManager implements SensorEventListener {
             handler.postDelayed(this, EVALUATION_INTERVAL_MS);
         }
     };
+    private final Runnable sleepCommit = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (AutomationManager.this) {
+                if (sleepCommitPending && Boolean.TRUE.equals(sleeping)) {
+                    commitSleep();
+                }
+            }
+        }
+    };
 
     private Boolean sleeping;
     private Boolean manualState;
@@ -51,6 +61,7 @@ public final class AutomationManager implements SensorEventListener {
     private long lastAmbientUpdate;
     private int lastAmbientBrightness = -1;
     private boolean brightnessApplied;
+    private boolean sleepCommitPending;
     private long lastMotionElapsed;
 
     private AutomationManager(Context context) {
@@ -94,6 +105,26 @@ public final class AutomationManager implements SensorEventListener {
 
     public synchronized boolean hasAmbientLightSensor() {
         return lightSensor != null;
+    }
+
+    /** Backlight level the display should reach when awake. */
+    public synchronized int awakeBrightness() {
+        return !configStore.isAmbientEnabled() || lightSensor == null
+                ? configStore.getWakeBrightness()
+                : ambientWakeBrightness();
+    }
+
+    /** Whether the stored brightness matches the awake target, so an override can be released. */
+    public synchronized boolean isBrightnessApplied() {
+        return brightnessApplied && !sleepCommitPending;
+    }
+
+    /** MainActivity reports that its sleep fade has fully reached black. */
+    public synchronized void onDisplayFadedOut() {
+        if (sleepCommitPending && Boolean.TRUE.equals(sleeping)) {
+            handler.removeCallbacks(sleepCommit);
+            commitSleep();
+        }
     }
 
     public synchronized JSONObject snapshot() throws JSONException {
@@ -196,10 +227,7 @@ public final class AutomationManager implements SensorEventListener {
                 || now - lastAmbientUpdate < AMBIENT_UPDATE_INTERVAL_MS) {
             return;
         }
-        double normalized = Math.min(1d, Math.log10(Math.max(0d, lastLux) + 1d) / 4d);
-        int minimum = configStore.getAmbientMinimum();
-        int brightness = minimum
-                + (int) Math.round((configStore.getAmbientMaximum() - minimum) * normalized);
+        int brightness = ambientBrightness(lastLux);
         if (lastAmbientBrightness < 0 || Math.abs(brightness - lastAmbientBrightness) >= 4) {
             if (mirror.setBrightness(brightness)) {
                 lastAmbientBrightness = brightness;
@@ -210,6 +238,22 @@ public final class AutomationManager implements SensorEventListener {
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
+    }
+
+    private int ambientBrightness(float lux) {
+        double normalized = Math.min(1d, Math.log10(Math.max(0d, lux) + 1d) / 4d);
+        int minimum = configStore.getAmbientMinimum();
+        return minimum
+                + (int) Math.round((configStore.getAmbientMaximum() - minimum) * normalized);
+    }
+
+    private int ambientWakeBrightness() {
+        if (lastAmbientBrightness > 0) {
+            return lastAmbientBrightness;
+        }
+        return Float.isNaN(lastLux)
+                ? configStore.getWakeBrightness()
+                : ambientBrightness(lastLux);
     }
 
     private synchronized void evaluate() {
@@ -247,19 +291,45 @@ public final class AutomationManager implements SensorEventListener {
             return;
         }
         if (shouldSleep) {
-            MediaPlaybackManager.getInstance(context).stop();
-            // The vendor Binder clamps to 1; MainActivity applies the true zero override.
-            brightnessApplied = mirror.setBrightness(1);
-        } else if (!configStore.isAmbientEnabled() || lightSensor == null) {
-            brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
+            if (stateChanged && sleeping != null) {
+                // MainActivity fades out from the awake level and reports when the
+                // panel is black; only then do media stop and stored brightness drop.
+                // The timer is a fallback for when no activity is showing.
+                handler.removeCallbacks(sleepCommit);
+                sleepCommitPending = true;
+                brightnessApplied = true;
+                handler.postDelayed(sleepCommit, DisplayFadePolicy.sleepCommitFallbackMs());
+            } else if (!sleepCommitPending) {
+                commitSleep();
+            }
         } else {
-            brightnessApplied = true;
+            handler.removeCallbacks(sleepCommit);
+            sleepCommitPending = false;
+            if (!configStore.isAmbientEnabled() || lightSensor == null) {
+                brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
+            } else if (stateChanged || !brightnessApplied) {
+                // Sleep stored level 1; restore an ambient level as the fade target.
+                int level = ambientWakeBrightness();
+                brightnessApplied = mirror.setBrightness(level);
+                if (brightnessApplied) {
+                    lastAmbientBrightness = level;
+                }
+            } else {
+                brightnessApplied = true;
+            }
         }
         sleeping = shouldSleep;
         sleepReason = nextReason;
         if (stateChanged || reasonChanged) {
             broadcast();
         }
+    }
+
+    private void commitSleep() {
+        sleepCommitPending = false;
+        MediaPlaybackManager.getInstance(context).stop();
+        // The vendor Binder clamps to 1; MainActivity applies the true zero override.
+        brightnessApplied = mirror.setBrightness(1);
     }
 
     private void updateAmbientRegistration() {
