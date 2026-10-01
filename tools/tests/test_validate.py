@@ -130,6 +130,9 @@ class FakeAdb:
         self.commands.append(("shell", *arguments))
         return ""
 
+    def answers(self, timeout=20.0):
+        return True
+
 
 class FakeClock:
     """Time that moves a second whenever it is read, so loops end at once."""
@@ -1625,6 +1628,203 @@ class WakesDisplayTest(unittest.TestCase):
 
     def test_android_must_agree_that_it_is_awake(self):
         self.failing(CheckFailed, "Android reports itself Asleep", wakefulness="Asleep")
+
+
+class FrozenEmulatorTest(unittest.TestCase):
+    """A frozen emulator keeps its ADB connection and answers nothing."""
+
+    def adb(self):
+        return validate.Adb(pathlib.Path("adb"), "emulator-5580")
+
+    def hanging(self, printed=None):
+        return mock.patch.object(
+            validate.subprocess, "run",
+            side_effect=subprocess.TimeoutExpired(["adb"], 120, output=printed),
+        )
+
+    def answering(self, printed, code=0):
+        return mock.patch.object(
+            validate.subprocess, "run",
+            return_value=subprocess.CompletedProcess(["adb"], code, stdout=printed, stderr=b""),
+        )
+
+    def test_a_command_that_never_finishes_fails_its_check_and_names_the_device(self):
+        with self.hanging(), self.assertRaisesRegex(
+            CheckFailed,
+            "adb shell am force-stop dev.mirror.repurpose did not finish within 120 s; "
+            "emulator-5580 has stopped answering",
+        ):
+            self.adb().shell("am", "force-stop", validate.PACKAGE)
+
+    def test_a_command_whose_failure_is_tolerated_gives_what_it_printed(self):
+        with self.hanging(b"10-01 16:08:28 partial\n"):
+            self.assertEqual("10-01 16:08:28 partial\n", self.adb().run("logcat", "-d", check=False))
+        with self.hanging():
+            self.assertEqual("", self.adb().shell("am", "force-stop", "x", check=False))
+
+    def test_a_screen_capture_that_never_finishes_fails_its_check(self):
+        with self.hanging(), self.assertRaisesRegex(
+            CheckFailed, "could not capture the screen within 60 s; emulator-5580 has stopped answering"
+        ):
+            self.adb().capture()
+
+    def test_a_device_answers_if_it_runs_a_command(self):
+        with self.answering(b"answering\r\n"):
+            self.assertTrue(self.adb().answers())
+        with self.answering(b"", code=1):
+            self.assertFalse(self.adb().answers())
+        with self.hanging():
+            self.assertFalse(self.adb().answers())
+
+    class Device:
+        serial = "emulator-5580"
+
+        def __init__(self, answering):
+            self.answering = answering
+            self.commands = []
+
+        def answers(self):
+            return self.answering
+
+        def run(self, *arguments, **_options):
+            self.commands.append(arguments)
+            return "10-01 03:17:00.000 I/ControlServerService: listening\n"
+
+        def shell(self, *arguments, **_options):
+            self.commands.append(("shell", *arguments))
+            return f"{arguments[-1]}: none\n"
+
+    def test_logs_and_crash_records_are_kept_while_the_emulator_answers(self):
+        device = self.Device(answering=True)
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertTrue(validate.save_logs(device, pathlib.Path(directory)))
+            self.assertIn("ControlServerService", (pathlib.Path(directory) / "logcat.txt").read_text(encoding="utf-8"))
+            crashes = (pathlib.Path(directory) / "crashes.txt").read_text(encoding="utf-8")
+        for record in validate.CRASH_RECORDS:
+            self.assertIn(f"{record}: none", crashes)
+
+    def test_a_frozen_emulator_is_not_asked_for_logs_and_the_run_says_why(self):
+        device = self.Device(answering=False)
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertFalse(validate.save_logs(device, pathlib.Path(directory)))
+            self.assertEqual([], list(pathlib.Path(directory).iterdir()))
+        self.assertEqual([], device.commands)
+        self.assertIn("emulator-5580 has stopped answering", printed.getvalue())
+        self.assertIn("say nothing about Mirror Home", printed.getvalue())
+
+    def test_the_guide_has_the_section_the_run_points_to(self):
+        guide = (REPO / "docs" / "validation.md").read_text(encoding="utf-8")
+        self.assertIn("### When the emulator stops answering", guide)
+
+    class Process:
+        """The emulator's process: running until it is told it has ended."""
+
+        def __init__(self):
+            self.code = None
+
+        def poll(self):
+            return self.code
+
+    class SilentAdb(FakeAdb):
+        """An emulator that still has a connection and answers nothing."""
+
+        def answers(self, timeout=20.0):
+            self.commands.append(("answers",))
+            return False
+
+    def context(self, directory, adb=None):
+        ctx = validate.Context(adb or FakeAdb([frame(255)]), FakeApi(), pathlib.Path(directory))
+        ctx.emulator = mock.Mock()
+        ctx.emulator.exited.return_value = False
+        return ctx
+
+    def test_a_check_does_not_start_once_the_emulators_process_has_ended(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory)
+            ctx.emulator.exited.return_value = True
+            with self.assertRaisesRegex(CheckFailed, "froze or exited during this run"):
+                ctx.before_check()
+            self.assertTrue(ctx.emulator_lost)
+            self.assertEqual([], ctx.adb.commands)
+
+    def test_an_emulator_that_answers_nothing_is_found_before_the_next_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory, self.SilentAdb([frame(255)]))
+            with self.assertRaisesRegex(CheckFailed, "says nothing about Mirror Home"):
+                ctx.before_check()
+            asked = len(ctx.adb.commands)
+            # It is asked once; every later check fails without waiting for it again.
+            with self.assertRaisesRegex(CheckFailed, "says nothing about Mirror Home"):
+                ctx.before_check()
+            self.assertEqual(asked, len(ctx.adb.commands))
+
+    def test_a_window_that_names_no_focus_is_not_mistaken_for_a_frozen_emulator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory)
+            ctx.before_check()
+            self.assertFalse(ctx.emulator_lost)
+
+    def test_every_check_after_the_emulator_is_lost_fails_with_the_reason(self):
+        ran = []
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            ctx = self.context(directory)
+
+            def loses_it(context):
+                context.emulator.exited.return_value = True
+                raise CheckFailed("Timed out after 60 s waiting for run 4 of Mirror Home to answer")
+
+            checks = [
+                ("restart", "Restart", loses_it, False),
+                ("quick-restart", "Quick restart", lambda context: ran.append("quick-restart"), False),
+                ("script-errors", "Script errors", lambda context: ran.append("script-errors"), False),
+            ]
+            results = validate.run_checks(checks, ctx)
+        self.assertEqual([], ran)
+        self.assertEqual(["fail"] * 3, [result.status for result in results])
+        self.assertIn("run 4 of Mirror Home", results[0].message)
+        for result in results[1:]:
+            self.assertEqual(validate.EMULATOR_LOST, result.message)
+
+
+class RebootWithALostEmulatorTest(unittest.TestCase):
+    def context(self, directory, *, exits):
+        report = healthy_report()
+        api = FakeApi({
+            ("GET", "/api/v1/health"): report,
+            ("GET", "/api/v1/preferences"): {"timeZone": "America/Los_Angeles"},
+        })
+        adb = FakeAdb([frame(255)])
+        adb.run = lambda *arguments, **_options: adb.commands.append(arguments) or ""
+        ctx = validate.Context(adb, api, pathlib.Path(directory))
+        ctx.emulator = mock.Mock()
+        ctx.emulator.exited.return_value = exits
+        return ctx
+
+    def test_an_emulator_that_exits_on_reboot_fails_the_check_at_once_and_is_not_blamed_on_home(self):
+        clock = fake_time(self)
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(validate.android_emulator, "boot_completed", return_value=False):
+            ctx = self.context(directory, exits=True)
+            started = clock.now
+            with self.assertRaisesRegex(
+                CheckFailed, "emulator exited when Android rebooted.*not of Mirror Home"
+            ):
+                validate.check_reboot(ctx)
+            self.assertLess(clock.now - started, 30)
+            self.assertTrue(ctx.emulator_lost)
+
+    def test_an_emulator_that_never_boots_again_is_given_up_on_for_the_rest_of_the_run(self):
+        clock = fake_time(self)
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(validate.android_emulator, "boot_completed", return_value=False):
+            ctx = self.context(directory, exits=False)
+            started = clock.now
+            with self.assertRaisesRegex(CheckFailed, "waiting for Android to boot again"):
+                validate.check_reboot(ctx)
+            self.assertLess(clock.now - started, validate.REBOOT_SECONDS + 60)
+            self.assertTrue(ctx.emulator_lost)
+            with self.assertRaisesRegex(CheckFailed, "says nothing about Mirror Home"):
+                ctx.before_check()
 
 
 class LiveMirror(FakeApi):

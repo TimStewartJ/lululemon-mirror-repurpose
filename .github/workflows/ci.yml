@@ -49,7 +49,24 @@ jobs:
       - name: Install Android SDK packages
         run: >-
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
-          "emulator" "system-images;android-23;default;x86_64"
+          "system-images;android-23;default;x86_64"
+
+      # sdkmanager only offers the newest emulator, and not every release runs
+      # the 2015 image: 37.2.12 froze part-way through each run here. Use a
+      # build that is known to; see "When the emulator stops answering" in
+      # docs/validation.md before changing it.
+      - name: Install an Android Emulator known to run Android 6
+        env:
+          EMULATOR_BUILD: "15917651" # 37.1.11
+          EMULATOR_SHA256: 95771e0ae431897b2a4bd2d97fa095f29a8b0624a7b216baf529f9306161c266
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$RUNNER_TEMP/emulator.zip" \
+            "https://dl.google.com/android/repository/emulator-linux_x64-${EMULATOR_BUILD}.zip"
+          echo "${EMULATOR_SHA256}  ${RUNNER_TEMP}/emulator.zip" | sha256sum --check -
+          rm -rf "${ANDROID_SDK_ROOT}/emulator"
+          unzip -q "${RUNNER_TEMP}/emulator.zip" -d "${ANDROID_SDK_ROOT}"
+          grep Pkg.Revision "${ANDROID_SDK_ROOT}/emulator/source.properties"
 
       - name: Let the emulator use hardware virtualization
         run: |

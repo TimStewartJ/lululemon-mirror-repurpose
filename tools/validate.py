@@ -100,6 +100,13 @@ HOME_LABEL = "Mirror Home"
 COVERED_GRACE_SECONDS = 10
 RETURN_SECONDS = 45
 WAKE_SECONDS = 30
+# Said of every check that could not run because the emulator had gone.
+EMULATOR_LOST = (
+    "The emulator froze or exited during this run, so this check says nothing about "
+    "Mirror Home"
+)
+# Android 6 reboots in well under a minute, even on a shared CI runner.
+REBOOT_SECONDS = 180
 KEY_MENU = "82"
 KEY_SLEEP = "223"
 KEY_WAKEUP = "224"
@@ -186,11 +193,20 @@ class Adb:
         self.serial = serial
 
     def run(self, *arguments: str, timeout: float = 120.0, check: bool = True) -> str:
-        completed = subprocess.run(
-            [str(self.executable), "-s", self.serial, *arguments],
-            capture_output=True,
-            timeout=timeout,
-        )
+        try:
+            completed = subprocess.run(
+                [str(self.executable), "-s", self.serial, *arguments],
+                capture_output=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as hung:
+            # An emulator that has frozen keeps its connection and never answers.
+            if check:
+                raise CheckFailed(
+                    f"adb {' '.join(arguments)} did not finish within {int(timeout)} s; "
+                    f"{self.serial} has stopped answering"
+                ) from None
+            return (hung.stdout or b"").decode("utf-8", errors="replace")
         output = completed.stdout.decode("utf-8", errors="replace")
         if check and completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", errors="replace").strip() or output.strip()
@@ -204,14 +220,23 @@ class Adb:
         return self.shell("getprop", name).strip()
 
     def capture(self) -> screen_capture.Screenshot:
-        completed = subprocess.run(
-            [str(self.executable), "-s", self.serial, "exec-out", "screencap"],
-            capture_output=True,
-            timeout=60,
-        )
+        try:
+            completed = subprocess.run(
+                [str(self.executable), "-s", self.serial, "exec-out", "screencap"],
+                capture_output=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            raise CheckFailed(
+                f"adb could not capture the screen within 60 s; {self.serial} has stopped answering"
+            ) from None
         if completed.returncode != 0:
             raise CheckFailed("adb could not capture the screen")
         return screen_capture.parse_raw(completed.stdout)
+
+    def answers(self, timeout: float = 20.0) -> bool:
+        """Whether the device still runs commands; a frozen emulator does not."""
+        return "answering" in self.shell("echo", "answering", timeout=timeout, check=False)
 
     def forward(self, remote: str) -> int:
         return int(self.run("forward", "tcp:0", remote).strip())
@@ -349,9 +374,24 @@ class Context:
         self.apk: pathlib.Path | None = None
         self.kept: dict = {}
         self.dismissed: list[str] = []
+        # The emulator this run started, if it did; its process can end under it.
+        self.emulator: android_emulator.Emulator | None = None
+        self.emulator_lost = False
 
     def note(self, key: str, value: object) -> None:
         self.details[key] = value
+
+    def require_emulator_alive(self) -> None:
+        """Fail at once, and for every later check, when the emulator is gone.
+
+        Some emulator releases freeze or exit part-way through a run. Without
+        this every remaining check would wait out its own time limits, and
+        its failure would read as a fault in Mirror Home.
+        """
+        if not self.emulator_lost and self.emulator is not None and self.emulator.exited():
+            self.emulator_lost = True
+        if self.emulator_lost:
+            raise CheckFailed(EMULATOR_LOST)
 
     def health(self) -> dict:
         return self.api.expect("GET", "/api/v1/health")
@@ -385,8 +425,12 @@ class Context:
         cover the dashboard. A dialog about Mirror Home is left for the
         checks to find.
         """
+        self.require_emulator_alive()
         for _ in range(4):
             focus = focused_window(self.adb)
+            if not focus and not self.adb.answers():
+                self.emulator_lost = True
+                raise CheckFailed(EMULATOR_LOST)
             if not SYSTEM_DIALOG.fullmatch(focus) or PACKAGE in focus:
                 return
             button = node_center(self.native_text(), "text", "OK")
@@ -1324,12 +1368,22 @@ def check_reboot(ctx: Context) -> None:
     zone = ctx.api.expect("GET", "/api/v1/preferences")["timeZone"]
     ctx.adb.run("reboot")
     time.sleep(5)
-    wait_for(
-        "Android to boot again",
-        lambda: android_emulator.boot_completed(ctx.adb.executable, ctx.adb.serial),
-        timeout=android_emulator.BOOT_TIMEOUT_SECONDS,
-        interval=3,
-    )
+
+    def booted() -> bool:
+        if ctx.emulator is not None and ctx.emulator.exited():
+            ctx.emulator_lost = True
+            raise CheckFailed(
+                "The emulator exited when Android rebooted, which is a fault of this "
+                "release of the emulator and not of Mirror Home"
+            )
+        return android_emulator.boot_completed(ctx.adb.executable, ctx.adb.serial)
+
+    try:
+        wait_for("Android to boot again", booted, timeout=REBOOT_SECONDS, interval=3)
+    except CheckFailed:
+        # Later checks would only wait for an emulator that is not coming back.
+        ctx.emulator_lost = True
+        raise
     ctx.api.port = ctx.adb.forward(f"tcp:{DEVICE_PORT}")
     ctx.forwards.append(ctx.api.port)
     # Nothing here starts Mirror Home or unlocks the screen: nobody would on a Mirror.
@@ -1729,6 +1783,34 @@ def select_home(adb: Adb) -> None:
     )
 
 
+def save_logs(adb: Adb, output: pathlib.Path) -> bool:
+    """Keep Android's log and crash records; False if the emulator no longer answers.
+
+    A frozen emulator keeps its ADB connection and answers nothing, so each
+    request would otherwise wait out its time limit, and a run that ended
+    that way would leave no report behind.
+    """
+    if not adb.answers():
+        print(
+            f"\n{adb.serial} has stopped answering, so its logs could not be read. Checks that "
+            "failed once it had stopped say nothing about Mirror Home; see "
+            '"When the emulator stops answering" in docs/validation.md.',
+            flush=True,
+        )
+        return False
+    (output / "logcat.txt").write_text(
+        adb.run("logcat", "-d", "-v", "time", check=False), encoding="utf-8"
+    )
+    (output / "crashes.txt").write_text(
+        "\n".join(
+            adb.shell("dumpsys", "dropbox", "--print", record, check=False)
+            for record in CRASH_RECORDS
+        ),
+        encoding="utf-8",
+    )
+    return True
+
+
 def build_debug_apk() -> None:
     wrapper = REPO / ("gradlew.bat" if os.name == "nt" else "gradlew")
     print("Building the Mirror Home debug APK", flush=True)
@@ -1773,6 +1855,7 @@ def run_emulator(options: argparse.Namespace) -> int:
         raise CheckFailed(f"APK not found: {apk}")
 
     emulator = None
+    emulator_version = None
     serial = options.serial
     if serial is None:
         emulator = android_emulator.Emulator(
@@ -1782,13 +1865,23 @@ def run_emulator(options: argparse.Namespace) -> int:
         )
         emulator.start()
         serial = emulator.serial
-        print(f"Booting Android 6 as {serial}", flush=True)
+        release = android_emulator.installed_release(emulator.sdk)
+        if release:
+            emulator_version = f"{release[0]} (build {release[1]})" if release[1] else release[0]
+        print(
+            f"Booting Android 6 as {serial} on Android Emulator {emulator_version or 'of an unknown release'}",
+            flush=True,
+        )
+        advice = android_emulator.release_advice(release[0] if release else None)
+        if advice:
+            print(f"      {advice}", flush=True)
     adb = Adb(android_emulator.adb_path(android_emulator.sdk_root()), serial)
     context = None
     try:
         if emulator is not None:
             emulator.wait_for_boot()
         require_emulator(adb)
+        fingerprint = adb.property("ro.build.fingerprint")
         prepare_device(adb)
         adb.run("uninstall", PACKAGE, check=False)
         installed = adb.run("install", "-r", "-g", str(earlier or apk), timeout=300)
@@ -1798,23 +1891,17 @@ def run_emulator(options: argparse.Namespace) -> int:
         context = Context(adb, Api("127.0.0.1", port), output)
         context.forwards.append(port)
         context.apk = apk
+        context.emulator = emulator
         if earlier is not None:
             results = run_checks(UPGRADE_CHECKS, context)
         else:
             results = run_checks(EMULATOR_CHECKS, context, quick=options.quick, only=only)
-        (output / "logcat.txt").write_text(
-            adb.run("logcat", "-d", "-v", "time", check=False), encoding="utf-8"
-        )
-        (output / "crashes.txt").write_text(
-            "\n".join(
-                adb.shell("dumpsys", "dropbox", "--print", record, check=False)
-                for record in CRASH_RECORDS
-            ),
-            encoding="utf-8",
-        )
+        answering = save_logs(adb, output)
         write_report(output, target, results, {
             "serial": serial,
-            "fingerprint": adb.property("ro.build.fingerprint"),
+            "fingerprint": fingerprint,
+            "emulator": emulator_version,
+            "emulatorStoppedAnswering": not answering,
             "apk": str(apk),
             "systemDialogsClosed": context.dismissed,
             **({"upgradeFrom": str(earlier)} if earlier is not None else {}),

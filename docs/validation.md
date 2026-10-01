@@ -42,6 +42,11 @@ install the emulator and the Android 6 image, about 4.5 GB on disk:
 sdkmanager "emulator" "system-images;android-23;default;x86_64"
 ```
 
+`sdkmanager` installs the newest Android Emulator, and not every release
+runs an image from 2015 dependably. A run names the release it is using and
+warns about one that is known to fail; see
+[When the emulator stops answering](#when-the-emulator-stops-answering).
+
 The emulator needs hardware virtualization: Windows Hypervisor Platform on
 Windows, or KVM on Linux. Nothing else is installed; the suite uses only the
 Python standard library. Its virtual device lives in `build/emulator/` and
@@ -110,7 +115,8 @@ must not be a Mirror's. It checks all three before it changes anything.
 Each run writes to `build/validation/emulator-<time>/`, which Git ignores:
 
 - `report.json`: every check's outcome, duration and measurements, such as
-  the clock's switching delay, the fade's brightness samples and memory use;
+  the clock's switching delay, the fade's brightness samples and memory use,
+  and the release of the Android Emulator that ran them;
 - a PNG of the screen at each visual check, plus the frame that failed one;
 - `logcat.txt`, `emulator.log`, and `crashes.txt`, which holds what Android
   recorded about any app that crashed or stopped answering.
@@ -134,6 +140,45 @@ debugging.
 On Windows the emulator can report an access violation as it shuts down and
 leave one crash dump in the temporary directory. That happens after the last
 check, and the suite judges the checks, not the emulator's exit code.
+
+### When the emulator stops answering
+
+The Android 6 image never changes, but the Android Emulator that runs it is
+whatever release the SDK holds, and a new release can break on an image this
+old. These have been tried:
+
+| Release | Build | Result |
+|---|---|---|
+| 34.2.13 | 11772612 | Runs the suite (Windows). |
+| 37.1.11 | 15917651 | Runs the suite (Linux and Windows). CI uses this build. |
+| 37.2.12 | 16428233 | Fails about every second run, on Linux and on Windows: the emulator exits when Android reboots, and once it froze after an app was stopped. |
+
+When the emulator freezes or exits, the check that was running fails, usually
+with a time-out, `Connection refused`, or "The emulator exited when Android
+rebooted". The suite then stops waiting for it: every later check fails at
+once with "The emulator froze or exited during this run", the run says that
+the emulator has stopped answering, and `report.json` holds
+`"emulatorStoppedAnswering": true`. No `logcat.txt` is written, because the
+log went with the emulator. None of this is a fault in Mirror Home. Checks
+that passed before that point still count.
+
+Run the suite again, or install a release from the table. `sdkmanager` only
+offers the newest, so download the build by its number and put it in the
+place of the SDK's `emulator` folder:
+
+```powershell
+curl.exe -L -o emulator.zip https://dl.google.com/android/repository/emulator-windows_x64-15917651.zip
+Remove-Item -Recurse "$env:LOCALAPPDATA\Android\Sdk\emulator"
+Expand-Archive emulator.zip "$env:LOCALAPPDATA\Android\Sdk"
+```
+
+On Linux the archive is `emulator-linux_x64-15917651.zip`. Android Studio and
+`sdkmanager --update` will offer to replace it with the newest again.
+
+`.github/workflows/ci.yml` installs its build the same way and checks the
+archive's SHA-256. Before moving CI to a newer release, run the suite on it
+several times, then add it to `WORKING_RELEASES` in
+`tools/android_emulator.py` and to the table above.
 
 ### What the emulator cannot show
 

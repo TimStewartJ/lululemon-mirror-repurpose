@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Keep the emulator suite dependable when the Android Emulator is not. Hours
+  after 2.2.0 was tagged, `sdkmanager` began to install emulator 37.2.12, which
+  exits when Android 6 reboots in about every second run. CI failed for the
+  release commit although nothing in Mirror Home had changed, and a run that
+  lost its emulator waited seven minutes and left no report. CI now installs
+  an emulator build that is known to run the image, by build number and
+  checksum. A run names its emulator release and warns about one that is
+  known to fail or has not been tried. It notices an emulator that has frozen
+  or exited, fails the remaining checks at once with that reason, and still
+  writes its report. See
+  [When the emulator stops answering](docs/validation.md#when-the-emulator-stops-answering).
+
 ## 2.2.0 - 2026-10-01
 
 - Add an Android 6 emulator suite. `tools/validate.py emulator` (or

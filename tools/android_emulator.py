@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -33,6 +34,11 @@ DEFAULT_DENSITY = 240
 MEMORY_MB = 1024
 HEAP_MB = 128
 BOOT_TIMEOUT_SECONDS = 420
+# Releases of the Android Emulator that ran the whole suite, and ones that
+# could not. sdkmanager only offers the newest release, and not every release
+# still runs an image from 2015; docs/validation.md says how to get another.
+WORKING_RELEASES = ("34.2.13", "37.1.11")
+FAILING_RELEASES = ("37.2.12",)
 FIRST_CONSOLE_PORT = 5580
 LAST_CONSOLE_PORT = 5680
 
@@ -248,6 +254,10 @@ class Emulator:
     def serial(self) -> str:
         return f"emulator-{self.port}"
 
+    def exited(self) -> bool:
+        """Whether the emulator's process has ended, as some do when Android reboots."""
+        return self.process is not None and self.process.poll() is not None
+
     def start(self) -> None:
         self.port = free_console_port()
         environment = dict(os.environ)
@@ -347,6 +357,39 @@ def terminate_tree(process: subprocess.Popen) -> None:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         except (OSError, ProcessLookupError):
             process.kill()
+
+
+def installed_release(sdk: pathlib.Path) -> tuple[str, str] | None:
+    """The installed emulator's release and build number, or None if unknown.
+
+    The image is fixed but the emulator is whatever the SDK holds, and a run
+    can depend on it, so runs name it.
+    """
+    try:
+        text = (sdk / "emulator" / "source.properties").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    release = re.search(r"^Pkg\.Revision\s*=\s*(\S+)", text, re.MULTILINE)
+    build = re.search(r"^Pkg\.BuildId\s*=\s*(\S+)", text, re.MULTILINE)
+    if not release:
+        return None
+    return release.group(1), build.group(1) if build else ""
+
+
+def release_advice(release: str | None) -> str:
+    """What is known about running the suite on this release; empty if it works."""
+    if release is None or release in WORKING_RELEASES:
+        return ""
+    if release in FAILING_RELEASES:
+        return (
+            f"Android Emulator {release} is known to freeze or exit part-way through this "
+            'suite. Install another build; see "When the emulator stops answering" in '
+            "docs/validation.md."
+        )
+    return (
+        f"The suite has not been run on Android Emulator {release}. If the emulator stops "
+        'answering part-way, see "When the emulator stops answering" in docs/validation.md.'
+    )
 
 
 def boot_completed(adb: pathlib.Path, serial: str) -> bool:

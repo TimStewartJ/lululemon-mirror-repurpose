@@ -1,5 +1,6 @@
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import unittest
 from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
+REPO = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 
 import android_emulator
@@ -16,6 +18,63 @@ from android_emulator import EmulatorError
 
 def settings(config):
     return dict(line.split("=", 1) for line in config.splitlines())
+
+
+class InstalledReleaseTest(unittest.TestCase):
+    def read(self, properties):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = pathlib.Path(directory)
+            if properties is not None:
+                (sdk / "emulator").mkdir()
+                (sdk / "emulator" / "source.properties").write_text(properties, encoding="utf-8")
+            return android_emulator.installed_release(sdk)
+
+    def test_reads_the_release_and_build_from_the_package_file(self):
+        self.assertEqual(
+            ("37.1.11", "15917651"),
+            self.read(
+                "Pkg.UserSrc=false\nPkg.Revision=37.1.11\nPkg.Path=emulator\n"
+                "Pkg.Desc=Android Emulator\nPkg.BuildId=15917651\n"
+            ),
+        )
+
+    def test_a_package_file_without_a_build_number_still_names_the_release(self):
+        self.assertEqual(("30.0.5", ""), self.read("Pkg.Revision = 30.0.5\r\nPkg.Path=emulator\r\n"))
+
+    def test_an_sdk_without_the_emulator_or_its_package_file_gives_nothing(self):
+        self.assertIsNone(self.read(None))
+        self.assertIsNone(self.read("Pkg.Path=emulator\n"))
+
+
+class ReleaseAdviceTest(unittest.TestCase):
+    def test_a_release_that_ran_the_suite_needs_no_advice(self):
+        for release in android_emulator.WORKING_RELEASES:
+            self.assertEqual("", android_emulator.release_advice(release))
+        self.assertEqual("", android_emulator.release_advice(None))
+
+    def test_a_release_known_to_fail_is_named_with_where_to_read_on(self):
+        for release in android_emulator.FAILING_RELEASES:
+            advice = android_emulator.release_advice(release)
+            self.assertIn(f"Android Emulator {release} is known to freeze or exit", advice)
+            self.assertIn("When the emulator stops answering", advice)
+
+    def test_an_untried_release_is_said_to_be_untried(self):
+        self.assertIn("has not been run on Android Emulator 99.1.2", android_emulator.release_advice("99.1.2"))
+
+    def test_no_release_is_listed_as_both(self):
+        self.assertFalse(set(android_emulator.WORKING_RELEASES) & set(android_emulator.FAILING_RELEASES))
+
+    def test_the_guide_names_every_release_in_either_list(self):
+        guide = (REPO / "docs" / "validation.md").read_text(encoding="utf-8")
+        for release in android_emulator.WORKING_RELEASES + android_emulator.FAILING_RELEASES:
+            self.assertIn(release, guide, f"docs/validation.md does not mention emulator {release}")
+
+    def test_ci_installs_a_release_that_ran_the_suite(self):
+        workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        pinned = re.search(r'EMULATOR_BUILD: "(\d+)" # (\S+)', workflow)
+        self.assertIsNotNone(pinned, "the CI workflow does not pin an emulator build")
+        self.assertIn(pinned.group(2), android_emulator.WORKING_RELEASES)
+        self.assertRegex(workflow, r"EMULATOR_SHA256: [0-9a-f]{64}\b")
 
 
 class AvdConfigTest(unittest.TestCase):
