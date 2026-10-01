@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Start black. Android draws the app theme's background while an app starts,
+  and Mirror Home's was white, so the whole mirror could light up for a moment
+  whenever Home started: at boot, after an update or after a crash. The
+  starting window is now black.
 - Report the Mirror's health. `GET /api/v1/health` and **Settings > Health**
   show what could not be seen without the glass or a USB cable: when Mirror
   Home started and whether the run before ended in an update, a reboot, a
