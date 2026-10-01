@@ -57,7 +57,9 @@ The app advertises `_http._tcp` and `_mirror-home._tcp` through Android NSD.
 When neither an app-managed SSID nor a current Wi-Fi connection exists, it
 attempts a WPA2 Wi-Fi Direct group. The native setup screen displays join/open
 QR codes once that group is ready. See [Getting started](getting-started.md)
-for the installation sequence and onboarding limitations.
+for the installation sequence and onboarding limitations. Where there is no
+Wi-Fi but a wired interface has an address, as on an emulator, the setup
+screen and `status` give that address instead and no group is started.
 
 ## Health reporting
 

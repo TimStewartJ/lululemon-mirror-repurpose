@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Show a wired address where there is no Wi-Fi. The setup screen, the Pairing
+  code widget and the **Show code** hint use the Wi-Fi address or, failing
+  that, a wired interface's, and `status` reports it as `address`. With a
+  wired address the Wi-Fi Direct setup network is not started. Mirrors on
+  Wi-Fi behave as before.
 - Start black. Android draws the app theme's background while an app starts,
   and Mirror Home's was white, so the whole mirror could light up for a moment
   whenever Home started: at boot, after an update or after a crash. The

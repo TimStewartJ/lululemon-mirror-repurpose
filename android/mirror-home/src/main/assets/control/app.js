@@ -582,8 +582,8 @@
           byId('brightness-output').textContent = 'Off';
         }
         byId('about-version').textContent = next.appVersion || '—';
-        byId('about-address').textContent = next.wifi && next.wifi.ipAddress
-          ? next.wifi.ipAddress + ':8787' : 'USB only';
+        var address = next.address || (next.wifi && next.wifi.ipAddress) || '';
+        byId('about-address').textContent = address ? address + ':8787' : 'USB only';
         byId('about-binder').textContent = next.mirrorBinderConnected ? 'Connected' : 'Reconnecting';
         byId('about-helper').textContent = next.systemHelperConnected ? 'Temporary helper active' : 'Factory service';
         byId('about-uptime').textContent = formatUptime(next.deviceUptimeSeconds);
@@ -2680,9 +2680,8 @@
   byId('open-pair-window').addEventListener('click', function () {
     request('/api/v1/pair/window', json('POST', {})).then(function (result) {
       var code = String(result.code || '');
-      var address = status && status.wifi && status.wifi.ipAddress
-        ? 'http://' + status.wifi.ipAddress + ':8787'
-        : 'the mirror\u2019s address';
+      var host = status && (status.address || (status.wifi && status.wifi.ipAddress));
+      var address = host ? 'http://' + host + ':8787' : 'the mirror\u2019s address';
       var until = new Date(Number(result.expiresAt))
         .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       byId('pair-window-code').textContent = code.slice(0, 3) + ' ' + code.slice(3);

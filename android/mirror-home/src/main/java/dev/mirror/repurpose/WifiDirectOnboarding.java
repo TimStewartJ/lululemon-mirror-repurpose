@@ -106,7 +106,7 @@ public final class WifiDirectOnboarding {
         handler.postDelayed(() -> {
             ConfigStore configStore = new ConfigStore(context);
             if (configStore.getManagedWifiSsid().isEmpty()
-                    && !new WifiProvisioner(context).isConnected()) {
+                    && LanAddress.current(context).isEmpty()) {
                 start();
             }
         }, STARTUP_DELAY_MS);

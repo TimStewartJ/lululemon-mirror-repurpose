@@ -90,6 +90,10 @@ are public. Full status, health, and all state changes require authentication
 for LAN clients. ADB-forwarded and on-device loopback status and health remain
 available for recovery and local templates.
 
+`status.address` is the address other devices on the household network use to
+reach the Mirror: its Wi-Fi address, or a wired one when there is no Wi-Fi,
+and `null` when it has neither. The Wi-Fi Direct setup network does not count.
+
 A request that fails unexpectedly answers 500 with a generic error rather
 than dropping the connection, and is counted in the health report.
 

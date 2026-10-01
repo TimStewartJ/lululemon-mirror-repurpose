@@ -14,7 +14,6 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -933,11 +932,6 @@ public final class MainActivity extends Activity {
     }
 
     private String currentIpAddress() {
-        WifiManager wifiManager =
-                (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        WifiInfo info = wifiManager == null ? null : wifiManager.getConnectionInfo();
-        return info == null || info.getNetworkId() < 0
-                ? ""
-                : WifiProvisioner.ipAddress(info.getIpAddress());
+        return LanAddress.current(this);
     }
 }

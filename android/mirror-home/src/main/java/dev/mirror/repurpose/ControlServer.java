@@ -461,6 +461,8 @@ public final class ControlServer extends NanoHTTPD {
                 : mirror.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
+        String address = LanAddress.current(context);
+        result.put("address", address.isEmpty() ? JSONObject.NULL : address);
         result.put("media", media.snapshot());
         result.put("ambientVideo", media.ambientSnapshot());
         result.put("backgroundVideos", backgroundVideos.selectionSnapshot());
@@ -692,10 +694,7 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private String controlUrl() {
-        WifiManager manager =
-                (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
-        WifiInfo info = manager == null ? null : manager.getConnectionInfo();
-        String address = info == null ? "" : WifiProvisioner.ipAddress(info.getIpAddress());
+        String address = LanAddress.current(context);
         return address.isEmpty()
                 ? "http://127.0.0.1:" + ControlServerService.PORT + "/"
                 : "http://" + address + ":" + ControlServerService.PORT + "/";
