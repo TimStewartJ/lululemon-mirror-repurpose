@@ -13,6 +13,7 @@ public final class ConfigStore {
     private static final String KEY_TIME_ZONE = "time_zone";
     private static final String KEY_CLOCK_24_HOUR = "clock_24_hour";
     private static final String KEY_UTC_OFFSET_MINUTES = "utc_offset_minutes";
+    private static final String KEY_UTC_OFFSET_CHANGES = "utc_offset_changes";
     private static final String KEY_AUTOMATION_ENABLED = "automation_enabled";
     private static final String KEY_WAKE_MINUTES = "automation_wake_minutes";
     private static final String KEY_SLEEP_MINUTES = "automation_sleep_minutes";
@@ -36,11 +37,12 @@ public final class ConfigStore {
             "http://127.0.0.1:8787/dashboard/aurora.html"
     };
 
+    private final Context context;
     private final SharedPreferences preferences;
 
     public ConfigStore(Context context) {
-        preferences = context.getApplicationContext()
-                .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
+        this.context = context.getApplicationContext();
+        preferences = this.context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
     }
 
     public String getDashboardUrl() {
@@ -130,27 +132,49 @@ public final class ConfigStore {
         return preferences.getString(KEY_TIME_ZONE, TimeZone.getDefault().getID());
     }
 
-    public void setTimeZoneId(String timeZoneId) {
-        preferences.edit().putString(KEY_TIME_ZONE, timeZoneId).apply();
+    /** The Mirror's local time: its UTC offset now and every change it knows of. */
+    public UtcOffsetTimeline getUtcOffsetTimeline() {
+        return UtcOffsetTimeline.resolve(
+                preferences.getInt(KEY_UTC_OFFSET_MINUTES, 0),
+                preferences.getString(KEY_UTC_OFFSET_CHANGES, null),
+                bundledTimeline());
     }
 
+    /** Where offset changes come from: "client", "bundled" or "fixed". */
+    public String getClockSource() {
+        return UtcOffsetTimeline.source(
+                preferences.getInt(KEY_UTC_OFFSET_MINUTES, 0),
+                preferences.getString(KEY_UTC_OFFSET_CHANGES, null),
+                bundledTimeline());
+    }
+
+    /** The offset in force right now. */
     public int getUtcOffsetMinutes() {
-        return preferences.getInt(KEY_UTC_OFFSET_MINUTES, 0);
+        return getUtcOffsetTimeline().offsetMinutesAt(System.currentTimeMillis());
     }
 
-    public void setUtcOffsetMinutes(int minutes) {
-        preferences.edit().putInt(KEY_UTC_OFFSET_MINUTES, minutes).apply();
+    /**
+     * Saves the zone and the offset a client reported for it. {@code supplied}
+     * holds the changes that client knows of; null follows the bundled table.
+     */
+    public void setClock(String timeZoneId, int offsetMinutes, UtcOffsetTimeline supplied) {
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(KEY_TIME_ZONE, timeZoneId)
+                .putInt(KEY_UTC_OFFSET_MINUTES, offsetMinutes);
+        if (supplied == null) {
+            editor.remove(KEY_UTC_OFFSET_CHANGES);
+        } else {
+            editor.putString(KEY_UTC_OFFSET_CHANGES, supplied.serializeChanges());
+        }
+        editor.apply();
     }
 
     public String getEffectiveTimeZoneId() {
-        int minutes = getUtcOffsetMinutes();
-        int absolute = Math.abs(minutes);
-        return String.format(
-                java.util.Locale.US,
-                "GMT%s%02d:%02d",
-                minutes >= 0 ? "+" : "-",
-                absolute / 60,
-                absolute % 60);
+        return UtcOffsetTimeline.gmtId(getUtcOffsetMinutes());
+    }
+
+    private UtcOffsetTimeline bundledTimeline() {
+        return ZoneOffsetTable.getInstance(context).timelineFor(getTimeZoneId());
     }
 
     public boolean isClock24Hour() {

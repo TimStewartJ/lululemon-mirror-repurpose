@@ -6,6 +6,7 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.SystemClock;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -23,6 +24,7 @@ import fi.iki.elonen.NanoHTTPD;
 
 public final class ControlServer extends NanoHTTPD {
     private static final int MAX_BODY_BYTES = 64 * 1024;
+    private static final int UPCOMING_OFFSET_CHANGES = 8;
 
     private final Context context;
     private final BackgroundVideoLibrary backgroundVideos;
@@ -423,6 +425,8 @@ public final class ControlServer extends NanoHTTPD {
             wifiStatus.put("connected", false);
         }
 
+        long now = System.currentTimeMillis();
+        UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
         JSONObject result = new JSONObject();
         result.put("apiVersion", 1);
         result.put("appVersion", BuildConfig.VERSION_NAME);
@@ -430,7 +434,8 @@ public final class ControlServer extends NanoHTTPD {
         result.put("paired", pairing.isPaired());
         result.put("displayName", configStore.getDisplayName());
         result.put("timeZone", configStore.getTimeZoneId());
-        result.put("utcOffsetMinutes", configStore.getUtcOffsetMinutes());
+        result.put("utcOffsetMinutes", clock.offsetMinutesAt(now));
+        result.put("nextUtcOffsetChange", nextUtcOffsetChange(clock, now));
         result.put("clock24Hour", configStore.isClock24Hour());
         result.put("mirrorBinderConnected", mirror.isConnected());
         result.put("systemHelperConnected", systemHelper.isConnected());
@@ -525,10 +530,10 @@ public final class ControlServer extends NanoHTTPD {
         }
         String timeZone = body.optString("timeZone", "");
         if (InputValidator.validTimeZone(timeZone)) {
-            configStore.setTimeZoneId(timeZone);
-            int offset = body.optInt("utcOffsetMinutes", 0);
-            if (offset >= -14 * 60 && offset <= 14 * 60) {
-                configStore.setUtcOffsetMinutes(offset);
+            try {
+                saveClock(timeZone, body.optInt("utcOffsetMinutes", 0), body);
+            } catch (IllegalArgumentException ignored) {
+                // Pairing already succeeded; a malformed clock keeps the saved one.
             }
         }
         notifyConfigurationChanged();
@@ -605,9 +610,13 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private JSONObject preferences() throws JSONException {
+        long now = System.currentTimeMillis();
+        UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
         return new JSONObject()
                 .put("timeZone", configStore.getTimeZoneId())
-                .put("utcOffsetMinutes", configStore.getUtcOffsetMinutes())
+                .put("utcOffsetMinutes", clock.offsetMinutesAt(now))
+                .put("utcOffsetChanges", clock.changesJson(now, UPCOMING_OFFSET_CHANGES))
+                .put("clockSource", configStore.getClockSource())
                 .put("clock24Hour", configStore.isClock24Hour())
                 .put("ambientLightAvailable", automation.hasAmbientLightSensor());
     }
@@ -617,15 +626,47 @@ public final class ControlServer extends NanoHTTPD {
         if (!InputValidator.validTimeZone(timeZone)) {
             return error(Response.Status.BAD_REQUEST, "Unknown IANA time zone");
         }
-        configStore.setTimeZoneId(timeZone);
-        int offset = body.optInt("utcOffsetMinutes", 0);
-        if (offset < -14 * 60 || offset > 14 * 60) {
-            return error(Response.Status.BAD_REQUEST, "Invalid UTC offset");
+        try {
+            saveClock(timeZone, body.optInt("utcOffsetMinutes", 0), body);
+        } catch (IllegalArgumentException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
         }
-        configStore.setUtcOffsetMinutes(offset);
         configStore.setClock24Hour(body.optBoolean("clock24Hour", false));
         notifyConfigurationChanged();
         return response(Response.Status.OK, preferences());
+    }
+
+    /**
+     * Saves a client's zone and offset. A client that also lists the upcoming
+     * offset changes is followed exactly; one that knows only the offset in
+     * force leaves known changes alone when it agrees with them.
+     */
+    private void saveClock(String timeZone, int offsetMinutes, JSONObject body) {
+        if (!UtcOffsetTimeline.validOffset(offsetMinutes)) {
+            throw new IllegalArgumentException("Invalid UTC offset");
+        }
+        if (body.has("utcOffsetChanges") && !body.isNull("utcOffsetChanges")) {
+            JSONArray changes = body.optJSONArray("utcOffsetChanges");
+            if (changes == null) {
+                throw new IllegalArgumentException("UTC offset changes must be a list");
+            }
+            configStore.setClock(
+                    timeZone,
+                    offsetMinutes,
+                    UtcOffsetTimeline.parse(offsetMinutes, changes));
+            return;
+        }
+        if (timeZone.equals(configStore.getTimeZoneId())
+                && configStore.getUtcOffsetMinutes() == offsetMinutes) {
+            return;
+        }
+        configStore.setClock(timeZone, offsetMinutes, null);
+    }
+
+    private static Object nextUtcOffsetChange(UtcOffsetTimeline clock, long now)
+            throws JSONException {
+        JSONArray next = clock.changesJson(now, 1);
+        return next.length() == 0 ? JSONObject.NULL : next.get(0);
     }
 
     private Response updateAutomation(JSONObject body) throws JSONException {
@@ -1088,6 +1129,10 @@ public final class ControlServer extends NanoHTTPD {
                 break;
             case "/app.js":
                 assetName = "control/app.js";
+                mimeType = "application/javascript; charset=utf-8";
+                break;
+            case "/clock.js":
+                assetName = "control/clock.js";
                 mimeType = "application/javascript; charset=utf-8";
                 break;
             case "/styles.css":

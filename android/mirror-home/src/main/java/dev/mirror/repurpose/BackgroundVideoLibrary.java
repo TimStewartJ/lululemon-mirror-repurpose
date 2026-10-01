@@ -31,7 +31,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.TimeZone;
 import java.util.UUID;
 
 public final class BackgroundVideoLibrary {
@@ -296,7 +295,7 @@ public final class BackgroundVideoLibrary {
                 holdId(),
                 holdUntil(),
                 System.currentTimeMillis(),
-                zone());
+                clock());
         if (available(id)) {
             return id;
         }
@@ -312,7 +311,7 @@ public final class BackgroundVideoLibrary {
     public synchronized long nextScheduleChangeMillis() {
         BackgroundVideoSchedule schedule = schedule();
         return schedule.isActive()
-                ? schedule.nextChangeMillis(System.currentTimeMillis(), zone())
+                ? schedule.nextChangeMillis(System.currentTimeMillis(), clock())
                 : -1L;
     }
 
@@ -379,24 +378,29 @@ public final class BackgroundVideoLibrary {
 
     private JSONObject scheduleJson(BackgroundVideoSchedule schedule) throws JSONException {
         long now = System.currentTimeMillis();
-        TimeZone zone = zone();
+        UtcOffsetTimeline clock = clock();
         JSONObject result = schedule.toJson()
                 .put("active", schedule.isActive())
                 .put("maxSlots", BackgroundVideoSchedule.MAX_SLOTS)
-                .put("utcOffsetMinutes", configStore.getUtcOffsetMinutes())
+                .put("utcOffsetMinutes", clock.offsetMinutesAt(now))
                 .put("current", JSONObject.NULL)
                 .put("next", JSONObject.NULL)
                 .put("nextChangeAt", JSONObject.NULL)
                 .put("hold", JSONObject.NULL);
         if (schedule.isActive()) {
-            BackgroundVideoSchedule.Slot current = schedule.slotAt(now, zone);
+            BackgroundVideoSchedule.Slot current = schedule.slotAt(now, clock);
             result.put("current", current.toJson())
                     .put("next", schedule.slotAfter(current).toJson())
-                    .put("nextChangeAt", schedule.nextChangeMillis(now, zone));
+                    .put("nextChangeAt", schedule.nextChangeMillis(now, clock));
             String hold = holdId();
             long until = holdUntil();
             if (BackgroundVideoSchedule.holdActive(hold, until, now) && available(hold)) {
-                result.put("hold", new JSONObject().put("videoId", hold).put("until", until));
+                // The local time is given too: the offset may change before then.
+                result.put("hold", new JSONObject()
+                        .put("videoId", hold)
+                        .put("until", until)
+                        .put("untilTime", BackgroundVideoSchedule.formatMinutes(
+                                clock.minuteOfDayAt(until))));
             }
         }
         return result;
@@ -406,12 +410,12 @@ public final class BackgroundVideoLibrary {
     private void holdUntilNextChange(String id) throws IOException {
         BackgroundVideoSchedule schedule = schedule();
         long now = System.currentTimeMillis();
-        TimeZone zone = zone();
-        if (!schedule.isActive() || id.equals(schedule.slotAt(now, zone).videoId)) {
+        UtcOffsetTimeline clock = clock();
+        if (!schedule.isActive() || id.equals(schedule.slotAt(now, clock).videoId)) {
             persistHold("", 0L);
             return;
         }
-        persistHold(id, schedule.nextChangeMillis(now, zone));
+        persistHold(id, schedule.nextChangeMillis(now, clock));
     }
 
     private BackgroundVideoSchedule schedule() {
@@ -426,8 +430,8 @@ public final class BackgroundVideoLibrary {
         return preferences.getLong(KEY_HOLD_UNTIL, 0L);
     }
 
-    private TimeZone zone() {
-        return TimeZone.getTimeZone(configStore.getEffectiveTimeZoneId());
+    private UtcOffsetTimeline clock() {
+        return configStore.getUtcOffsetTimeline();
     }
 
     private boolean available(String id) {

@@ -39,9 +39,20 @@
     return value < 10 ? '0' + value : String(value);
   }
 
+  /* The Mirror's UTC offset at a moment. The runtime carries the offset in
+     force and the next change, so a daylight-saving switch lands on time
+     even between runtime refreshes. */
+  function offsetAt(time, runtime) {
+    if (!runtime) return 0;
+    var next = runtime.nextUtcOffsetChange;
+    if (next && typeof next.at === 'number' && time >= next.at) {
+      return Number(next.utcOffsetMinutes || 0);
+    }
+    return Number(runtime.utcOffsetMinutes || 0);
+  }
+
   function localDate(now, runtime) {
-    var offset = runtime ? Number(runtime.utcOffsetMinutes || 0) : 0;
-    return new Date(now.getTime() + offset * 60000);
+    return new Date(now.getTime() + offsetAt(now.getTime(), runtime) * 60000);
   }
 
   function timeParts(date, clock24Hour) {
@@ -334,9 +345,8 @@
       var box = boxSize(widget);
       var hours = data.hourly.slice(0, Math.min(data.hourly.length, forecastColumns(box)));
       var clock24Hour = runtime && runtime.clock24Hour;
-      var offset = runtime ? Number(runtime.utcOffsetMinutes || 0) : 0;
       return '<span class="mr-hours">' + hours.map(function (hour) {
-        var date = new Date(Number(hour.time) + offset * 60000);
+        var date = new Date(Number(hour.time) + offsetAt(Number(hour.time), runtime) * 60000);
         var rain = Number(hour.precipitationProbability || 0);
         return '<span class="mr-hour">' +
           '<span class="mr-hour-label mr-medium">' + escapeHtml(hourLabel(date, clock24Hour)) + '</span>' +

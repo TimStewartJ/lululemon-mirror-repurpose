@@ -168,8 +168,8 @@ the background resumes.
 
 **Display > Video schedule** changes the background by time of day, for example
 a bright film from 06:00 and a calmer one from 19:00. Each time shows its video
-until the next time, wrapping past midnight, using the Mirror's saved local
-offset. Turning the schedule on selects the built-in layout with a video
+until the next time, wrapping past midnight, on the Mirror's local clock.
+Turning the schedule on selects the built-in layout with a video
 background. While it runs, **Show now** (or **Use previous video**) shows another
 video only until the next scheduled change; **Resume schedule** ends that sooner.
 Videos fade through black when the background changes. Scheduled videos cannot
@@ -180,9 +180,16 @@ recovery details.
 
 ## Clock and schedules
 
-Pairing from a browser copies its IANA time-zone name and current UTC offset to
-the Mirror. The vendor firmware lacks a complete Java time-zone database, so
-opening the controls after a daylight-saving transition refreshes the offset.
+Pairing from a browser copies its IANA time-zone name to the Mirror, and
+**Settings > Clock** changes it. The clock, the sleep schedule and the video
+schedule follow daylight-saving changes on their own.
+
+The vendor firmware has no usable time-zone rules, so Mirror Home carries its
+own. Each release includes the UTC-offset changes of every IANA zone for the
+following ten years, and every time a paired browser opens the controls it
+sends the changes it knows of, which take precedence. A browser is therefore
+needed only if a government changes its rules after your Mirror Home release
+was built. **Settings > Clock** shows the next change the Mirror expects.
 
 The **Schedule** tab can:
 

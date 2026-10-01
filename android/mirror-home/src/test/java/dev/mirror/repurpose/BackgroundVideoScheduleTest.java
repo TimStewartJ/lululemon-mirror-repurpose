@@ -18,7 +18,12 @@ public final class BackgroundVideoScheduleTest {
     private static final String MORNING = repeat('a');
     private static final String NIGHT = repeat('b');
     private static final String HELD = repeat('c');
-    private static final TimeZone PACIFIC = TimeZone.getTimeZone("GMT-07:00");
+    private static final UtcOffsetTimeline PACIFIC = UtcOffsetTimeline.fixed(-420);
+    /* 2026-11-01 09:00 UTC, 02:00 daylight time: clocks go back to 01:00. */
+    private static final long FALL_BACK = 1793523600000L;
+    /* 2027-03-14 10:00 UTC, 02:00 standard time: clocks go forward to 03:00. */
+    private static final long SPRING_FORWARD = 1805018400000L;
+    private static final long HOUR_MS = 60 * 60 * 1000L;
 
     @Test
     public void slotsAreSortedAndEachShowsUntilTheNextStart() throws Exception {
@@ -48,6 +53,63 @@ public final class BackgroundVideoScheduleTest {
         assertEquals(at(2026, 9, 16, 6, 0), schedule.nextChangeMillis(at(2026, 9, 15, 23, 2), PACIFIC));
         assertEquals(at(2026, 9, 16, 6, 0), schedule.nextChangeMillis(at(2026, 9, 16, 1, 0), PACIFIC));
         assertEquals(at(2026, 9, 16, 19, 0), schedule.nextChangeMillis(at(2026, 9, 16, 6, 0), PACIFIC));
+    }
+
+    @Test
+    public void startsMoveWithTheClockWhenDaylightSavingEnds() throws Exception {
+        BackgroundVideoSchedule schedule = schedule(true, "06:00", MORNING, "19:00", NIGHT);
+        UtcOffsetTimeline clock = UtcOffsetTimelineTest.pacific();
+        // 23:00 daylight time the night before; 06:00 is now standard time.
+        long lateEvening = FALL_BACK - 3 * HOUR_MS;
+
+        assertEquals(FALL_BACK + 5 * HOUR_MS, schedule.nextChangeMillis(lateEvening, clock));
+        assertEquals(NIGHT, schedule.slotAt(FALL_BACK + 5 * HOUR_MS - 1, clock).videoId);
+        assertEquals(MORNING, schedule.slotAt(FALL_BACK + 5 * HOUR_MS, clock).videoId);
+        // A fixed summer offset would have switched an hour early.
+        assertEquals(FALL_BACK + 4 * HOUR_MS, schedule.nextChangeMillis(lateEvening, PACIFIC));
+    }
+
+    @Test
+    public void aStartInsideTheSkippedHourTakesEffectWhenTheClockJumps() throws Exception {
+        BackgroundVideoSchedule schedule = schedule(true, "02:30", MORNING, "19:00", NIGHT);
+        UtcOffsetTimeline clock = UtcOffsetTimelineTest.pacific();
+
+        assertEquals(NIGHT, schedule.slotAt(SPRING_FORWARD - 1, clock).videoId);
+        assertEquals(SPRING_FORWARD, schedule.nextChangeMillis(SPRING_FORWARD - HOUR_MS, clock));
+        assertEquals(MORNING, schedule.slotAt(SPRING_FORWARD, clock).videoId);
+        // After the jump the next start is the evening one, sixteen local hours on.
+        assertEquals(
+                SPRING_FORWARD + 16 * HOUR_MS,
+                schedule.nextChangeMillis(SPRING_FORWARD, clock));
+    }
+
+    @Test
+    public void aRepeatedHourReturnsToTheEarlierSlotAndStartsAgain() throws Exception {
+        BackgroundVideoSchedule schedule = schedule(true, "01:30", MORNING, "19:00", NIGHT);
+        UtcOffsetTimeline clock = UtcOffsetTimelineTest.pacific();
+        long firstStart = FALL_BACK - HOUR_MS / 2;
+
+        assertEquals(firstStart, schedule.nextChangeMillis(firstStart - 1, clock));
+        assertEquals(MORNING, schedule.slotAt(FALL_BACK - 1, clock).videoId);
+        // 01:59 becomes 01:00 again: the evening slot is back until 01:30 repeats.
+        assertEquals(FALL_BACK, schedule.nextChangeMillis(firstStart, clock));
+        assertEquals(NIGHT, schedule.slotAt(FALL_BACK, clock).videoId);
+        assertEquals(FALL_BACK + HOUR_MS / 2, schedule.nextChangeMillis(FALL_BACK, clock));
+        assertEquals(MORNING, schedule.slotAt(FALL_BACK + HOUR_MS / 2, clock).videoId);
+    }
+
+    @Test
+    public void aClockChangeThatCrossesNoStartIsNotAScheduleChange() throws Exception {
+        BackgroundVideoSchedule schedule = schedule(true, "06:00", MORNING, "19:00", NIGHT);
+        UtcOffsetTimeline clock = UtcOffsetTimelineTest.pacific();
+
+        // Both changes happen overnight inside the evening slot.
+        assertEquals(
+                FALL_BACK + 5 * HOUR_MS,
+                schedule.nextChangeMillis(FALL_BACK - 1, clock));
+        assertEquals(
+                SPRING_FORWARD + 3 * HOUR_MS,
+                schedule.nextChangeMillis(SPRING_FORWARD - 1, clock));
     }
 
     @Test
@@ -151,7 +213,7 @@ public final class BackgroundVideoScheduleTest {
     }
 
     private static long at(int year, int month, int day, int hour, int minute) {
-        Calendar calendar = Calendar.getInstance(PACIFIC);
+        Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("GMT-07:00"));
         calendar.clear();
         calendar.set(year, month - 1, day, hour, minute, 0);
         return calendar.getTimeInMillis();

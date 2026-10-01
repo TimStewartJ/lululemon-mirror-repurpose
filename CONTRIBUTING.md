@@ -44,6 +44,14 @@ Mirror Home release version codes must increase for OTA. Test-only
 `mirrorOtaHealthFailureTest` artifacts must use a unique version code, remain
 outside source control, and be followed by a verified automatic rollback.
 
+Before a release, refresh the bundled time-zone table from the newest IANA
+data. `--check` instead lists zones whose rules changed since it was written:
+
+```powershell
+python -m pip install --upgrade tzdata
+python tools/zone_offsets.py
+```
+
 ## Commit scope
 
 Use focused commits for independently reviewable behavior: device tooling,

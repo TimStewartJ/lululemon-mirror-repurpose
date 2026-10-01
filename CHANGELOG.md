@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Follow daylight-saving changes without help. The clock, the sleep schedule
+  and the video schedule used the UTC offset a browser last reported, so they
+  ran an hour off after each change until someone opened the controls. Mirror
+  Home now ships the offset changes of every IANA zone for ten years
+  (`zone-offsets.json`, written by `tools/zone_offsets.py` from IANA 2026d),
+  and paired browsers send the changes they know of, which take precedence.
+  The glass switches at the exact instant; a video-schedule start inside a
+  skipped or repeated hour is handled; **Settings > Clock** shows the next
+  change and rejects zone names the browser does not know. `preferences` and
+  `pair` accept `utcOffsetChanges`; `status` adds `nextUtcOffsetChange`.
 - Remove the desktop companion. Mirror Home serves its own controls, and USB
   setup, recovery and helper actions use `tools/mirror.ps1` and the API
   directly, so the Node.js service, its npm dependencies and its validation

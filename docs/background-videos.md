@@ -107,8 +107,9 @@ Normal builds leave the hash empty and disable provisioning entirely.
 A schedule changes the background by time of day. It is a daily timetable of up
 to eight start times, each with a video. A time shows its video until the next
 time starts, wrapping past midnight, so exactly one video applies at any moment.
-Times use the Mirror's saved local UTC offset, the same clock as the sleep
-schedule. With a single time, that video shows all day.
+Times use the Mirror's local clock, the same one as the sleep schedule, and
+follow daylight-saving changes with it. With a single time, that video shows
+all day.
 
 Open **Display > Video schedule**, turn on **Change video by time of day**,
 choose a video for each time, and select **Save video schedule**. Turning a

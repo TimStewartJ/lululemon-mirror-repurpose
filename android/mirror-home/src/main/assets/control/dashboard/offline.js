@@ -3,6 +3,7 @@
   'use strict';
 
   var utcOffsetMinutes = 0;
+  var nextUtcOffsetChange = null;
   var clock24Hour = false;
   var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
@@ -11,7 +12,11 @@
   function pad(value) { return value < 10 ? '0' + value : String(value); }
 
   function tick() {
-    var date = new Date(Date.now() + utcOffsetMinutes * 60000);
+    var now = Date.now();
+    var offset = nextUtcOffsetChange && now >= nextUtcOffsetChange.at
+      ? Number(nextUtcOffsetChange.utcOffsetMinutes || 0)
+      : utcOffsetMinutes;
+    var date = new Date(now + offset * 60000);
     var hours = date.getUTCHours();
     var minutes = pad(date.getUTCMinutes());
     document.getElementById('time').textContent = clock24Hour
@@ -27,6 +32,9 @@
       .then(function (response) { return response.json(); })
       .then(function (snapshot) {
         utcOffsetMinutes = Number(snapshot.utcOffsetMinutes || 0);
+        nextUtcOffsetChange = snapshot.nextUtcOffsetChange && typeof snapshot.nextUtcOffsetChange.at === 'number'
+          ? snapshot.nextUtcOffsetChange
+          : null;
         clock24Hour = Boolean(snapshot.clock24Hour);
         tick();
       })

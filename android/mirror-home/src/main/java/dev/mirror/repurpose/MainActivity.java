@@ -94,6 +94,11 @@ public final class MainActivity extends Activity {
     private final Runnable statusRefresh = new Runnable() {
         @Override
         public void run() {
+            if (nativeStatus != null
+                    && !configStore.getEffectiveTimeZoneId().equals(nativeClockZoneId)) {
+                // A daylight-saving change: rebuild the clocks on the new offset.
+                renderDashboard();
+            }
             if (nativeStatus != null) {
                 nativeStatus.setText(buildStatusText());
             }
@@ -141,6 +146,7 @@ public final class MainActivity extends Activity {
     private View sleepOverlay;
     private TextView nativeStatus;
     private TextView nativeCode;
+    private String nativeClockZoneId = "";
     private String loadedDashboardUrl = "";
     private String appliedAmbientId = "";
     private File appliedAmbientFile;
@@ -344,8 +350,9 @@ public final class MainActivity extends Activity {
         top.setOrientation(LinearLayout.VERTICAL);
         top.setGravity(Gravity.START);
 
+        nativeClockZoneId = configStore.getEffectiveTimeZoneId();
         TextClock clock = new TextClock(this);
-        clock.setTimeZone(configStore.getEffectiveTimeZoneId());
+        clock.setTimeZone(nativeClockZoneId);
         String format = configStore.isClock24Hour() ? "HH:mm" : "h:mm";
         clock.setFormat12Hour(format);
         clock.setFormat24Hour(format);
@@ -357,7 +364,7 @@ public final class MainActivity extends Activity {
         top.addView(clock);
 
         TextClock date = new TextClock(this);
-        date.setTimeZone(configStore.getEffectiveTimeZoneId());
+        date.setTimeZone(nativeClockZoneId);
         date.setFormat12Hour("EEEE, MMMM d");
         date.setFormat24Hour("EEEE, MMMM d");
         date.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));

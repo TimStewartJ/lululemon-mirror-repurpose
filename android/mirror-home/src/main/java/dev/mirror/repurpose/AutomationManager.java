@@ -13,9 +13,7 @@ import android.os.SystemClock;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.Calendar;
 import java.util.Locale;
-import java.util.TimeZone;
 
 public final class AutomationManager implements SensorEventListener {
     public static final String ACTION_STATE_CHANGED =
@@ -360,10 +358,8 @@ public final class AutomationManager implements SensorEventListener {
         if (!configStore.isAutomationEnabled()) {
             return true;
         }
-        Calendar calendar = Calendar.getInstance(
-                TimeZone.getTimeZone(configStore.getEffectiveTimeZoneId()));
-        int currentMinutes = calendar.get(Calendar.HOUR_OF_DAY) * 60
-                + calendar.get(Calendar.MINUTE);
+        int currentMinutes = configStore.getUtcOffsetTimeline()
+                .minuteOfDayAt(System.currentTimeMillis());
         int wake = configStore.getWakeMinutes();
         int sleep = configStore.getSleepMinutes();
         return wake < sleep

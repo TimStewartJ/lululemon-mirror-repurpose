@@ -5,13 +5,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Calendar;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.TimeZone;
 
 /**
  * A daily timetable of background videos. Each slot starts at a local time of
@@ -20,6 +18,9 @@ import java.util.TimeZone;
  */
 final class BackgroundVideoSchedule {
     static final int MAX_SLOTS = 8;
+
+    private static final long MINUTE_MS = 60_000L;
+    private static final long DAY_MS = UtcOffsetTimeline.DAY_MINUTES * MINUTE_MS;
 
     static final class Slot {
         final int startMinutes;
@@ -31,7 +32,7 @@ final class BackgroundVideoSchedule {
         }
 
         String start() {
-            return String.format(Locale.US, "%02d:%02d", startMinutes / 60, startMinutes % 60);
+            return formatMinutes(startMinutes);
         }
 
         JSONObject toJson() throws JSONException {
@@ -162,39 +163,72 @@ final class BackgroundVideoSchedule {
         return slots.get((index + 1) % slots.size());
     }
 
-    Slot slotAt(long nowMillis, TimeZone zone) {
-        return slotAt(minuteOfDay(nowMillis, zone));
+    Slot slotAt(long nowMillis, UtcOffsetTimeline clock) {
+        return slotAt(clock.minuteOfDayAt(nowMillis));
     }
 
     /** The first slot start strictly after {@code nowMillis}, or -1 without slots. */
-    long nextChangeMillis(long nowMillis, TimeZone zone) {
+    long nextChangeMillis(long nowMillis, UtcOffsetTimeline clock) {
         if (slots.isEmpty()) {
             return -1L;
         }
-        Calendar calendar = Calendar.getInstance(zone, Locale.US);
-        calendar.setTimeInMillis(nowMillis);
-        calendar.set(Calendar.HOUR_OF_DAY, 0);
-        calendar.set(Calendar.MINUTE, 0);
-        calendar.set(Calendar.SECOND, 0);
-        calendar.set(Calendar.MILLISECOND, 0);
-        for (int day = 0; day < 2; day++) {
-            for (Slot slot : slots) {
-                Calendar candidate = (Calendar) calendar.clone();
-                candidate.add(Calendar.DAY_OF_MONTH, day);
-                candidate.set(Calendar.HOUR_OF_DAY, slot.startMinutes / 60);
-                candidate.set(Calendar.MINUTE, slot.startMinutes % 60);
-                if (candidate.getTimeInMillis() > nowMillis) {
-                    return candidate.getTimeInMillis();
-                }
+        // Walk one constant-offset stretch at a time: a daylight-saving change
+        // moves every later start, and its jump can itself cross a start.
+        long from = nowMillis;
+        for (int stretch = 0; stretch <= UtcOffsetTimeline.MAX_TRANSITIONS; stretch++) {
+            int offset = clock.offsetMinutesAt(from);
+            long start = nextStartAfter(from, offset);
+            long change = clock.nextChangeAfter(from);
+            if (change < 0 || start < change) {
+                return start;
             }
+            if (restartsBetween(
+                    UtcOffsetTimeline.minuteOfDay(change - 1, offset),
+                    clock.minuteOfDayAt(change))) {
+                return change;
+            }
+            from = change;
         }
         return -1L;
     }
 
-    static int minuteOfDay(long nowMillis, TimeZone zone) {
-        Calendar calendar = Calendar.getInstance(zone, Locale.US);
-        calendar.setTimeInMillis(nowMillis);
-        return calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE);
+    private long nextStartAfter(long nowMillis, int offsetMinutes) {
+        long local = nowMillis + offsetMinutes * MINUTE_MS;
+        long intoDay = local % DAY_MS;
+        if (intoDay < 0) {
+            intoDay += DAY_MS;
+        }
+        long dayStart = local - intoDay;
+        long next = Long.MAX_VALUE;
+        for (Slot slot : slots) {
+            long start = dayStart + slot.startMinutes * MINUTE_MS;
+            if (start <= local) {
+                start += DAY_MS;
+            }
+            next = Math.min(next, start);
+        }
+        return next - offsetMinutes * MINUTE_MS;
+    }
+
+    /** Whether the local clock moving between two minutes of the day restarts a slot. */
+    private boolean restartsBetween(int previousMinute, int currentMinute) {
+        int forward = cyclicDistance(previousMinute, currentMinute);
+        if (forward > UtcOffsetTimeline.DAY_MINUTES / 2) {
+            // The clock moved back: only landing in a different slot is a change.
+            return slotAt(currentMinute) != slotAt(previousMinute);
+        }
+        for (Slot slot : slots) {
+            int distance = cyclicDistance(previousMinute, slot.startMinutes);
+            if (distance >= 1 && distance <= forward) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int cyclicDistance(int fromMinute, int toMinute) {
+        int distance = (toMinute - fromMinute) % UtcOffsetTimeline.DAY_MINUTES;
+        return distance < 0 ? distance + UtcOffsetTimeline.DAY_MINUTES : distance;
     }
 
     /**
@@ -207,7 +241,7 @@ final class BackgroundVideoSchedule {
             String holdId,
             long holdUntilMillis,
             long nowMillis,
-            TimeZone zone) {
+            UtcOffsetTimeline clock) {
         String selected = BackgroundVideoSelection.validId(activeId) ? activeId : "";
         if (schedule == null || !schedule.isActive()) {
             return selected;
@@ -215,10 +249,14 @@ final class BackgroundVideoSchedule {
         if (holdActive(holdId, holdUntilMillis, nowMillis)) {
             return holdId;
         }
-        return schedule.slotAt(nowMillis, zone).videoId;
+        return schedule.slotAt(nowMillis, clock).videoId;
     }
 
     static boolean holdActive(String holdId, long holdUntilMillis, long nowMillis) {
         return BackgroundVideoSelection.validId(holdId) && nowMillis < holdUntilMillis;
+    }
+
+    static String formatMinutes(int minuteOfDay) {
+        return String.format(Locale.US, "%02d:%02d", minuteOfDay / 60, minuteOfDay % 60);
     }
 }

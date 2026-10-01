@@ -680,18 +680,54 @@
   function refreshPreferences() {
     if (!token) return Promise.resolve();
     return request('/api/v1/preferences').then(function (preferences) {
-      var browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      byId('time-zone').value = preferences.timeZone || browserZone;
+      var zone = preferences.timeZone || window.MirrorClock.browserZone();
+      byId('time-zone').value = zone;
       byId('clock-24-hour').checked = Boolean(preferences.clock24Hour);
-      var browserOffset = -new Date().getTimezoneOffset();
-      if (preferences.timeZone === browserZone && preferences.utcOffsetMinutes !== browserOffset) {
-        return request('/api/v1/preferences', json('PUT', {
-          timeZone: browserZone,
-          utcOffsetMinutes: browserOffset,
-          clock24Hour: Boolean(preferences.clock24Hour)
-        }));
-      }
+      renderClockHint(preferences);
+      /* The browser has current time-zone rules; top up the Mirror whenever
+         its saved offset or upcoming changes differ. */
+      var clock = clockFor(zone);
+      if (!clock || window.MirrorClock.matches(preferences, clock)) return;
+      return request('/api/v1/preferences', json('PUT', {
+        timeZone: zone,
+        utcOffsetMinutes: clock.utcOffsetMinutes,
+        utcOffsetChanges: clock.utcOffsetChanges,
+        clock24Hour: Boolean(preferences.clock24Hour)
+      })).then(renderClockHint);
     });
+  }
+
+  /* Null when this browser cannot resolve the zone. */
+  function clockFor(zone) {
+    try {
+      return window.MirrorClock.describe(zone);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function renderClockHint(preferences) {
+    var hint = byId('clock-hint');
+    var next = preferences && (preferences.utcOffsetChanges || [])[0];
+    if (!next) {
+      hint.textContent = 'No clock changes are scheduled for this time zone.';
+      return;
+    }
+    var before = Number(preferences.utcOffsetMinutes || 0);
+    var shift = Number(next.utcOffsetMinutes) - before;
+    var size = Math.abs(shift);
+    var amount = [];
+    if (size >= 60) amount.push(Math.floor(size / 60) + (size < 120 ? ' hour' : ' hours'));
+    if (size % 60) amount.push((size % 60) + ' minutes');
+    /* The wall time just before the change, read off a UTC-shifted date. */
+    var local = new Date(Number(next.at) + before * 60000);
+    var hours = local.getUTCHours();
+    var minutes = local.getUTCMinutes();
+    hint.textContent = 'The mirror moves its clock ' + (shift > 0 ? 'forward ' : 'back ')
+      + amount.join(' ') + ' on '
+      + local.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+      + ' at ' + formatClockTime((hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes)
+      + '.';
   }
 
   function refreshAutomation() {
@@ -917,6 +953,12 @@
     return formatClockTime((hours < 10 ? '0' : '') + hours + ':' + (minutes < 10 ? '0' : '') + minutes);
   }
 
+  /* The Mirror reports the hold's local end time itself, which stays right
+     across a daylight-saving change. */
+  function formatHoldEnd(hold) {
+    return hold.untilTime ? formatClockTime(hold.untilTime) : formatMirrorTime(hold.until);
+  }
+
   function videoScheduleSummary() {
     var schedule = backgroundVideoCatalog.schedule;
     if (!schedule || !schedule.active) {
@@ -924,7 +966,7 @@
     }
     if (schedule.hold) {
       return 'Showing ' + videoLabel(schedule.hold.videoId) + ' until '
-        + formatMirrorTime(schedule.hold.until) + ', then the schedule resumes';
+        + formatHoldEnd(schedule.hold) + ', then the schedule resumes';
     }
     var current = schedule.current;
     var next = schedule.next;
@@ -1178,7 +1220,7 @@
         setMessage('background-video-message', '');
         var hold = backgroundVideoCatalog.schedule && backgroundVideoCatalog.schedule.hold;
         toast(hold && hold.videoId === id
-          ? 'Showing until ' + formatMirrorTime(hold.until) + ', then the schedule resumes'
+          ? 'Showing until ' + formatHoldEnd(hold) + ', then the schedule resumes'
           : 'Background video is on the mirror');
       })
       .catch(function (error) {
@@ -1425,11 +1467,14 @@
   byId('pair-form').addEventListener('submit', function (event) {
     event.preventDefault();
     setMessage('pair-message', 'Pairing…');
+    var zone = window.MirrorClock.browserZone();
+    var clock = clockFor(zone);
     request('/api/v1/pair', json('POST', {
       code: byId('pair-code').value.trim(),
       name: byId('client-name').value.trim(),
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      utcOffsetMinutes: -new Date().getTimezoneOffset()
+      timeZone: zone,
+      utcOffsetMinutes: clock ? clock.utcOffsetMinutes : -new Date().getTimezoneOffset(),
+      utcOffsetChanges: clock ? clock.utcOffsetChanges : undefined
     }), false).then(function (result) {
       token = result.token;
       window.localStorage.setItem(TOKEN_KEY, token);
@@ -2490,14 +2535,22 @@
 
   byId('clock-form').addEventListener('submit', function (event) {
     event.preventDefault();
+    var zone = byId('time-zone').value.trim();
+    var clock = clockFor(zone);
+    if (!clock) {
+      setMessage('clock-message',
+        'This browser does not recognize "' + zone + '". Use an IANA name such as America/Los_Angeles.', true);
+      return;
+    }
     request('/api/v1/preferences', json('PUT', {
-      timeZone: byId('time-zone').value.trim(),
-      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+      timeZone: zone,
+      utcOffsetMinutes: clock.utcOffsetMinutes,
+      utcOffsetChanges: clock.utcOffsetChanges,
       clock24Hour: byId('clock-24-hour').checked
-    })).then(function () {
+    })).then(function (preferences) {
       setMessage('clock-message', '');
       toast('Clock saved');
-      return refreshStatus();
+      return refreshStatus().then(function () { renderClockHint(preferences); });
     }).catch(function (error) { setMessage('clock-message', error.message, true); });
   });
 
@@ -2554,7 +2607,7 @@
   /* ---------- Boot ---------- */
 
   if (!byId('time-zone').value) {
-    byId('time-zone').value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    byId('time-zone').value = window.MirrorClock.browserZone();
   }
   showPairedState(Boolean(token));
   refreshAll();

@@ -98,6 +98,23 @@ mutation, so clients re-fetch notes only when something changed.
 Wi-Fi passphrases are accepted only through authenticated local channels and
 are passed directly to Android's Wi-Fi configuration API.
 
+### Clock
+
+The firmware has no usable time-zone rules, so local time is a UTC offset plus
+a list of known changes. `PUT /api/v1/preferences` and `POST /api/v1/pair`
+take `timeZone` (an IANA name), `utcOffsetMinutes` (the offset in force) and
+optionally `utcOffsetChanges`: up to 64 `{at, utcOffsetMinutes}` entries in
+time order, where `at` is the epoch millisecond a new offset starts. A request
+with `utcOffsetChanges` is followed exactly, an empty list meaning no changes.
+A request without it follows the table bundled with Mirror Home for that zone
+when the offset is one the zone uses, and otherwise keeps the offset fixed.
+
+`GET /api/v1/preferences` returns the offset in force, the next eight
+`utcOffsetChanges`, and `clockSource`: `client`, `bundled` or `fixed`.
+`status` and `dashboard/runtime` carry `utcOffsetMinutes` and
+`nextUtcOffsetChange` (one entry or `null`) so a display can switch at the
+exact instant. A schedule `hold` reports `untilTime`, its local end time.
+
 The device API does not emit permissive CORS headers. Browser clients load the
 control application from the Mirror itself, keeping API calls same-origin.
 
