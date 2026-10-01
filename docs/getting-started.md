@@ -167,7 +167,7 @@ unknown device pass. No compatible raw-flash recovery path is established.
 
 The recommended path is an owner-signed source build, so you control future
 updates and can sign the optional OTA supervisor with the same certificate.
-Use a clean checkout of the intended release tag (for example, `v2.1.0`), not a
+Use a clean checkout of the intended release tag (for example, `v2.2.0`), not a
 mixture of release scripts and unreleased code. The published-APK alternative
 and its signing restrictions are described below.
 
@@ -232,7 +232,7 @@ installed package. Then, replacing the placeholders with the intended device
 and downloaded file:
 
 ```powershell
-adb -s DEVICE_SERIAL install -r -g 'C:\path\to\mirror-home-2.1.0.apk'
+adb -s DEVICE_SERIAL install -r -g 'C:\path\to\mirror-home-2.2.0.apk'
 adb -s DEVICE_SERIAL shell am start -n dev.mirror.repurpose/.MainActivity
 ```
 
@@ -243,10 +243,12 @@ or disable the factory launcher. Continue stages 5-8 to pair, configure Wi-Fi,
 select default HOME and verify reboot persistence. APK installation alone is
 not a completed installation, and this path has not been clean-room validated.
 
-Public 2.1.0 uses version code 71. A device already running 2.1.0 does not need
-to reinstall it, and the OTA supervisor requires a strictly increasing version
-code rather than accepting another build of code 71. Public APKs leave test
-health failures and unattended background-video bootstrap provisioning disabled;
+Public 2.2.0 uses version code 76; public 2.1.0 used 71. A Mirror that runs an
+earlier public APK is updated by installing the newer one over it with the
+same `install -r -g` command, which keeps its pairings, settings and media.
+The OTA supervisor requires a strictly increasing version code and never
+accepts another build of the installed one. Public APKs leave test health
+failures and unattended background-video bootstrap provisioning disabled;
 normal on-glass pairing is still required.
 
 ## 5. Pair a browser and configure Wi-Fi

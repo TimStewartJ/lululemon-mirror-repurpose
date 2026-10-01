@@ -43,10 +43,10 @@ android {
         targetSdk 35
         versionCode configuredVersionCode.isPresent()
                 ? configuredVersionCode.get().toInteger()
-                : 71
+                : 76
         versionName configuredVersionName.isPresent()
                 ? configuredVersionName.get()
-                : "2.1.0"
+                : "2.2.0"
         buildConfigField(
                 "boolean",
                 "OTA_HEALTH_FAILURE_TEST",

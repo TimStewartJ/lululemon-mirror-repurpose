@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.2.0 - 2026-10-01
 
 - Add an Android 6 emulator suite. `tools/validate.py emulator` (or
   `.\tools\validate.ps1 emulator`) boots the SDK's API 23 image, whose
