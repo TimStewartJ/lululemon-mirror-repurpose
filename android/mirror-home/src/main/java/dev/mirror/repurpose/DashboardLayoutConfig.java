@@ -163,6 +163,20 @@ public final class DashboardLayoutConfig {
         return background().optString("fit", DEFAULT_BACKGROUND_FIT);
     }
 
+    /** Whether the layout shows at least one widget of this type. */
+    public boolean showsWidget(String type) {
+        JSONArray widgets = value.optJSONArray("widgets");
+        for (int index = 0; widgets != null && index < widgets.length(); index++) {
+            JSONObject widget = widgets.optJSONObject(index);
+            if (widget != null
+                    && type.equals(widget.optString("type"))
+                    && widget.optBoolean("visible", false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public DashboardLayoutConfig withBackgroundMode(String mode) {
         JSONObject copy = toJson();
         try {

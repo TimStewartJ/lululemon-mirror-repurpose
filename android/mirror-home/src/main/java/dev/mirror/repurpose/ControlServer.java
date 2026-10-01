@@ -398,6 +398,9 @@ public final class ControlServer extends NanoHTTPD {
                         revoked ? Response.Status.OK : Response.Status.NOT_FOUND,
                         new JSONObject().put("revoked", revoked));
             }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/window".equals(uri)) {
+                return openPairingWindow();
+            }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair/revoke".equals(uri)) {
                 boolean revoked = pairing.revokeToken(bearerToken(session));
                 return response(
@@ -456,14 +459,58 @@ public final class ControlServer extends NanoHTTPD {
                 .put("apiVersion", 1)
                 .put("appVersion", BuildConfig.VERSION_NAME)
                 .put("displayName", configStore.getDisplayName())
-                .put("paired", pairing.isPaired());
+                .put("paired", pairing.isPaired())
+                .put("pairingOpen", pairing.isOpen());
     }
 
     private JSONObject dashboardRuntime() throws JSONException {
         JSONObject runtime = status();
-        runtime.put("pairingCode", pairing.currentCode());
+        // The built-in dashboard polls this to draw its pairing widget, which
+        // is what puts the code on the glass and so opens pairing.
+        boolean widgetShown = configStore.getDashboardUrl().isEmpty()
+                && configStore.getDashboardLayout().showsWidget("pairing");
+        String code = widgetShown ? pairing.displayCode() : pairing.codeOnDisplay();
+        if (code != null) {
+            runtime.put("pairingCode", code);
+        }
         runtime.put("controlUrl", controlUrl());
         return runtime;
+    }
+
+    private Response openPairingWindow() throws JSONException {
+        PairingManager.PairingWindow window = pairing.openWindow();
+        return response(
+                Response.Status.OK,
+                new JSONObject()
+                        .put("code", window.code)
+                        .put("expiresInSeconds", window.expiresInSeconds)
+                        .put(
+                                "expiresAt",
+                                System.currentTimeMillis() + window.expiresInSeconds * 1000L));
+    }
+
+    private static Response pairingError(
+            Response.Status status,
+            String reason,
+            String message,
+            long retryAfterSeconds) throws JSONException {
+        JSONObject body = new JSONObject().put("error", message).put("reason", reason);
+        if (retryAfterSeconds > 0) {
+            body.put("retryAfterSeconds", retryAfterSeconds);
+        }
+        Response result = response(status, body);
+        if (retryAfterSeconds > 0) {
+            result.addHeader("Retry-After", Long.toString(retryAfterSeconds));
+        }
+        return result;
+    }
+
+    static String waitDescription(long seconds) {
+        if (seconds < 90) {
+            return seconds + (seconds == 1 ? " second" : " seconds");
+        }
+        long minutes = (seconds + 59) / 60;
+        return minutes + " minutes";
     }
 
     private JSONObject ambientVideoStatus(boolean fullDiagnostics) throws JSONException {
@@ -522,12 +569,41 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private Response pair(JSONObject body) throws JSONException {
-        PairingManager.PairingResult result = pairing.pair(
+        PairingManager.PairingAttempt attempt = pairing.pair(
                 body.optString("code", null),
                 body.optString("name", "Device"));
-        if (result == null) {
-            return error(Response.Status.UNAUTHORIZED, "Invalid or expired pairing code");
+        switch (attempt.outcome) {
+            case CLOSED:
+                return pairingError(
+                        Response.Status.FORBIDDEN,
+                        "closed",
+                        "The mirror is not showing a pairing code. On a paired device, "
+                                + "open Settings > Paired devices and choose Show code.",
+                        0L);
+            case LOCKED:
+                return pairingError(
+                        Response.Status.TOO_MANY_REQUESTS,
+                        "locked",
+                        "Too many wrong codes. Try again in "
+                                + waitDescription(attempt.retryAfterSeconds) + ".",
+                        attempt.retryAfterSeconds);
+            case WRONG_CODE:
+                return pairingError(
+                        Response.Status.UNAUTHORIZED,
+                        "wrong-code",
+                        "That code is not right. Check the code and try again.",
+                        0L);
+            case FULL:
+                return pairingError(
+                        Response.Status.CONFLICT,
+                        "full",
+                        "This mirror has as many paired devices as it allows. "
+                                + "Revoke one in Settings > Paired devices first.",
+                        0L);
+            default:
+                break;
         }
+        PairingManager.PairingResult result = attempt.result;
         String timeZone = body.optString("timeZone", "");
         if (InputValidator.validTimeZone(timeZone)) {
             try {

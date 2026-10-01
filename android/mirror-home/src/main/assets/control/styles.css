@@ -474,6 +474,8 @@ textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-heig
 .clients strong { font-weight: 500; display: block; }
 .clients small { color: var(--text-3); font-size: 13px; }
 .clients .you { color: var(--accent); font-size: 12px; font-weight: 600; margin-left: 6px; letter-spacing: 0.04em; }
+.pair-window-code { font-size: 34px; font-weight: 300; letter-spacing: 0.2em; text-align: center; font-variant-numeric: tabular-nums; }
+.pair-window .row-sub { text-align: center; margin-top: 0; }
 .about .row-value { text-align: right; }
 
 /* ---------- Toast ---------- */

@@ -23,6 +23,18 @@ public final class DashboardLayoutConfigTest {
         assertTrue(value.getJSONArray("widgets").getJSONObject(3).getBoolean("visible"));
     }
 
+    @Test
+    public void knowsWhichWidgetTypesAreShown() throws JSONException {
+        DashboardLayoutConfig defaults = DashboardLayoutConfig.defaults();
+        assertTrue(defaults.showsWidget("clock"));
+        assertFalse(defaults.showsWidget("pairing"));
+        assertFalse(defaults.showsWidget("unknown"));
+
+        JSONObject value = defaults.toJson();
+        find(value, "pairing").put("visible", true);
+        assertTrue(DashboardLayoutConfig.parse(value).showsWidget("pairing"));
+    }
+
     @Test(expected = JSONException.class)
     public void rejectsWidgetsOutsideCanvas() throws JSONException {
         JSONObject value = DashboardLayoutConfig.defaults().toJson();

@@ -33,7 +33,9 @@ The optional helper is intentionally capability-based:
 The Mirror issues an independent random token for every named browser/client
 after a user-confirmed pairing code. Only SHA-256 token hashes are persisted,
 and clients can be revoked independently. LAN control is denied until pairing
-succeeds.
+succeeds. Pairing itself is closed unless a code is on display, and wrong
+codes lock it for a period that doubles with each lockout, so a six-digit code
+cannot be found by guessing over the network.
 
 ## OTA supervisor
 

@@ -36,7 +36,7 @@
     <div class="pairing-inner">
       <div class="pairing-mark" aria-hidden="true"></div>
       <h1 id="pairing-title">Pair with <span id="pairing-mirror-name">your Mirror</span></h1>
-      <p class="lede">Enter the six-digit code on the mirror. This browser gets its own key, which you can revoke any time.</p>
+      <p id="pairing-lede" class="lede">Enter the six-digit code on the mirror. This browser gets its own key, which you can revoke any time.</p>
       <form id="pair-form" class="pairing-form">
         <label class="code-field">
           <span class="visually-hidden">Pairing code</span>
@@ -467,6 +467,11 @@
         <h2 class="section-title">Paired devices</h2>
         <div class="group">
           <ul id="client-list" class="clients"></ul>
+          <div class="row"><div class="row-main"><span class="row-label">Pair another device</span><span class="row-sub">Shows a code to enter on the new phone or computer</span></div><button id="open-pair-window" type="button" class="btn small">Show code</button></div>
+          <div id="pair-window" class="row stacked pair-window hidden" role="status">
+            <span id="pair-window-code" class="pair-window-code"></span>
+            <span id="pair-window-detail" class="row-sub"></span>
+          </div>
           <div class="row actions-row"><button id="forget-this-device" type="button" class="btn danger">Forget this browser</button><button id="refresh-clients" type="button" class="btn small">Refresh</button></div>
           <p id="access-message" class="status inset" role="status"></p>
         </div>

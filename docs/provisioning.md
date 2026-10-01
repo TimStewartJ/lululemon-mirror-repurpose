@@ -118,15 +118,15 @@ require ADB:
 
 When Wi-Fi is already connected and the native setup screen is shown, scan
 the single control QR code. After pairing, the built-in dashboard replaces
-that screen. To pair another client, show its **Pairing code** widget through
-**Display > Arrange the mirror** in an already-paired browser and open the
-Mirror's LAN control address on the new client.
+that screen. To pair another client, choose **Settings > Paired devices >
+Show code** in an already-paired browser, then open the Mirror's LAN control
+address on the new client and enter that code.
 
 Automatic setup-group creation is not a general disconnected-network fallback:
 a saved app-managed SSID prevents it even if that network is now unreachable.
 Use the paired controls' **Settings > Setup network > Start** via USB when
-needed. If both Wi-Fi and group creation fail, the native screen can omit the
-pairing code; forwarding USB alone does not make pairing possible. See the
+needed. If both Wi-Fi and group creation fail, the native screen still shows
+the pairing code, so a USB-forwarded browser can pair. See the
 [first-pairing safe stop](getting-started.md#5-pair-a-browser-and-configure-wi-fi).
 
 ## USB access and recovery

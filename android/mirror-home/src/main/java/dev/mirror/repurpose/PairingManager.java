@@ -2,6 +2,7 @@ package dev.mirror.repurpose;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 import android.util.Base64;
 
 import org.json.JSONArray;
@@ -27,23 +28,46 @@ public final class PairingManager {
         }
     }
 
+    /** What became of one attempt to pair with a code. */
+    public static final class PairingAttempt {
+        public enum Outcome { PAIRED, CLOSED, LOCKED, WRONG_CODE, FULL }
+
+        public final Outcome outcome;
+        public final PairingResult result;
+        public final long retryAfterSeconds;
+
+        private PairingAttempt(Outcome outcome, PairingResult result, long retryAfterSeconds) {
+            this.outcome = outcome;
+            this.result = result;
+            this.retryAfterSeconds = retryAfterSeconds;
+        }
+    }
+
+    /** A code a paired client may hand to a new device. */
+    public static final class PairingWindow {
+        public final String code;
+        public final long expiresInSeconds;
+
+        PairingWindow(String code, long expiresInSeconds) {
+            this.code = code;
+            this.expiresInSeconds = expiresInSeconds;
+        }
+    }
+
     private static volatile PairingManager instance;
 
     private static final String PREFERENCES = "mirror_home";
     private static final String KEY_LEGACY_TOKEN = "pairing_token";
     private static final String KEY_CLIENTS = "paired_clients_v2";
     private static final long CODE_LIFETIME_MS = 10 * 60 * 1000L;
-    private static final long FAILURE_LOCKOUT_MS = 30 * 1000L;
     private static final long LAST_USED_WRITE_INTERVAL_MS = 60 * 60 * 1000L;
-    private static final int MAX_FAILURES = 5;
     private static final int MAX_CLIENTS = 32;
 
     private final SharedPreferences preferences;
     private final SecureRandom random = new SecureRandom();
+    private final PairingGate gate = new PairingGate();
     private String code;
     private long codeExpiresAt;
-    private int failures;
-    private long lockedUntil;
 
     private PairingManager(Context context) {
         preferences = context.getApplicationContext()
@@ -62,40 +86,90 @@ public final class PairingManager {
         return instance;
     }
 
-    public synchronized String currentCode() {
-        long now = System.currentTimeMillis();
-        if (code == null || now >= codeExpiresAt) {
-            code = String.format(Locale.US, "%06d", random.nextInt(1_000_000));
-            codeExpiresAt = now + CODE_LIFETIME_MS;
-            failures = 0;
-            lockedUntil = 0;
-        }
-        return code;
+    /**
+     * The code for a surface that is showing it right now. Showing a code is
+     * what opens pairing, so only something a person can read may call this.
+     */
+    public synchronized String displayCode() {
+        long now = SystemClock.elapsedRealtime();
+        gate.displayed(now);
+        return currentCode(now);
     }
 
-    public synchronized PairingResult pair(String candidate, String requestedName) {
-        long now = System.currentTimeMillis();
-        if (now < lockedUntil || candidate == null) {
-            return null;
+    /** The code if something is showing it, otherwise null. */
+    public synchronized String codeOnDisplay() {
+        long now = SystemClock.elapsedRealtime();
+        return gate.onDisplay(now) ? currentCode(now) : null;
+    }
+
+    /** Whether a correct code would be accepted right now. */
+    public synchronized boolean isOpen() {
+        return gate.state(SystemClock.elapsedRealtime()) == PairingGate.State.OPEN;
+    }
+
+    /** A paired client asks for a fresh code to give to a new device. */
+    public synchronized PairingWindow openWindow() {
+        long now = SystemClock.elapsedRealtime();
+        gate.reset();
+        code = null;
+        String fresh = currentCode(now);
+        gate.displayedThrough(codeExpiresAt);
+        return new PairingWindow(fresh, (codeExpiresAt - now) / 1000L);
+    }
+
+    public synchronized PairingAttempt pair(String candidate, String requestedName) {
+        long now = SystemClock.elapsedRealtime();
+        PairingGate.State state = gate.state(now);
+        if (state == PairingGate.State.LOCKED) {
+            return new PairingAttempt(
+                    PairingAttempt.Outcome.LOCKED,
+                    null,
+                    (gate.lockedForMillis(now) + 999L) / 1000L);
         }
-        boolean matches = MessageDigest.isEqual(
-                currentCode().getBytes(StandardCharsets.UTF_8),
+        if (state == PairingGate.State.CLOSED) {
+            return new PairingAttempt(PairingAttempt.Outcome.CLOSED, null, 0L);
+        }
+        boolean matches = candidate != null && MessageDigest.isEqual(
+                currentCode(now).getBytes(StandardCharsets.UTF_8),
                 candidate.getBytes(StandardCharsets.UTF_8));
         if (!matches) {
-            failures++;
-            if (failures >= MAX_FAILURES) {
-                failures = 0;
-                lockedUntil = now + FAILURE_LOCKOUT_MS;
-            }
-            return null;
+            gate.recordWrongCode(now);
+            return new PairingAttempt(PairingAttempt.Outcome.WRONG_CODE, null, 0L);
         }
 
         PairingResult result = issueTrustedClient(requestedName);
         if (result == null) {
-            return null;
+            return new PairingAttempt(PairingAttempt.Outcome.FULL, null, 0L);
         }
+        // Codes are single-use: a surface still showing one gets a new code.
         code = null;
-        return result;
+        gate.reset();
+        gate.close();
+        return new PairingAttempt(PairingAttempt.Outcome.PAIRED, result, 0L);
+    }
+
+    /** Pairing attempts the gate has seen, for the health report. */
+    public synchronized JSONObject securitySnapshot() throws JSONException {
+        long now = SystemClock.elapsedRealtime();
+        long lastWrongCodeAt = gate.lastWrongCodeAt();
+        return new JSONObject()
+                .put("open", gate.state(now) == PairingGate.State.OPEN)
+                .put("lockedForSeconds", (gate.lockedForMillis(now) + 999L) / 1000L)
+                .put("wrongCodes", gate.wrongCodes())
+                .put(
+                        "lastWrongCodeAgeSeconds",
+                        lastWrongCodeAt < 0
+                                ? JSONObject.NULL
+                                : Long.valueOf((now - lastWrongCodeAt) / 1000L))
+                .put("clients", readClients().length());
+    }
+
+    private String currentCode(long now) {
+        if (code == null || now >= codeExpiresAt) {
+            code = String.format(Locale.US, "%06d", random.nextInt(1_000_000));
+            codeExpiresAt = now + CODE_LIFETIME_MS;
+        }
+        return code;
     }
 
     synchronized PairingResult issueTrustedClient(String requestedName) {
@@ -224,6 +298,7 @@ public final class PairingManager {
                 .remove(KEY_LEGACY_TOKEN)
                 .apply();
         code = null;
+        gate.close();
     }
 
     static String normalizeClientName(String requestedName) {

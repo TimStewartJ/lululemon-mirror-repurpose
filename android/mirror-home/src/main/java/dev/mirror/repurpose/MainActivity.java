@@ -430,6 +430,8 @@ public final class MainActivity extends Activity {
                             ? "Waiting for the network to return"
                             : "Connect a computer over USB and open the forwarded controls to continue",
                     dp(14)));
+            // The code makes USB setup and recovery possible without a network.
+            addPairingCode(middle);
         }
 
         TextView status = new TextView(this);
@@ -476,7 +478,8 @@ public final class MainActivity extends Activity {
     }
 
     private String groupedPairingCode() {
-        String value = pairingManager.currentCode();
+        // Drawing the code on the glass is what opens pairing.
+        String value = pairingManager.displayCode();
         return value.length() == 6 ? value.substring(0, 3) + " " + value.substring(3) : value;
     }
 

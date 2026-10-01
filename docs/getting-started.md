@@ -269,12 +269,11 @@ Wi-Fi**, stay on that network despite its lack of Internet, then scan **Open
 setup** and pair. Use the displayed address rather than guessing it.
 
 **Safe stop:** if the page cannot open, check that Home is running and
-recreate the forward; do not expose ADB over the network. If there is neither
-a LAN connection nor a working setup group, the current native screen can
-show **Ready to set up** without a pairing code. A USB forward alone does not
-solve that UI limitation. Establish Wi-Fi through the accessible Android
-Settings UI or investigate the setup-group failure before proceeding; this
-guide does not provide a pairing bypass.
+recreate the forward; do not expose ADB over the network. With neither a LAN
+connection nor a working setup group, the native screen shows **Ready to set
+up** with the pairing code, and the USB-forwarded page above is the way to
+pair. The Mirror accepts a code only while it is showing one; this guide does
+not provide a pairing bypass.
 
 In the paired browser:
 
@@ -347,15 +346,14 @@ USB/power access. It temporarily replaces the `co.mirror.datacap` update with
 a guarded UID-1000 payload. **Installation alone changes neither HOME nor
 kiosk settings. Restore the factory APK before any reboot, even on failure.**
 
-The helper is driven through Mirror Home's API. In the paired browser, enable
-the **Pairing code** widget in **Display > Arrange the mirror** if the code is
-no longer visible; save the layout. Pair this temporary setup client using
-the fresh code, keeping the credential only in PowerShell memory:
+The helper is driven through Mirror Home's API. In the paired browser, open
+**Settings > Paired devices** and choose **Show code**. Pair this temporary
+setup client using that code, keeping the credential only in PowerShell memory:
 
 ```powershell
 .\tools\mirror.ps1 forward
 $api = 'http://127.0.0.1:18787/api/v1'
-$pairBody = @{ code = (Read-Host 'Current code on the glass'); name = 'Temporary HOME setup' } | ConvertTo-Json
+$pairBody = @{ code = (Read-Host 'Code from Show code'); name = 'Temporary HOME setup' } | ConvertTo-Json
 $pair = Invoke-RestMethod -Method Post -Uri "$api/pair" -ContentType 'application/json' -Body $pairBody
 $headers = @{ Authorization = "Bearer $($pair.token)" }
 .\tools\mirror.ps1 install-helper

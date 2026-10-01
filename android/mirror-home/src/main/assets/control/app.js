@@ -558,6 +558,12 @@
         byId('mirror-name').textContent = next.displayName || 'Mirror';
         byId('pairing-mirror-name').textContent = next.displayName || 'your Mirror';
         if (!authenticated) {
+          /* Older Mirror Home versions do not report this and always accept codes. */
+          byId('pairing-lede').textContent = next.pairingOpen === false
+            ? 'The mirror is not showing a pairing code right now. On a device that is already '
+              + 'paired, open Settings, then Paired devices, and choose Show code.'
+            : 'Enter the six-digit code on the mirror. This browser gets its own key, '
+              + 'which you can revoke any time.';
           showPairedState(false);
           return next;
         }
@@ -2597,6 +2603,28 @@
     refreshClients().catch(function (error) { setMessage('access-message', error.message, true); });
   });
 
+  var pairWindowTimer = null;
+  byId('open-pair-window').addEventListener('click', function () {
+    request('/api/v1/pair/window', json('POST', {})).then(function (result) {
+      var code = String(result.code || '');
+      var address = status && status.wifi && status.wifi.ipAddress
+        ? 'http://' + status.wifi.ipAddress + ':8787'
+        : 'the mirror\u2019s address';
+      var until = new Date(Number(result.expiresAt))
+        .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      byId('pair-window-code').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+      byId('pair-window-detail').textContent = 'Open ' + address
+        + ' on the new device and enter this code. It works once, until ' + until + '.';
+      byId('pair-window').classList.remove('hidden');
+      setMessage('access-message', '');
+      if (pairWindowTimer) window.clearTimeout(pairWindowTimer);
+      pairWindowTimer = window.setTimeout(function () {
+        byId('pair-window').classList.add('hidden');
+        refreshClients().catch(function () {});
+      }, Math.max(1, Number(result.expiresInSeconds || 0)) * 1000);
+    }).catch(function (error) { setMessage('access-message', error.message, true); });
+  });
+
   byId('forget-this-device').addEventListener('click', function () {
     if (!window.confirm('Forget this browser? You will need the pairing code to connect again.')) return;
     request('/api/v1/pair/revoke', json('POST', {}))
@@ -2613,10 +2641,11 @@
   refreshAll();
   alignedTick();
   window.setInterval(function () {
-    if (token && !document.hidden) refreshStatus().catch(function () {});
+    /* Unpaired, this re-reads whether the mirror is showing a code yet. */
+    if (!document.hidden) refreshStatus().catch(function () {});
   }, 10000);
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && token) refreshStatus().catch(function () {});
+    if (!document.hidden) refreshStatus().catch(function () {});
   });
   var resizeTimer = null;
   window.addEventListener('resize', function () {

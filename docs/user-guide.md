@@ -34,16 +34,20 @@ installed on the phone or computer.
 ## Pairing additional devices
 
 If the native setup screen is visible, scan its control QR and enter the code.
-On an already configured built-in dashboard, use a paired browser's
-**Display > Arrange the mirror** to show the **Pairing code** widget and save;
-open the Mirror's LAN control address on the new client and enter the current
-code. If a custom web page is active, temporarily select **Mirror** first.
+Otherwise, in a paired browser open **Settings > Paired devices** and choose
+**Show code**, then open the Mirror's LAN control address on the new device
+and enter that code. The **Pairing code** widget in **Display > Arrange the
+mirror** does the same on the glass for as long as it is shown.
 Every browser receives an independent random credential.
 Use **Settings > Paired devices** to review or revoke one device without
 signing out the others.
 
-Pairing codes expire after ten minutes, are single-use, and lock temporarily
-after repeated failures.
+The Mirror accepts a code only while one is on display: on the setup screen,
+in the Pairing code widget, or after **Show code**. At any other time pairing
+is closed and attempts are refused without being checked. Codes expire after
+ten minutes and work once. Five wrong codes lock pairing for 30 seconds and
+each further lockout doubles, up to an hour; a correct code or **Show code**
+clears the lock.
 
 ## The control application
 

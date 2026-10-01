@@ -4,13 +4,22 @@ Mirror Home exposes a versioned JSON API over HTTP.
 
 ## Pairing
 
-1. Mirror Home displays a short-lived numeric pairing code.
+1. Mirror Home shows a short-lived numeric pairing code: on its setup screen,
+   in the Pairing code widget, or to a paired client that asks for one with
+   `POST /api/v1/pair/window`.
 2. A browser or script submits the code over Wi-Fi Direct, USB, or LAN.
 3. Mirror Home returns a random per-client bearer token.
 4. Only its SHA-256 hash is persisted on the Mirror.
 5. Individual clients can be listed and revoked.
 
-Pairing codes expire, are single-use, and are rate-limited.
+A code is accepted only while one is on display; otherwise `POST /api/v1/pair`
+answers 403 with `reason: "closed"` without checking it, and `bootstrap`
+reports `pairingOpen: false`. Codes expire after ten minutes and are
+single-use. Five wrong codes answer 429 with `reason: "locked"`,
+`retryAfterSeconds` and a `Retry-After` header for 30 seconds, doubling with
+each further lockout up to an hour. A wrong code is 401 `wrong-code`, and a
+full client list is 409 `full`. A correct code or a new pairing window clears
+the lock.
 
 ## API surface
 
@@ -18,6 +27,7 @@ Pairing codes expire, are single-use, and are rate-limited.
 GET  /api/v1/bootstrap
 GET  /api/v1/status
 POST /api/v1/pair
+POST /api/v1/pair/window
 POST /api/v1/pair/revoke
 GET  /api/v1/clients
 POST /api/v1/clients/revoke

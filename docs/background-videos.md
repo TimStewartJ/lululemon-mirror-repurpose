@@ -64,8 +64,10 @@ after an explicit confirmation.
 
 ## Command line
 
-Pair with the current six-digit code on the glass. Replace `MIRROR_IP` with
-the Mirror's actual private IPv4 address and `PAIRING_CODE` with that code:
+Pair with a six-digit code: the one on the setup screen, or one from
+**Settings > Paired devices > Show code** in a paired browser. Replace
+`MIRROR_IP` with the Mirror's actual private IPv4 address and `PAIRING_CODE`
+with that code:
 
 ```powershell
 .\tools\background-video.ps1 --host MIRROR_IP pair --code PAIRING_CODE --name "Video upload client"

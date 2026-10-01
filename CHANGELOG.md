@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Close pairing unless a code is on display. `POST /api/v1/pair` used to check
+  any guess at any time, five every 30 seconds, and a new code every ten
+  minutes forgave earlier misses. A code is now accepted only while the setup
+  screen or the Pairing code widget shows one, or after a paired browser
+  chooses **Settings > Paired devices > Show code** (`POST
+  /api/v1/pair/window`). Five wrong codes lock pairing for 30 seconds,
+  doubling with each lockout up to an hour, regardless of code rotation. The
+  setup screen shows the code in every state so USB setup always works, and
+  the pairing page says when no code is showing and why an attempt failed.
 - Follow daylight-saving changes without help. The clock, the sleep schedule
   and the video schedule used the UTC offset a browser last reported, so they
   ran an hour off after each change until someone opened the controls. Mirror
