@@ -68,6 +68,11 @@ python -m pip install --upgrade tzdata
 python tools/zone_offsets.py
 ```
 
+The `tzdata` package can trail a new IANA release by some days. Compare the
+release that `--check` names with <https://data.iana.org/time-zones/tzdb/version>;
+if IANA is ahead, `python -m pip install git+https://github.com/python/tzdata`
+installs the same package from its repository, which is updated first.
+
 ## Commit scope
 
 Use focused commits for independently reviewable behavior: device tooling,

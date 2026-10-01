@@ -83,7 +83,7 @@
   and the video schedule used the UTC offset a browser last reported, so they
   ran an hour off after each change until someone opened the controls. Mirror
   Home now ships the offset changes of every IANA zone for ten years
-  (`zone-offsets.json`, written by `tools/zone_offsets.py` from IANA 2026d),
+  (`zone-offsets.json`, written by `tools/zone_offsets.py` from IANA 2026e),
   and paired browsers send the changes they know of, which take precedence.
   The glass switches at the exact instant; a video-schedule start inside a
   skipped or repeated hour is handled; **Settings > Clock** shows the next
