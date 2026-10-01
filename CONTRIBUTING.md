@@ -29,8 +29,7 @@ For a focused loop:
 ```powershell
 .\gradlew.bat :android:mirror-home:testDebugUnitTest :android:mirror-home:assembleDebug
 .\gradlew.bat :android:ota-updater:testDebugUnitTest :android:ota-updater:lintDebug
-npm --prefix companion test
-npm --prefix companion run typecheck
+python -m unittest discover -s tools\tests
 ```
 
 Hardware-affecting changes should also document:

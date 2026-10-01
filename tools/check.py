@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
 
@@ -19,20 +18,8 @@ def run(arguments: list[str]) -> None:
     subprocess.run(arguments, cwd=REPO, check=True)
 
 
-def executable(name: str) -> str:
-    candidate = shutil.which(name)
-    if candidate:
-        return candidate
-    if os.name == "nt":
-        candidate = shutil.which(f"{name}.cmd")
-        if candidate:
-            return candidate
-    raise RuntimeError(f"Required executable not found: {name}")
-
-
 def main() -> None:
     gradle = REPO / ("gradlew.bat" if os.name == "nt" else "gradlew")
-    npm = executable("npm")
 
     run(
         [
@@ -63,10 +50,6 @@ def main() -> None:
             "--no-daemon",
         ]
     )
-    run([npm, "--prefix", str(REPO / "companion"), "test"])
-    run([npm, "--prefix", str(REPO / "companion"), "run", "build"])
-    run([npm, "--prefix", str(REPO / "companion"), "run", "typecheck"])
-    run([npm, "--prefix", str(REPO / "companion"), "audit", "--omit=dev", "--audit-level=high"])
     run(["git", "diff", "--check"])
 
 

@@ -421,7 +421,7 @@ public final class MainActivity extends Activity {
             middle.addView(caption(
                     pairingManager.isPaired()
                             ? "Waiting for the network to return"
-                            : "Connect over USB and open the companion, or start the setup network",
+                            : "Connect a computer over USB and open the forwarded controls to continue",
                     dp(14)));
         }
 

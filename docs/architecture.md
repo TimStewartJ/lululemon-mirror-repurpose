@@ -59,19 +59,13 @@ attempts a WPA2 Wi-Fi Direct group. The native setup screen displays join/open
 QR codes once that group is ready. See [Getting started](getting-started.md)
 for the installation sequence and onboarding limitations.
 
-## Optional companion
+## USB tooling
 
-The companion is a local Node.js service and static browser UI:
-
-- discovers ADB devices and validates the exact profile
-- forwards a localhost port to Mirror Home over USB
-- proxies browser requests server-side so the device API does not require CORS
-- opens the same UI over LAN after Wi-Fi provisioning
-- hosts local media files with range requests
-- sends playback, dashboard, and automation commands
-
-The companion does not persist Wi-Fi passphrases and is not required for daily
-control.
+`tools/mirrorctl.py` (wrapped by `tools\mirror.ps1`) is the only desktop
+component. It verifies the exact device profile over ADB, backs up factory
+APKs, installs and health-checks Mirror Home with rollback, manages the
+transient helper, and forwards a localhost port to the Mirror-hosted controls
+for setup and recovery. It keeps no credentials.
 
 ## OTA supervisor
 
@@ -88,9 +82,8 @@ independent bootstrap secret remain in ignored local files. See
 ## Media path
 
 The primary media path is HTTP(S), HLS, DASH, or RTSP playback through pinned
-Media3 1.9.0, whose minimum API is 23. The companion can expose a selected local
-file through a range-capable HTTP endpoint and instruct the Mirror to play its
-LAN URL.
+Media3 1.9.0, whose minimum API is 23. Any HTTP server the Mirror can reach,
+including one on a computer on the same LAN, can supply a file to play.
 
 Background videos take a separate ingest path into app-private,
 content-addressed storage. Android validates each MP4 and hardware decoder before

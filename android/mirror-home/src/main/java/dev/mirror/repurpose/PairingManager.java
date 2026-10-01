@@ -73,11 +73,6 @@ public final class PairingManager {
         return code;
     }
 
-    public synchronized String pair(String candidate) {
-        PairingResult result = pair(candidate, "Companion");
-        return result == null ? null : result.token;
-    }
-
     public synchronized PairingResult pair(String candidate, String requestedName) {
         long now = System.currentTimeMillis();
         if (now < lockedUntil || candidate == null) {

@@ -5,7 +5,7 @@ Mirror Home exposes a versioned JSON API over HTTP.
 ## Pairing
 
 1. Mirror Home displays a short-lived numeric pairing code.
-2. A browser or companion submits the code over Wi-Fi Direct, USB, or LAN.
+2. A browser or script submits the code over Wi-Fi Direct, USB, or LAN.
 3. Mirror Home returns a random per-client bearer token.
 4. Only its SHA-256 hash is persisted on the Mirror.
 5. Individual clients can be listed and revoked.
@@ -98,9 +98,8 @@ mutation, so clients re-fetch notes only when something changed.
 Wi-Fi passphrases are accepted only through authenticated local channels and
 are passed directly to Android's Wi-Fi configuration API.
 
-The device API does not emit permissive CORS headers. Normal browser clients
-load the control application from the Mirror itself, keeping API calls
-same-origin. The companion remains a same-origin proxy for its optional UI.
+The device API does not emit permissive CORS headers. Browser clients load the
+control application from the Mirror itself, keeping API calls same-origin.
 
 ## FCast
 

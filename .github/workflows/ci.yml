@@ -20,21 +20,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: companion/package-lock.json
-
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Install companion dependencies
-        run: npm --prefix companion ci
 
       - name: Run repository checks
         run: python tools/check.py

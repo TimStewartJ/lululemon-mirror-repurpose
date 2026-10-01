@@ -49,8 +49,8 @@ requires an ADB-forwarded loopback request. The supervisor preserves a private,
 re-validated known-good APK and does not overwrite it while recovering from an
 unhealthy installed candidate.
 
-The device API does not enable cross-origin browser access. The companion
-proxies browser requests over the same origin. NanoHTTPD temporary storage is
+The device API does not enable cross-origin browser access; browsers load the
+controls from the Mirror itself. NanoHTTPD temporary storage is
 redirected into the application's private cache, request bodies are bounded,
 and the server does not use NanoHTTPD's general-purpose file handler.
 

@@ -77,11 +77,10 @@ adb shell am start -a android.settings.HOME_SETTINGS
 Choose the stock launcher if that vendor screen is usable. Otherwise the
 [helper transaction](getting-started.md#optional-transient-helper) can set
 stock HOME: use `POST /api/v1/system/home` with `{"enabled":false}` and the
-paired client's bearer header, or the companion's **Restore stock HOME**
-button. This requires a working Mirror Home API and a connected helper; it
-is not available merely because the stock APK exists. Restore the factory
-helper afterward. If Home cannot serve its API, first recover Home with a
-same-key APK or use an accessible Android Settings UI.
+paired client's bearer header. This requires a working Mirror Home API and a
+connected helper; it is not available merely because the stock APK exists.
+Restore the factory helper afterward. If Home cannot serve its API, first
+recover Home with a same-key APK or use an accessible Android Settings UI.
 
 Before reboot, check the factory helper path, then request generic HOME and
 visually verify the stock launcher opens without a chooser:

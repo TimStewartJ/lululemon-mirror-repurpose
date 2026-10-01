@@ -4,8 +4,8 @@ Mirror Home stores background videos separately from the APK so large media does
 not inflate application updates.
 
 For a stock device, complete [Getting started](getting-started.md) first.
-Browser upload needs only installed Mirror Home and a paired browser; neither
-the companion nor the optional artwork renderer is required.
+Browser upload needs only installed Mirror Home and a paired browser; the
+optional artwork renderer is not required.
 
 ## Storage
 

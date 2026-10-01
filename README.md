@@ -58,8 +58,6 @@ The project intentionally separates:
 - **Device-hosted controls**: a responsive local web application served by
   Mirror Home itself for phone/desktop pairing, dashboards, schedules, photos,
   Wi-Fi, media, private background-video libraries, and client revocation.
-- **Companion**: an optional desktop application for ADB recovery, USB media,
-  and development workflows.
 
 ## Supported hardware
 
@@ -107,16 +105,15 @@ sensing, cached local weather, precision dashboard editing, signed LAN OTA
 updates with automatic rollback, content-addressed background videos stored
 outside the APK, and watchdog recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
-The desktop companion remains available but is no longer required for daily
-operation.
+Everything runs from the Mirror and a browser; USB setup and recovery use the
+Python CLI in `tools/`.
 
 ## Development
 
 The [prerequisites](docs/getting-started.md#1-confirm-scope-and-prepare-the-computer)
-distinguish the Android build/USB tools from optional Node.js companion tools.
-Use JDK 17, SDK Platform 35, Build Tools 35.0.0, and the checked-in Gradle
-wrapper. Python 3.9+ runs the repository tooling; Node.js 22+ is needed only
-for companion development or the full repository validation gate.
+list the Android build and USB tools. Use JDK 17, SDK Platform 35, Build Tools
+35.0.0, and the checked-in Gradle wrapper. Python 3.9+ runs the repository
+tooling and the validation gate.
 
 Build a debug APK for development (this does not install or select HOME):
 
@@ -157,7 +154,7 @@ for first-time key creation and configuration. Preserve existing signing
 material; keep it private and backed up. Future in-place updates must use the
 same certificate. The optional OTA supervisor must use that certificate too.
 
-Run every build, test, lint, and dependency-audit lane with:
+Run every build, test, and lint lane with:
 
 ```powershell
 python .\tools\check.py

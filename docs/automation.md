@@ -5,7 +5,6 @@ Node-RED, shell scripts, and other trusted LAN automation systems.
 
 The normal UI is hosted directly by the Mirror. Automation systems call port
 `8787` and send a paired client token as `Authorization: Bearer MIRROR_TOKEN`.
-The optional companion proxy remains supported.
 
 ## Examples
 
@@ -45,7 +44,7 @@ curl -X POST http://MIRROR_IP:8787/api/v1/media/stop \
   -d '{}'
 ```
 
-Never place either the companion access token or Mirror bearer token in a URL.
+Never place the Mirror bearer token in a URL.
 
 Configure a schedule:
 

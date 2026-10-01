@@ -28,8 +28,8 @@ history after the destination page loads. A phone on setup Wi-Fi must rejoin
 the household network to reach that destination.
 
 If Wi-Fi is already configured, scan the single control QR code. The control
-application is hosted by the Mirror itself on port `8787`; the desktop
-companion is optional.
+application is hosted by the Mirror itself on port `8787`; nothing is
+installed on the phone or computer.
 
 ## Pairing additional devices
 

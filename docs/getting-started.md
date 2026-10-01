@@ -48,10 +48,9 @@ revisions.
 | Android SDK Platform 35, Build Tools 35.0.0, Platform Tools | Compile SDK, `aapt`/`apksigner`, and `adb`. Install through Android Studio's SDK Manager or the official command-line tools; no NDK or emulator is needed. |
 | Network access for the first build | The checked-in Gradle wrapper downloads Gradle 8.12 and build dependencies. A separate Gradle installation is unnecessary. |
 | Private release signing key | Required for the release install path below and future same-key updates. |
-| Browser | Mirror Home includes its own control website; Node.js is **not** required to build or use it. |
+| Browser | Mirror Home includes its own control website; nothing else is installed on the computer or phone to use it. |
 
-Optional: scrcpy for no-touchscreen input (stage 2); Node.js 22+ and npm only
-for the [companion](provisioning.md#optional-companion); OTA supervisor only
+Optional: scrcpy for no-touchscreen input (stage 2); OTA supervisor only
 for unattended LAN APK updates (stage 8). Video rendering tools are not needed
 to upload an existing MP4.
 
@@ -199,8 +198,8 @@ and camera), explicitly launches `MainActivity`, and checks the API/version
 and activity. Camera motion sensing is optional; review it in **Schedule**.
 
 **Expected:** `Mirror Home VERSION installed and health-checked successfully`
-and a visible Mirror Home screen. The website is packaged in the APK; no
-companion build is involved. **This has not yet selected default HOME.**
+and a visible Mirror Home screen. The website is packaged in the APK.
+**This has not yet selected default HOME.**
 
 **Stop** on unsigned-release, certificate-mismatch, or health-check errors.
 Do not uninstall a previous debug/release installation just to evade a
@@ -348,7 +347,7 @@ USB/power access. It temporarily replaces the `co.mirror.datacap` update with
 a guarded UID-1000 payload. **Installation alone changes neither HOME nor
 kiosk settings. Restore the factory APK before any reboot, even on failure.**
 
-The following direct API path needs no Node.js. In the paired browser, enable
+The helper is driven through Mirror Home's API. In the paired browser, enable
 the **Pairing code** widget in **Display > Arrange the mirror** if the code is
 no longer visible; save the layout. Pair this temporary setup client using
 the fresh code, keeping the credential only in PowerShell memory:
@@ -402,8 +401,7 @@ If restoration fails or the path remains under `/data/app`, **do not reboot**;
 follow [helper recovery](recovery.md#helper-restoration-before-reboot).
 After restoration, repeat the generic HOME request above. Revoke **Temporary
 HOME setup** in browser **Settings > Paired devices** and close the setup
-PowerShell session. The [optional companion](provisioning.md#optional-companion)
-offers the same helper operations through buttons, but is not required.
+PowerShell session.
 
 ## 7. Verify the appliance across reboot
 
@@ -447,7 +445,7 @@ data. A successful upload with failed activation may leave an inactive card;
 choose **Use** to retry. See [Background videos](background-videos.md).
 
 For full-screen playback instead, use **Home** to play a reachable media URL;
-see [Streaming](streaming.md). Daily use needs no desktop companion. Keep
+see [Streaming](streaming.md). Daily use needs no computer. Keep
 these HTTP controls on a trusted LAN; never router-forward ports `8787`,
 `8791`, or ADB.
 
@@ -474,6 +472,6 @@ credentials, backups, or media. Optional video and OTA checks should be
 recorded separately, not assumed from installation.
 
 - [User guide](user-guide.md): installed-appliance controls and daily use.
-- [Provisioning reference](provisioning.md): USB authorization, Wi-Fi, and companion.
+- [Provisioning reference](provisioning.md): USB authorization and Wi-Fi.
 - [Recovery](recovery.md): factory helper, stock HOME, and APK rollback.
 - [Supported devices](supported-devices.md): exact hardware boundary.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Remove the desktop companion. Mirror Home serves its own controls, and USB
+  setup, recovery and helper actions use `tools/mirror.ps1` and the API
+  directly, so the Node.js service, its npm dependencies and its validation
+  lanes are gone. `v2.1.0` is the last tag that contains it; Mirror Home still
+  accepts that companion's media request header.
 - Fade the display smoothly when it sleeps and wakes instead of switching
   instantly. One eased curve dims a black overlay and the backlight together
   (three seconds to sleep, two to wake), so video and the dashboard sink into

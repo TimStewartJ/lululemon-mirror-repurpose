@@ -151,10 +151,8 @@ adb shell am start -n dev.mirror.repurpose/.MainActivity
 Launching explicitly is useful for recovery but does not set default HOME or
 prove reboot persistence. See [Recovery](recovery.md) for failed installs.
 
-When using the forwarded Mirror-hosted page directly, pair in that page;
-the browser sends its device credential to the forwarded API. When using
-the optional companion, the browser speaks to the same-origin companion,
-which attaches the device token server-side.
+Pair in the forwarded Mirror-hosted page; the browser sends its device
+credential to the forwarded API.
 
 ## Browser Wi-Fi configuration
 
@@ -184,47 +182,11 @@ credential-bearing handoff URL into messages or logs.
 ## LAN and discovery
 
 After Wi-Fi provisioning, the browser moves to the Mirror's private LAN address
-with the same bearer token. The companion can also connect to a Mirror that is
-already on the LAN through `POST /api/companion/devices/lan/connect` with that
-address and an existing pairing token; the address must be a private
-(RFC1918) or link-local IPv4 literal. LAN-exposed companion deployments require
-their own `COMPANION_ACCESS_TOKEN`; loopback-only companion instances remain
-frictionless. The Mirror-hosted control page needs no companion token and uses
-named per-browser device credentials.
+with the same bearer token. The Mirror-hosted control page uses named
+per-browser device credentials.
 
 Use the address reported by the Mirror, for example `http://MIRROR_IP:8787/`
 with `MIRROR_IP` replaced, not a saved address from someone else's unit.
 The app advertises `_mirror-home._tcp` and `_http._tcp`; discovery does not
 authorize a client. Keep the legacy Android device and its HTTP controls on a
 trusted LAN without router port forwarding.
-
-## Optional companion
-
-The companion is a separate Node.js workbench; it is not the normal
-Mirror-hosted website. It adds USB media hosting and helper buttons. Install
-Node.js 22+ only if using it, then from the repository root:
-
-```powershell
-npm --prefix .\companion ci
-npm --prefix .\companion run build
-npm --prefix .\companion start
-```
-
-Require each command to succeed before continuing. Keep the final command
-running and open `http://127.0.0.1:4317/` (the default). Use **Scan for
-devices**, connect to the intended verified device, and **Pair** with the
-current code on the glass. This creates a separate pairing from a directly
-connected browser. The default loopback binding needs no companion access
-token; do not broaden the bind address merely for local setup.
-
-With a deliberately installed transient helper, expand **System helper**,
-refresh until **Helper connected** is true, and choose **Use Mirror Home**.
-**Prepare kiosk mode** is a separate optional action. **Restore stock HOME**
-also requires the helper to be present and connected. Check each action's
-success, then perform the mandatory
-[factory helper restoration](getting-started.md#optional-transient-helper)
-before reboot. The device-hosted four-tab UI has no helper buttons.
-
-Stop the companion with `Ctrl+C` when finished; it is not required to keep
-Mirror Home running. See [Streaming](streaming.md) for media-hosting use and
-[Recovery](recovery.md) for stock HOME restoration.
