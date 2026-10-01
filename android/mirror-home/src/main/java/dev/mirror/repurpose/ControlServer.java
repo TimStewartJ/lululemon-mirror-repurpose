@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.SystemClock;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -23,6 +24,7 @@ import java.util.Map;
 import fi.iki.elonen.NanoHTTPD;
 
 public final class ControlServer extends NanoHTTPD {
+    private static final String TAG = "ControlServer";
     private static final int MAX_BODY_BYTES = 64 * 1024;
     private static final int UPCOMING_OFFSET_CHANGES = 8;
 
@@ -138,6 +140,13 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/status".equals(uri)
                     && (isLoopback(session) || authorized(session))) {
                 return response(Response.Status.OK, status());
+            }
+            if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/health".equals(uri)
+                    && (isLoopback(session) || authorized(session))) {
+                return response(
+                        Response.Status.OK,
+                        HealthReport.build(context, configStore, pairing, automation));
             }
             if (Method.POST.equals(session.getMethod()) && "/api/v1/pair".equals(uri)) {
                 return pair(readJson(session));
@@ -412,6 +421,11 @@ public final class ControlServer extends NanoHTTPD {
             return error(Response.Status.BAD_REQUEST, "Invalid JSON request");
         } catch (IOException | ResponseException error) {
             return error(Response.Status.BAD_REQUEST, "Unable to read request");
+        } catch (RuntimeException error) {
+            // Answer instead of dropping the connection, and keep the evidence.
+            Log.e(TAG, "Unhandled error serving " + uri, error);
+            ApiDiagnostics.recordUnhandled(session.getMethod().name(), uri, error);
+            return error(Response.Status.INTERNAL_ERROR, "Mirror Home could not complete the request");
         }
     }
 
@@ -442,7 +456,9 @@ public final class ControlServer extends NanoHTTPD {
         result.put("clock24Hour", configStore.isClock24Hour());
         result.put("mirrorBinderConnected", mirror.isConnected());
         result.put("systemHelperConnected", systemHelper.isConnected());
-        Integer brightness = automation.isSleeping() ? 0 : mirror.getBrightness();
+        Integer brightness = automation.isSleeping()
+                ? Integer.valueOf(0)
+                : mirror.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
         result.put("media", media.snapshot());

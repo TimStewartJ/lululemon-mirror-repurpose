@@ -1415,6 +1415,77 @@
       .catch(function (error) { setMessage('note-message', error.message, true); });
   });
 
+  /* ---------- Health ---------- */
+
+  var START_REASONS = {
+    update: 'After an update',
+    reboot: 'After the mirror restarted',
+    killed: 'After Android stopped the app',
+    crash: 'After a crash'
+  };
+
+  function refreshHealth() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/health').then(function (health) {
+      renderHealth(health);
+      setMessage('health-message', '');
+    }).catch(function (error) {
+      setMessage('health-message', error.message, true);
+    });
+  }
+
+  function renderHealth(health) {
+    var process = health.process || {};
+    var previous = process.previousRun;
+    var crashes = health.crashes || {};
+    var activity = health.activity || {};
+    var dashboard = health.dashboard || {};
+    var memory = health.memory || {};
+    var storage = health.storage || {};
+    var updater = health.otaSupervisor || {};
+
+    byId('health-started').textContent = process.startedAt ? formatDate(process.startedAt) : '—';
+    byId('health-previous').textContent = previous
+      ? (START_REASONS[previous.end] || 'After an unknown stop')
+      : 'First start';
+
+    var crashText = 'None recorded';
+    if (crashes.count) {
+      var last = crashes.last || {};
+      crashText = crashes.count + (crashes.count === 1 ? ' crash' : ' crashes');
+      if (last.at) {
+        crashText += ', last ' + formatDate(last.at) + ': '
+          + String(last.exception || 'unknown error').split('.').pop();
+      }
+    }
+    byId('health-crashes').textContent = crashText;
+
+    var covered = Math.max(Number(activity.pausedForSeconds || 0), Number(activity.unfocusedForSeconds || 0));
+    var dashboardText = activity.sleeping ? 'Asleep'
+      : activity.showing ? 'Showing'
+        : 'Covered by another screen' + (covered >= 60 ? ' for ' + formatUptime(covered) : '');
+    if (dashboard.consoleErrors) {
+      dashboardText += ', ' + dashboard.consoleErrors
+        + (dashboard.consoleErrors === 1 ? ' script error' : ' script errors');
+    }
+    byId('health-dashboard').textContent = dashboardText;
+
+    byId('health-memory').textContent = typeof memory.pssKb === 'number'
+      ? formatBytes(memory.pssKb * 1024) + ' in use, '
+        + formatBytes(Number(memory.systemAvailableKb || 0) * 1024) + ' free'
+      : '—';
+    byId('health-storage').textContent = typeof storage.dataFreeBytes === 'number'
+      ? formatBytes(storage.dataFreeBytes) + ' free of ' + formatBytes(storage.dataTotalBytes)
+      : '—';
+    // Android restarts the supervisor now and then; a short silence is normal.
+    var silentFor = Number(health.now || 0) - Number(updater.unreachableSince || 0);
+    byId('health-updater').textContent = !updater.installed ? 'Not installed'
+      : updater.listening ? 'Ready'
+        : silentFor < 60000 ? 'Not answering right now'
+          : 'Not answering since ' + formatDate(updater.unreachableSince);
+    byId('health-report').textContent = JSON.stringify(health, null, 2);
+  }
+
   function refreshAll() {
     return refreshStatus()
       .then(function () {
@@ -1428,7 +1499,8 @@
           refreshOnboarding(),
           refreshBackgroundVideos(),
           refreshPhotos(),
-          refreshNotes()
+          refreshNotes(),
+          refreshHealth()
         ]);
       })
       .catch(function (error) {
@@ -1456,6 +1528,7 @@
       if (name === 'display' && dashboardLayout) editor.relayout();
       if (name === 'home' && savedLayout) homeRenderer.relayout();
     });
+    if (name === 'settings') refreshHealth();
   }
 
   document.querySelectorAll('.tab').forEach(function (tab) {

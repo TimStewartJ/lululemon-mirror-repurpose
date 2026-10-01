@@ -485,6 +485,22 @@
           <div class="row"><span class="row-label">Casting</span><span class="row-value">FCast, port 46899</span></div>
           <div class="row"><span class="row-label">Uptime</span><span id="about-uptime" class="row-value">—</span></div>
         </div>
+
+        <h2 class="section-title">Health</h2>
+        <div class="group about">
+          <div class="row"><span class="row-label">Running since</span><span id="health-started" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Last start</span><span id="health-previous" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Crashes</span><span id="health-crashes" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Dashboard</span><span id="health-dashboard" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Memory</span><span id="health-memory" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Storage</span><span id="health-storage" class="row-value">—</span></div>
+          <div class="row"><span class="row-label">Updater</span><span id="health-updater" class="row-value">—</span></div>
+          <details class="disclosure">
+            <summary><span class="row-label">Full report</span><span class="chevron" aria-hidden="true"></span></summary>
+            <pre id="health-report" class="report mono"></pre>
+          </details>
+          <p id="health-message" class="status inset" role="status"></p>
+        </div>
       </section>
     </main>
   </div>

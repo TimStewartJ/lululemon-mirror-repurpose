@@ -60,7 +60,7 @@ The control application has four sections:
   It also manages private background videos stored separately from the app.
 - **Schedule**: sleep/wake times, wake brightness, and presence sensing.
 - **Settings**: name, clock, Wi-Fi, the recovery setup network, paired
-  devices, and version/address details.
+  devices, version/address details, and the Mirror's health.
 
 ## Dashboards
 
@@ -251,6 +251,26 @@ accepted. The supervisor saves the current APK, installs the candidate, and
 restores the saved release automatically if the Home API does not become
 healthy. See [LAN OTA updates](ota-updates.md).
 
+## Health
+
+**Settings > Health** says how the Mirror itself is doing, so a problem can be
+found without standing in front of it:
+
+- **Running since** and **Last start**: when Mirror Home last started and
+  why: after an update, after the Mirror restarted, after a crash, or after
+  Android stopped the app.
+- **Crashes**: how many have been recorded, and when and what the last was.
+- **Dashboard**: whether the glass is showing the dashboard, is asleep, or is
+  covered by another screen, such as an Android prompt, and for how long.
+  Script errors on the dashboard page are counted here.
+- **Memory** and **Storage**: what Mirror Home uses and what is left.
+- **Updater**: whether the optional OTA supervisor is ready. Android restarts
+  the supervisor now and then when memory is short, so **Not answering right
+  now** for a moment is normal; **Not answering since** a time is not.
+
+**Full report** holds every detail and is what to attach to a bug report. It
+contains no credential, pairing code or Wi-Fi name, but it does include the
+address of a web dashboard if you use one.
 ## Recovery
 
 If normal Wi-Fi is unavailable, use **Settings > Setup network > Start** in

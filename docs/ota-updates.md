@@ -196,6 +196,21 @@ stable recovery root; changing it requires a same-certificate APK installed
 through physical ADB. This prevents a defective supervisor update from removing
 the only rollback authority.
 
+## Supervisor health
+
+From version 1.1.0 the supervisor records its own process history, and
+`.\tools\ota.ps1 status` includes it under `health`: when the supervisor
+started, how its previous run ended (`update`, `reboot`, `crash` or
+`killed`), its last uncaught exception with a stack trace, and its memory
+and storage. A supervisor that crashes on start can therefore be diagnosed
+once it runs again, instead of leaving no trace. Earlier versions report no
+`health`; installing 1.1.0 over one needs USB, like any supervisor change.
+
+Mirror Home separately checks that the supervisor accepts connections and
+reports that in its own health report as `otaSupervisor`, so a stopped
+supervisor is noticed before an update is attempted. See
+[Control protocol](protocol.md#health).
+
 ## Failure-injection build
 
 Maintainers can build a signed Home APK that intentionally withholds its health

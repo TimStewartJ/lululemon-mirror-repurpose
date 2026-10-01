@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Report the Mirror's health. `GET /api/v1/health` and **Settings > Health**
+  show what could not be seen without the glass or a USB cable: when Mirror
+  Home started and whether the run before ended in an update, a reboot, a
+  crash or Android stopping the app; the last uncaught exception with its
+  stack trace, kept across restarts; whether the dashboard is in front or an
+  Android prompt covers it, and for how long; script errors on the dashboard
+  page; memory, storage, open files and threads; and whether the OTA
+  supervisor accepts connections. Android 6 starts a HOME app twice while it
+  updates it; the report counts the start it cut short instead of mistaking
+  it for the previous run. OTA supervisor 1.1.0 records its own restarts and
+  crashes and returns them in `ota.ps1 status`; installing it needs USB.
+- Fix `GET /api/v1/status` failing while the display was awake and the stock
+  Mirror services were not connected or could not report the brightness: the
+  request was dropped, so the control page could not load. Any request that
+  fails unexpectedly now answers 500 instead of dropping the connection, and
+  is counted in the health report.
 - Close pairing unless a code is on display. `POST /api/v1/pair` used to check
   any guess at any time, five every 30 seconds, and a new code every ten
   minutes forgave earlier misses. A code is now accepted only while the setup

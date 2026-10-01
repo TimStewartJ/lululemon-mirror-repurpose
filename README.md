@@ -103,7 +103,8 @@ device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
 sensing, cached local weather, precision dashboard editing, signed LAN OTA
 updates with automatic rollback, content-addressed background videos stored
-outside the APK, and watchdog recovery. Media3
+outside the APK, a health report that survives restarts, and watchdog
+recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
 Everything runs from the Mirror and a browser; USB setup and recovery use the
 Python CLI in `tools/`.

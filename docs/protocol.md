@@ -26,6 +26,7 @@ the lock.
 ```text
 GET  /api/v1/bootstrap
 GET  /api/v1/status
+GET  /api/v1/health
 POST /api/v1/pair
 POST /api/v1/pair/window
 POST /api/v1/pair/revoke
@@ -85,9 +86,12 @@ POST /api/v1/system/home
 ```
 
 Only bootstrap, pairing, static controls, and loopback-only dashboard resources
-are public. Full status and all state changes require authentication for LAN
-clients. ADB-forwarded and on-device loopback status remains available for
-recovery and local templates.
+are public. Full status, health, and all state changes require authentication
+for LAN clients. ADB-forwarded and on-device loopback status and health remain
+available for recovery and local templates.
+
+A request that fails unexpectedly answers 500 with a generic error rather
+than dropping the connection, and is counted in the health report.
 
 Background video list, upload, activation, rollback, schedule, deletion, and poster routes
 require an ordinary bearer credential. The bootstrap availability route is
@@ -124,6 +128,30 @@ when the offset is one the zone uses, and otherwise keeps the offset fixed.
 `status` and `dashboard/runtime` carry `utcOffsetMinutes` and
 `nextUtcOffsetChange` (one entry or `null`) so a display can switch at the
 exact instant. A schedule `hold` reports `untilTime`, its local end time.
+
+### Health
+
+`GET /api/v1/health` reports how Mirror Home itself is doing, for a person or
+a monitor that cannot see the glass. Times are epoch milliseconds.
+
+| Section | Contents |
+|---|---|
+| `process` | `pid`, `runId` (counts starts since Mirror Home's data was created), `startedAt`, `uptimeSeconds`, and `previousRun`: when the last run started and was last known alive, its version, and how it ended: `update`, `reboot`, `crash` or `killed`. `earlyStops` counts processes that Android stopped within ten seconds of starting before this run began. They are not reported as the previous run. One is normal after an update, because Android 6 starts a HOME app while it is still replacing it; several mean Home could not stay up. |
+| `crashes` | `count` and `last`: the exception, message, thread, time, version and the first lines of the stack trace of the most recent uncaught exception. |
+| `memory` | The app's `pssKb`, Java and native heap, `threads` and `openFiles` (`null` if it cannot be counted); Android's `systemAvailableKb`, `systemTotalKb` and `systemLow`; and how often Android asked the app to trim memory. |
+| `storage` | `dataFreeBytes` and `dataTotalBytes` of the app's storage volume. |
+| `device` | Boot time, `bootId` (different for every boot, or `null`), Android release and SDK, model, build fingerprint, `display` (pixel size, density, refresh rate), `input` (whether Android sees a touchscreen, keyboard or navigation keys; stock Android 6 shows crash dialogs only if it sees one) and the `webView` package and version. |
+| `activity` | Whether the dashboard is `created`, `resumed` and `focused`; `showing` is true only when nothing is drawn over it. `pausedForSeconds` and `unfocusedForSeconds` say for how long it has not been, and `sleeping` whether the display is asleep. |
+| `dashboard` | The dashboard page's load state and last failure, plus `consoleErrors`, `consoleWarnings` and `recentConsoleErrors` from its scripts. |
+| `api` | `unhandledErrors` and the last one's method, path and exception. |
+| `wifi` | `connected`, and when it is: `rssi`, `signalLevel` (0 to 4), `linkSpeedMbps` and `frequencyMhz`. |
+| `clock` | `timeZone`, `utcOffsetMinutes`, `source`, `knownChanges`, `nextChange` and the IANA release of the bundled table. |
+| `pairing` | `open`, `lockedForSeconds`, `wrongCodes` and the number of paired `clients`. |
+| `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. |
+
+`appVersion`, `versionCode`, `debuggable` and `now` complete the report. It
+holds no credential, pairing code or Wi-Fi name; it does name the page the
+glass is showing, including the address of a web dashboard.
 
 The device API does not emit permissive CORS headers. Browser clients load the
 control application from the Mirror itself, keeping API calls same-origin.

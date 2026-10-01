@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 
+import dev.mirror.repurpose.health.ProcessHealth;
+
 public final class MirrorHomeApplication extends Application {
     private static final int WIFI_RETRY_COUNT = 24;
     private static final long WIFI_RETRY_DELAY_MS = 5000;
@@ -16,6 +18,7 @@ public final class MirrorHomeApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        ProcessHealth.start(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
         System.setProperty("java.io.tmpdir", getCacheDir().getAbsolutePath());
         if (BuildConfig.OTA_HEALTH_FAILURE_TEST) {
             return;
@@ -29,6 +32,15 @@ public final class MirrorHomeApplication extends Application {
         WeatherProvider.getInstance(this);
         startService(new Intent(this, ControlServerService.class));
         WatchdogReceiver.schedule(this);
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        ProcessHealth recorder = ProcessHealth.get();
+        if (recorder != null) {
+            recorder.recordTrimMemory(level);
+        }
     }
 
     private void ensureWifiConnection() {

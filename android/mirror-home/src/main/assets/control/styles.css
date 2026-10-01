@@ -477,6 +477,8 @@ textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-heig
 .pair-window-code { font-size: 34px; font-weight: 300; letter-spacing: 0.2em; text-align: center; font-variant-numeric: tabular-nums; }
 .pair-window .row-sub { text-align: center; margin-top: 0; }
 .about .row-value { text-align: right; }
+.report { margin: 0; padding: 12px 16px 14px; max-height: 320px; overflow: auto; color: var(--text-2); font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.group > .disclosure { border-top: 1px solid var(--line); }
 
 /* ---------- Toast ---------- */
 

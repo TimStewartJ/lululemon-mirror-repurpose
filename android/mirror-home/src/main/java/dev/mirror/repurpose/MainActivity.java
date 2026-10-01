@@ -27,6 +27,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.animation.AccelerateDecelerateInterpolator;
+import android.webkit.ConsoleMessage;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -168,6 +170,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         DashboardDiagnostics.record("activity-create", "", "");
+        ActivityDiagnostics.created();
         getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
                         | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -252,6 +255,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         activityResumed = true;
+        ActivityDiagnostics.resumed();
         if (root != null) {
             renderDashboard();
         }
@@ -279,8 +283,15 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        ActivityDiagnostics.focusChanged(hasFocus);
+    }
+
+    @Override
     protected void onPause() {
         activityResumed = false;
+        ActivityDiagnostics.paused();
         updateAmbientVideoState();
         statusHandler.removeCallbacks(statusRefresh);
         scheduleHandler.removeCallbacks(scheduleCheck);
@@ -290,6 +301,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        ActivityDiagnostics.destroyed();
         statusHandler.removeCallbacks(statusRefresh);
         scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
@@ -623,6 +635,17 @@ public final class MainActivity extends Activity {
                             String.valueOf(errorResponse.getStatusCode()));
                     showOfflineDashboard();
                 }
+            }
+        });
+        webDashboard.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                DashboardDiagnostics.recordConsole(
+                        message.messageLevel().name(),
+                        message.message(),
+                        message.sourceId(),
+                        message.lineNumber());
+                return false;
             }
         });
         webDashboard.setBackgroundColor(

@@ -32,6 +32,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import dev.mirror.repurpose.health.ProcessHealth;
+
 final class OtaManager {
     static final long MAX_APK_BYTES = 32L * 1024L * 1024L;
 
@@ -250,6 +252,8 @@ final class OtaManager {
                 result.put("homeVersionCode", JSONObject.NULL);
                 result.put("homeVersionName", JSONObject.NULL);
             }
+            ProcessHealth recorder = ProcessHealth.get();
+            result.put("health", recorder == null ? JSONObject.NULL : recorder.snapshot());
         } catch (JSONException impossible) {
             throw new IllegalStateException("Unable to build OTA status", impossible);
         }

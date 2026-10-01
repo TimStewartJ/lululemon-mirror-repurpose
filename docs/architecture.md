@@ -59,6 +59,19 @@ attempts a WPA2 Wi-Fi Direct group. The native setup screen displays join/open
 QR codes once that group is ready. See [Getting started](getting-started.md)
 for the installation sequence and onboarding limitations.
 
+## Health reporting
+
+Mirror Home records what a restart would otherwise erase: when each process
+started, how the one before it ended, and the last uncaught exception with
+its stack trace. It also tracks whether its activity is really in front, what
+the dashboard page logs on its console, and requests the API failed to
+handle. `GET /api/v1/health` assembles these with memory, storage, clock,
+pairing and OTA-supervisor state; see [Control protocol](protocol.md#health).
+
+The recorder lives in `android/common`, a source directory compiled into both
+Mirror Home and the OTA supervisor, so each app keeps its own history without
+a shared library module.
+
 ## USB tooling
 
 `tools/mirrorctl.py` (wrapped by `tools\mirror.ps1`) is the only desktop

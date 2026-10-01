@@ -17,6 +17,15 @@ public final class WatchdogReceiver extends BroadcastReceiver {
         MirrorBinderClient.getInstance(context).connect();
         AutomationManager.getInstance(context).refresh();
         WeatherProvider.getInstance(context).refreshIfDue();
+        // Keeps a history of the OTA supervisor's reachability between reports.
+        Context application = context.getApplicationContext();
+        new Thread(() -> {
+            try {
+                SupervisorProbe.check(application);
+            } catch (org.json.JSONException ignored) {
+                // The probe's own bookkeeping is all that matters here.
+            }
+        }, "supervisor-probe").start();
     }
 
     public static void schedule(Context context) {
