@@ -13,6 +13,9 @@
   or exited, fails the remaining checks at once with that reason, and still
   writes its report. See
   [When the emulator stops answering](docs/validation.md#when-the-emulator-stops-answering).
+- Give the virtual Mirror the real one's 128 MB app heap. The emulator had
+  raised the setting to 256 MB for a panel this large; the suite now starts it
+  with the limit and the `health` check verifies it.
 
 ## 2.2.0 - 2026-10-01
 

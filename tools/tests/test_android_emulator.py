@@ -155,6 +155,14 @@ class ArgumentsTest(unittest.TestCase):
         self.assertEqual("swiftshader_indirect", arguments[arguments.index("-gpu") + 1])
         self.assertEqual("-QuickbootFileBacked", arguments[arguments.index("-feature") + 1])
 
+    def test_limits_each_app_to_the_mirrors_heap(self):
+        # The AVD's own heap setting is raised by the emulator for a large panel.
+        arguments = android_emulator.emulator_arguments(
+            "mirror-android6", 5580, wipe_data=True, window=False
+        )
+        self.assertEqual("dalvik.vm.heapgrowthlimit=128m", arguments[arguments.index("-prop") + 1])
+        self.assertEqual(128, android_emulator.HEAP_MB)
+
     def test_can_show_its_window_and_keep_its_data(self):
         arguments = android_emulator.emulator_arguments(
             "mirror-android6", 5582, wipe_data=False, window=True

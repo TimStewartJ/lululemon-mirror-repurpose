@@ -1082,6 +1082,11 @@ def check_health(ctx: Context) -> None:
         f"The app does not get the whole panel: {display}",
     )
     require(0 < health["memory"]["pssKb"] < 600_000, f"Memory use is {health['memory']['pssKb']} KB")
+    heap_mb = health["memory"]["javaHeapMaxKb"] // 1024
+    require(
+        heap_mb == android_emulator.HEAP_MB,
+        f"This emulator gives an app a {heap_mb} MB heap, not a Mirror's {android_emulator.HEAP_MB} MB",
+    )
     open_files = health["memory"]["openFiles"]
     require(open_files and open_files > 0, f"Open files were not counted: {open_files!r}")
     if ctx.inspectable():
@@ -1099,6 +1104,7 @@ def check_health(ctx: Context) -> None:
     require(health["clock"]["bundledTzdata"], "The bundled zone table did not load")
     require(health["otaSupervisor"] == {"installed": False}, f"Supervisor: {health['otaSupervisor']}")
     ctx.note("pssKb", health["memory"]["pssKb"])
+    ctx.note("javaHeapMaxKb", health["memory"]["javaHeapMaxKb"])
     ctx.note("openFiles", health["memory"]["openFiles"])
     ctx.note("densityDpi", display["densityDpi"])
     ctx.note("bundledTzdata", health["clock"]["bundledTzdata"])

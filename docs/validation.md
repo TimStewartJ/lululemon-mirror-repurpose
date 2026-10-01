@@ -101,7 +101,7 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `notes` | A note posted through the API appears on the glass and leaves it when deleted. |
 | `offline-fallback` | An unreachable web dashboard falls back to the offline clock, and clearing the address brings the built-in dashboard back. |
 | `control-page` | The control page, everything it references and the dashboard's files are served, with a content security policy and no framing; the bundled zone table is not served. |
-| `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. |
+| `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, a 128 MB app heap, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. |
 | `returns-to-front` | The other HOME app is started over the dashboard. Mirror Home leaves it for ten seconds, then takes the display back without creating a second dashboard. This runs twice: from the arrangement a boot leaves, and from the one an update can leave (see [Rehearsing an update](#rehearsing-an-update)). |
 | `wakes-display` | Android itself is put to sleep, which turns the panel off. Mirror Home wakes it and the dashboard is back within seconds. |
 | `cold-start` | Starting Mirror Home never lights the whole screen, since on mirror glass a white starting window is a bright flash, and the dashboard then fades in. |
@@ -203,7 +203,9 @@ power settings were read from a Mirror's health report (`device.display`,
 `memory.javaHeapMaxKb`). A Mirror tells Android it has no mains power, so
 Android's "stay awake while charging" never applies to it: its display stays
 on only while a window asks for that, and from the factory turns off ten
-minutes after.
+minutes after. The emulator raises the heap size of a virtual device with a
+panel this large to 256 MB, so the suite also starts it with a 128 MB limit
+for each app, and `health` checks that Mirror Home got it.
 
 `wakes-display` holds a kernel wake lock for its few seconds. A sleeping
 emulator otherwise stops its processor and with it ADB, where a Mirror's

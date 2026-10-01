@@ -193,6 +193,10 @@ def emulator_arguments(name: str, port: int, *, wipe_data: bool, window: bool) -
         "none",
         "-netspeed",
         "full",
+        # The emulator raises the AVD's heap size to 256 MB for a panel this
+        # large. This limits each app to the Mirror's heap all the same.
+        "-prop",
+        f"dalvik.vm.heapgrowthlimit={HEAP_MB}m",
     ]
     if not window:
         arguments.append("-no-window")

@@ -38,8 +38,9 @@ def healthy_report():
         },
         "crashes": {"count": 0, "last": None},
         "memory": {
-            "pssKb": 180_000, "javaHeapUsedKb": 9_000, "nativeHeapKb": 60_000, "openFiles": 140,
-            "threads": 40, "systemAvailableKb": 900_000, "trimEvents": 0, "systemLow": False,
+            "pssKb": 180_000, "javaHeapUsedKb": 9_000, "javaHeapMaxKb": 131_072, "nativeHeapKb": 60_000,
+            "openFiles": 140, "threads": 40, "systemAvailableKb": 900_000, "trimEvents": 0,
+            "systemLow": False,
         },
         "storage": {"dataFreeBytes": 4 << 30},
         "device": {
@@ -1368,6 +1369,7 @@ class EmulatorHealthTest(unittest.TestCase):
     def test_an_emulator_shaped_like_a_mirror_passes(self):
         ctx = self.check(self.report())
         self.assertEqual(240, ctx.details["densityDpi"])
+        self.assertEqual(131_072, ctx.details["javaHeapMaxKb"])
         self.assertIs(False, ctx.details["power"]["usbConfigured"])
 
     def test_an_emulator_that_differs_from_a_mirror_is_refused(self):
@@ -1380,6 +1382,10 @@ class EmulatorHealthTest(unittest.TestCase):
             ),
             "The display is reported off": lambda report: report["device"]["display"].update(on=False),
             "The dashboard is not in front": lambda report: report["activity"].update(showing=False),
+            # What the emulator gives a panel this size unless it is told otherwise.
+            "gives an app a 256 MB heap, not a Mirror's 128 MB": lambda report: report["memory"].update(
+                javaHeapMaxKb=262_144
+            ),
         }
         for message, break_it in faults.items():
             report = self.report()
