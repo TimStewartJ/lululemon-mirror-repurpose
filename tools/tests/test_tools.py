@@ -1,10 +1,13 @@
 import hashlib
 import hmac
+import http.client
+import io
 import json
 import pathlib
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 import zipfile
 from unittest import mock
 
@@ -26,6 +29,7 @@ from otactl import (
     EMPTY_SHA256,
     OtaClient,
     OtaClientError,
+    OtaUnreachableError,
     canonical_request,
     provision,
     signed_headers,
@@ -201,6 +205,80 @@ pending unauthorized
         ):
             with self.assertRaisesRegex(OtaClientError, "rolled_back"):
                 client.push(pathlib.Path(__file__))
+
+    def test_ota_push_waits_while_the_supervisor_restarts_mid_update(self):
+        # Android may stop the supervisor's process during an install; it
+        # resumes from saved state, so the update must not be reported failed.
+        client = OtaClient("127.0.0.1", "token")
+        lines = []
+        client.progress = lines.append
+        done = {"transactionId": "transaction", "state": "succeeded", "active": False}
+        answers = [
+            {"transactionId": "transaction", "state": "installing", "active": True, "message": "Installing"},
+            OtaUnreachableError("Lost the connection to the OTA supervisor: reset"),
+            OtaUnreachableError("Unable to reach OTA supervisor: refused"),
+            {"transactionId": "transaction", "state": "health_check", "active": True, "message": ""},
+            done,
+        ]
+        with mock.patch.object(client, "status", side_effect=answers), \
+                mock.patch("otactl.time.sleep"):
+            self.assertEqual(done, client.wait("transaction"))
+        self.assertEqual(
+            [
+                "installing: Installing",
+                "The supervisor is not answering; still waiting "
+                "(Lost the connection to the OTA supervisor: reset)",
+                "The supervisor is answering again",
+                "health_check",
+            ],
+            lines,
+        )
+
+    def test_ota_wait_says_so_when_the_supervisor_never_answers_again(self):
+        client = OtaClient("127.0.0.1", "token")
+        ticks = iter([0, 1, 2, 500])
+        with mock.patch.object(
+            client, "status", side_effect=OtaUnreachableError("Unable to reach OTA supervisor: timed out")
+        ), mock.patch("otactl.time.sleep"), mock.patch(
+            "otactl.time.monotonic", side_effect=lambda: next(ticks, 500)
+        ):
+            with self.assertRaisesRegex(
+                OtaClientError, "Lost contact with the OTA supervisor before the transaction ended"
+            ) as raised:
+                client.wait("transaction")
+        self.assertNotIsInstance(raised.exception, OtaUnreachableError)
+        self.assertIn("do not push again", str(raised.exception))
+
+    def test_ota_wait_stops_at_once_when_the_supervisor_refuses_the_request(self):
+        client = OtaClient("127.0.0.1", "token")
+        with mock.patch.object(
+            client, "status", side_effect=OtaClientError("OTA request failed (401): Unauthorized")
+        ) as status, mock.patch("otactl.time.sleep"):
+            with self.assertRaisesRegex(OtaClientError, "401"):
+                client.wait("transaction")
+        self.assertEqual(1, status.call_count)
+
+    def test_ota_request_tells_an_unreachable_supervisor_from_a_refusal(self):
+        client = OtaClient("127.0.0.1", "token")
+        unreachable = (
+            ConnectionResetError(10054, "An existing connection was forcibly closed"),
+            http.client.RemoteDisconnected("Remote end closed connection without response"),
+            http.client.IncompleteRead(b"{"),
+            TimeoutError("timed out"),
+            urllib.error.URLError(ConnectionRefusedError(10061, "refused")),
+        )
+        for error in unreachable:
+            with mock.patch("otactl.urllib.request.urlopen", side_effect=error):
+                with self.assertRaises(OtaUnreachableError, msg=repr(error)):
+                    client.status()
+        refusal = urllib.error.HTTPError(
+            "http://127.0.0.1:8791/api/v1/status", 401, "Unauthorized", {},
+            io.BytesIO(b'{"error": "Invalid signature"}'),
+        )
+        with mock.patch("otactl.urllib.request.urlopen", side_effect=refusal):
+            with self.assertRaisesRegex(OtaClientError, r"\(401\): Invalid signature") as raised:
+                client.status()
+        self.assertNotIsInstance(raised.exception, OtaUnreachableError)
 
     def test_ota_provision_sends_bootstrap_secret_not_status_object(self):
         fake_device = mock.Mock()

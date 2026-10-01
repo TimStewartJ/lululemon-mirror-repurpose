@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep `ota.ps1 push` waiting when the supervisor goes quiet. Android can
+  stop the supervisor's process while an update is installed; the supervisor
+  restarts and finishes the update, but `push` used to fail with a network
+  error at the first dropped connection. It now waits, prints each step, and
+  says to check `status` if contact is lost for good.
 - Keep the dashboard in front. An update could leave the factory launcher's
   setup screen on the glass: while Android 6 replaces Mirror Home it needs a
   HOME app, and at the wrong instant it starts the other one, which then

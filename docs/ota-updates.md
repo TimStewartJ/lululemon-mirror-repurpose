@@ -135,6 +135,13 @@ replaces Mirror Home, and that launcher's setup screen can end up on top.
 Mirror Home 2.2.0 and newer take the display back after about fifteen
 seconds; earlier versions stayed covered until Home was started again.
 
+Android may stop the supervisor's process while the update is installed,
+because memory is short at that moment. The supervisor restarts within
+seconds and carries on from its saved state. `push` reports the silence,
+keeps waiting, and prints each step as the supervisor reaches it. If it loses
+contact for good, run `status` to see how the update ended before pushing
+anything again.
+
 ## Validation and rollback
 
 Before installation the supervisor:

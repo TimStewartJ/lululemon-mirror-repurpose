@@ -7,6 +7,7 @@ import argparse
 import datetime
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import os
@@ -36,6 +37,10 @@ TERMINAL_STATES = {
 
 class OtaClientError(RuntimeError):
     pass
+
+
+class OtaUnreachableError(OtaClientError):
+    """The supervisor did not answer; it may be busy, restarting or gone."""
 
 
 def canonical_request(
@@ -89,6 +94,8 @@ class OtaClient:
             raise OtaClientError("OTA token is missing")
         self.base_url = f"http://{address}:{port}"
         self.token = token
+        # Called with a line of text whenever a transaction moves on.
+        self.progress = None
 
     def request(
         self,
@@ -125,7 +132,14 @@ class OtaClient:
                 f"OTA request failed ({error.code}): {message or error.reason}"
             ) from error
         except urllib.error.URLError as error:
-            raise OtaClientError(f"Unable to reach OTA supervisor: {error.reason}") from error
+            raise OtaUnreachableError(
+                f"Unable to reach OTA supervisor: {error.reason}"
+            ) from error
+        except (OSError, http.client.HTTPException) as error:
+            # A reset or a reply cut short: the supervisor went away mid-answer.
+            raise OtaUnreachableError(
+                f"Lost the connection to the OTA supervisor: {error or type(error).__name__}"
+            ) from error
         try:
             return json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -160,15 +174,47 @@ class OtaClient:
         return result
 
     def wait(self, transaction_id: str | None, timeout_seconds: int = 240) -> dict:
+        """Poll until the transaction ends, and return how it ended.
+
+        Android can stop the supervisor's process while an update is being
+        installed. The supervisor restarts and carries on from its saved
+        state, so losing the connection for a while is not a failure.
+        """
         deadline = time.monotonic() + timeout_seconds
+        unreachable: OtaUnreachableError | None = None
+        reported = None
         while time.monotonic() < deadline:
-            status = self.status()
+            try:
+                status = self.status()
+            except OtaUnreachableError as error:
+                if unreachable is None:
+                    self._report(f"The supervisor is not answering; still waiting ({error})")
+                unreachable = error
+                time.sleep(2)
+                continue
+            if unreachable is not None:
+                self._report("The supervisor is answering again")
+                unreachable = None
             if transaction_id and status.get("transactionId") != transaction_id:
                 raise OtaClientError("OTA transaction identifier changed unexpectedly")
             if not status.get("active") and status.get("state") in TERMINAL_STATES:
                 return status
+            step = (status.get("state"), status.get("message"))
+            if step != reported:
+                reported = step
+                self._report(f"{step[0]}: {step[1]}" if step[1] else str(step[0]))
             time.sleep(2)
+        if unreachable is not None:
+            raise OtaClientError(
+                "Lost contact with the OTA supervisor before the transaction ended "
+                f"({unreachable}). Run the status command to see how it ended; "
+                "do not push again until it answers."
+            )
         raise OtaClientError("Timed out waiting for OTA transaction")
+
+    def _report(self, text: str) -> None:
+        if self.progress is not None:
+            self.progress(text)
 
 
 def raw_request(
@@ -391,6 +437,7 @@ def main() -> None:
         result = deprovision(args.serial, args.token_file)
     else:
         client, _ = load_config(args.token_file, args.host)
+        client.progress = lambda text: print(text, file=sys.stderr, flush=True)
         if args.command == "status":
             result = client.status()
         elif args.command == "push":
