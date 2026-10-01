@@ -133,7 +133,8 @@ References: [User guide](docs/user-guide.md),
 [no-touchscreen ADB authorization](docs/provisioning.md#initial-adb-authorization-without-a-touchscreen)),
 [Automation](docs/automation.md),
 [Background videos](docs/background-videos.md),
-[LAN OTA updates](docs/ota-updates.md), [Casting roadmap](docs/casting-roadmap.md), and
+[LAN OTA updates](docs/ota-updates.md), [Validation](docs/validation.md),
+[Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 
 Status and USB forwarding, after authorization and profile checks:
@@ -160,6 +161,12 @@ Run every build, test, and lint lane with:
 ```powershell
 python .\tools\check.py
 ```
+
+`.\tools\validate.ps1 emulator` then runs the built app on an Android 6
+emulator with the Mirror's WebView generation and checks pairing, the
+dashboard, the clock, sleep and wake, and restarts end to end.
+`.\tools\validate.ps1 mirror` reads a live Mirror's health without changing
+it. See [Validation](docs/validation.md).
 
 ## License
 

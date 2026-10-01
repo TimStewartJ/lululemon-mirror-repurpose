@@ -10,6 +10,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -192,6 +193,10 @@ public final class MainActivity extends Activity {
         backgroundVideos = BackgroundVideoLibrary.getInstance(this);
         pairingManager = PairingManager.getInstance(this);
         media = MediaPlaybackManager.getInstance(this);
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            // Lets the emulator checks inspect the dashboard page; never in a release.
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
 
         root = new FrameLayout(this);
         setContentView(root);

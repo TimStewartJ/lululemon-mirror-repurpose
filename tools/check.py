@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
 import subprocess
@@ -19,6 +20,13 @@ def run(arguments: list[str]) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--emulator",
+        action="store_true",
+        help="also run the Android 6 emulator suite (see docs/validation.md)",
+    )
+    options = parser.parse_args()
     gradle = REPO / ("gradlew.bat" if os.name == "nt" else "gradlew")
 
     run(
@@ -50,6 +58,15 @@ def main() -> None:
             "--no-daemon",
         ]
     )
+    if options.emulator:
+        run(
+            [
+                sys.executable,
+                str(REPO / "tools" / "validate.py"),
+                "emulator",
+                "--skip-build",
+            ]
+        )
     run(["git", "diff", "--check"])
 
 

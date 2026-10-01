@@ -278,6 +278,10 @@ found without standing in front of it:
 **Full report** holds every detail and is what to attach to a bug report. It
 contains no credential, pairing code or Wi-Fi name, but it does include the
 address of a web dashboard if you use one.
+
+From a computer, `.\tools\validate.ps1 mirror` reads the same report and lists
+anything that needs attention. See [Validation](validation.md).
+
 ## Recovery
 
 If normal Wi-Fi is unavailable, use **Settings > Setup network > Start** in

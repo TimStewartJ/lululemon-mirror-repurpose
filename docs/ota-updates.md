@@ -134,6 +134,7 @@ dashboard is in front. Android can start the factory launcher while it
 replaces Mirror Home, and that launcher's setup screen can end up on top.
 Mirror Home 2.2.0 and newer take the display back after about fifteen
 seconds; earlier versions stayed covered until Home was started again.
+`.\tools\validate.ps1 mirror` says whether the dashboard is in front.
 
 Android may stop the supervisor's process while the update is installed,
 because memory is short at that moment. The supervisor restarts within

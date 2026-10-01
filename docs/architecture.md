@@ -100,6 +100,12 @@ The recorder lives in `android/common`, a source directory compiled into both
 Mirror Home and the OTA supervisor, so each app keeps its own history without
 a shared library module.
 
+## Validation
+
+`tools/validate.py` drives a debug build on an Android 6 emulator through the
+control API, WebView DevTools and screen captures, and reads a live Mirror's
+health without changing it. See [Validation](validation.md).
+
 ## USB tooling
 
 `tools/mirrorctl.py` (wrapped by `tools\mirror.ps1`) is the only desktop

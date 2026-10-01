@@ -24,6 +24,22 @@ SDK `tools` package is not needed and must not be part of the bootstrap request.
 Optional artwork tests skip when their Python or GPU dependencies are absent;
 validate renderer changes locally with those dependencies installed.
 
+Changes to the dashboard, the control API or app start-up should also pass the
+[Android 6 emulator suite](docs/validation.md), which runs the real app in the
+Mirror's WebView generation. It needs the Android Emulator and one system
+image, and CI runs it as a second job:
+
+```powershell
+python tools/validate.py emulator
+python tools/check.py --emulator    # the gate and the suite together
+```
+
+Dashboard scripts (`mirror.js`, `custom.js`, `offline.js`) run in Chromium 44:
+no arrow functions, `let`, `const` or `Object.assign`. The suite fails on any
+script error the glass logs. When a change adds behaviour the suite could
+observe, add a check for it to `tools/validate.py` and to the table in the
+guide.
+
 For a focused loop:
 
 ```powershell

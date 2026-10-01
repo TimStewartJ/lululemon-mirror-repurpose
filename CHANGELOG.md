@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Add an Android 6 emulator suite. `tools/validate.py emulator` (or
+  `.\tools\validate.ps1 emulator`) boots the SDK's API 23 image, whose
+  Chromium 44 WebView is the Mirror's generation, as a virtual Mirror
+  (1080x1920 at 240 dpi, 1 GB of memory, no touchscreen or keys, and a second
+  HOME app standing in for the factory launcher), installs a debug build,
+  and checks it end to end in about five minutes: the setup screen, pairing
+  and its lockouts, the dashboard on true black with no script errors, the
+  clock and sleep schedule across a daylight-saving change, the sleep fade,
+  notes, the offline fallback, the control page, the health report, a
+  dashboard that another screen covers or Android puts to sleep, a dark cold
+  start, restarts and a reboot. Nothing but Android starts Mirror Home during
+  a run, as on a Mirror nobody can touch. It reads the glass through WebView
+  DevTools, which debug builds alone enable, and through screen captures,
+  keeps screenshots and a JSON report, and refuses to run on a physical
+  device. `--apk` checks a signed release build, and `--upgrade-from`
+  rehearses an update over an earlier build and proves that pairing and
+  settings survive it and that the dashboard ends up in front.
+  `tools/check.py --emulator` and a second CI job run the suite. See
+  [Validation](docs/validation.md).
+- Check a live Mirror from a computer. `tools/validate.py mirror` reads a
+  paired Mirror's status, health and OTA supervisor, changes nothing, and
+  lists what needs attention. With `--exercise` it then test-drives the
+  Mirror for half a minute and puts everything back: it pairs and revokes a
+  temporary device, posts and deletes a note, sleeps and wakes the display,
+  sets and reads back the brightness, checks that the background video stops
+  and resumes, forces the offline fallback, and refreshes the weather.
 - Keep `ota.ps1 push` waiting when the supervisor goes quiet. Android can
   stop the supervisor's process while an update is installed; the supervisor
   restarts and finishes the update, but `push` used to fail with a network
