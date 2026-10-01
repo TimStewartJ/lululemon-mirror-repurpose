@@ -19,6 +19,15 @@
 - After a restart, a reboot or a covered dashboard, require the screen to
   show the dashboard, lit strokes on black, where any bright screen used to
   pass.
+- Add a voice lab, an experiment that is not part of Mirror Home: a small
+  app (`android/voice-lab`) and `tools/voice_lab.py` measure what a Mirror's
+  microphone hears and whether spoken commands can be recognised on the
+  device itself. On the Android 6 emulator the Vosk recogniser, with JNA held
+  at 5.15.0, understood every command of a four-command list in noise and
+  across an echoing room, in about 120 MB of memory, and took a command from
+  other speech at most once in two hours. The microphone and the speed on a
+  Mirror's processor are still to be measured on a Mirror. See
+  [Voice lab](docs/voice-lab.md).
 
 ## 2.2.0 - 2026-10-01
 

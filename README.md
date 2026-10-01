@@ -134,6 +134,7 @@ References: [User guide](docs/user-guide.md),
 [Automation](docs/automation.md),
 [Background videos](docs/background-videos.md),
 [LAN OTA updates](docs/ota-updates.md), [Validation](docs/validation.md),
+[Voice lab](docs/voice-lab.md) (an experiment),
 [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 

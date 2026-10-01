@@ -1,0 +1,51 @@
+plugins {
+    id "com.android.application"
+}
+
+// An experiment, not a product: it measures what a Mirror's microphone hears
+// and whether speech can be recognised on the device itself. It is installed
+// over USB beside Mirror Home and removed afterwards; see docs/voice-lab.md.
+android {
+    namespace "dev.mirror.repurpose.voicelab"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "dev.mirror.repurpose.voicelab"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "0.1"
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    packaging {
+        jniLibs {
+            // JNA opens the recogniser's library by path, so it must be a file.
+            useLegacyPackaging true
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+dependencies {
+    // The newest on-device recogniser that still supports Android 6 (API 23).
+    implementation "com.alphacephei:vosk-android:0.3.75@aar"
+    // Vosk asks for JNA 5.18.1, which Android 6 cannot load: from 5.16.0 its
+    // Structure class needs java.util.function, new in Android 7. 5.15.0 is
+    // the last release without it.
+    //noinspection GradleDependency
+    implementation "net.java.dev.jna:jna:5.15.0@aar"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20240303"
+}

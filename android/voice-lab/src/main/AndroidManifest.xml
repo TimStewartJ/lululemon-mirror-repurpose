@@ -1,0 +1,38 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
+    <!-- Lets "info" list the speech services of a newer Android as well. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <!-- It has no screen and is never launched, so it has no icon. -->
+    <application
+        android:allowBackup="false"
+        android:label="Mirror Voice Lab"
+        android:usesCleartextTraffic="true"
+        tools:ignore="DataExtractionRules,MissingApplicationIcon">
+        <!--
+            Exported so that "adb shell am startservice" can drive it: a Mirror
+            has no screen to touch. Anything on the device could therefore ask
+            it to record, which is why this app is removed after a trial.
+        -->
+        <service
+            android:name=".LabService"
+            android:exported="true"
+            tools:ignore="ExportedService" />
+    </application>
+</manifest>

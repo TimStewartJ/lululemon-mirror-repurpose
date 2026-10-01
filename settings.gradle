@@ -18,3 +18,4 @@ rootProject.name = "mirror-repurpose"
 include(":android:mirror-home")
 include(":android:ota-updater")
 include(":android:system-helper")
+include(":android:voice-lab")
