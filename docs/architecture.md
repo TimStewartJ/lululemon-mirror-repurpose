@@ -46,6 +46,32 @@ It requests only normal or user-grantable permissions. The stock
 `com.mirror.services` Binder is used where available for brightness, backlight,
 name, and setup-state controls.
 
+### Staying in front
+
+A Mirror has no touchscreen and no keys, so nobody can dismiss a screen that
+Android puts in front of the dashboard, or turn the display on again once
+Android has put it to sleep. Mirror Home therefore looks every five seconds
+(and from its quarter-hourly watchdog alarm, which fires even when a sleeping
+Android has stopped the processor) and puts the dashboard back:
+
+- a dashboard that another screen has covered for ten seconds is brought to
+  the front again, at most every thirty seconds;
+- a display that Android has put to sleep is woken, at most every ten.
+
+The first happens after an update. The factory launcher stays installed as a
+second HOME app. While Android 6 replaces Mirror Home it needs a HOME app,
+and at the wrong instant it starts that launcher, whose setup screen then
+opens on top of the new dashboard and stays there.
+
+Mirror Home does this only where nobody could do it by hand: it must be the
+HOME app Android would start, the device must have no touchscreen, keyboard
+or navigation keys, and no computer may be using its USB port. A phone that
+runs Mirror Home, or a Mirror someone is working on through ADB or scrcpy, is
+left alone. On a device without input devices the dashboard's window also
+turns the display on and dismisses a lock screen when it opens. The health
+report's `activity.recovery` counts what was done and why; see
+[Control protocol](protocol.md#health).
+
 ## Device-hosted controls
 
 Mirror Home serves the control application and its API from the same origin on
@@ -65,9 +91,9 @@ screen and `status` give that address instead and no group is started.
 
 Mirror Home records what a restart would otherwise erase: when each process
 started, how the one before it ended, and the last uncaught exception with
-its stack trace. It also tracks whether its activity is really in front, what
-the dashboard page logs on its console, and requests the API failed to
-handle. `GET /api/v1/health` assembles these with memory, storage, clock,
+its stack trace. It also tracks whether its activity is really in front and
+which HOME app is if not, what the dashboard page logs on its console, and
+requests the API failed to handle. `GET /api/v1/health` assembles these with memory, storage, clock,
 pairing and OTA-supervisor state; see [Control protocol](protocol.md#health).
 
 The recorder lives in `android/common`, a source directory compiled into both

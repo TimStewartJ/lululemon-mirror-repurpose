@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Keep the dashboard in front. An update could leave the factory launcher's
+  setup screen on the glass: while Android 6 replaces Mirror Home it needs a
+  HOME app, and at the wrong instant it starts the other one, which then
+  opens over the new dashboard. Nobody can dismiss that on a Mirror, and
+  because Mirror Home kept answering its API the update counted as healthy.
+  Mirror Home now brings its dashboard back when another screen has covered
+  it for ten seconds, and wakes the display if Android has put it to sleep.
+  It does so only where nobody could by hand: it is the HOME app, the device
+  has no touchscreen or keys, and no computer is using its USB port. The
+  health report adds what is in front (`activity.front`), what Mirror Home
+  did about it (`activity.recovery`), whether it is the HOME app, and the
+  display's power state (`device.power`).
 - Show a wired address where there is no Wi-Fi. The setup screen, the Pairing
   code widget and the **Show code** hint use the Wi-Fi address or, failing
   that, a wired interface's, and `status` reports it as `address`. With a

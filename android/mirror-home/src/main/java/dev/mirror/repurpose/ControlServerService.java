@@ -34,18 +34,8 @@ public final class ControlServerService extends Service {
             }
             homeLaunchAttempts++;
             try {
-                Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
-                if (launch == null) {
-                    launch = new Intent(ControlServerService.this, MainActivity.class)
-                            .setAction(Intent.ACTION_MAIN)
-                            .addCategory(Intent.CATEGORY_LAUNCHER);
-                }
-                launch.addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK
-                                | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                                | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 DashboardDiagnostics.recordLaunchAttempt(homeLaunchAttempts, "requesting");
-                startActivity(launch);
+                startActivity(ForegroundKeeper.dashboardIntent(ControlServerService.this));
                 DashboardDiagnostics.recordLaunchAttempt(homeLaunchAttempts, "requested");
             } catch (RuntimeException error) {
                 DashboardDiagnostics.recordLaunchAttempt(
@@ -54,6 +44,14 @@ public final class ControlServerService extends Service {
                 Log.w(TAG, "HOME activity relaunch attempt failed", error);
             }
             handler.postDelayed(this, HOME_LAUNCH_RETRY_MS);
+        }
+    };
+
+    private final Runnable keepDashboardInFront = new Runnable() {
+        @Override
+        public void run() {
+            ForegroundKeeper.check(ControlServerService.this);
+            handler.postDelayed(this, ForegroundKeeper.CHECK_INTERVAL_MS);
         }
     };
 
@@ -80,6 +78,7 @@ public final class ControlServerService extends Service {
             if (HomeSelection.isMirrorHomeSelected(this)) {
                 handler.post(ensureHomeActivity);
             }
+            handler.postDelayed(keepDashboardInFront, ForegroundKeeper.CHECK_INTERVAL_MS);
         } catch (IOException error) {
             Log.e(TAG, "Unable to start control server", error);
             stopSelf();
@@ -109,6 +108,7 @@ public final class ControlServerService extends Service {
     @Override
     public void onDestroy() {
         handler.removeCallbacks(ensureHomeActivity);
+        handler.removeCallbacks(keepDashboardInFront);
         if (server != null) {
             server.stop();
             server = null;

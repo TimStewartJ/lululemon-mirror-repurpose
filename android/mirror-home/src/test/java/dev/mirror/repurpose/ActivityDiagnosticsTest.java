@@ -99,6 +99,70 @@ public final class ActivityDiagnosticsTest {
     }
 
     @Test
+    public void aStoppedDashboardIsWhollyHidden() throws Exception {
+        ActivityDiagnostics.started();
+        assertTrue(ActivityDiagnostics.snapshot(1_000).getBoolean("visible"));
+        int stopsBefore = ActivityDiagnostics.snapshot(1_000).getInt("stops");
+
+        // A dialog only pauses what is under it.
+        ActivityDiagnostics.paused(2_000);
+        assertTrue(ActivityDiagnostics.snapshot(3_000).getBoolean("visible"));
+
+        // A full screen, or a sleeping display, also stops it.
+        ActivityDiagnostics.stopped();
+        JSONObject hidden = ActivityDiagnostics.snapshot(4_000);
+        assertFalse(hidden.getBoolean("visible"));
+        assertEquals(stopsBefore + 1, hidden.getInt("stops"));
+
+        ActivityDiagnostics.destroyed();
+        assertFalse(ActivityDiagnostics.snapshot(5_000).getBoolean("visible"));
+    }
+
+    @Test
+    public void reportsHowLongTheDashboardHasBeenCovered() {
+        assertTrue(ActivityDiagnostics.wasCreated());
+        assertTrue(ActivityDiagnostics.isResumed());
+        assertEquals(0, ActivityDiagnostics.coveredForMs(50_000));
+
+        ActivityDiagnostics.paused(60_000);
+        assertFalse(ActivityDiagnostics.isResumed());
+        assertEquals(0, ActivityDiagnostics.coveredForMs(60_000));
+        assertEquals(20_000, ActivityDiagnostics.coveredForMs(80_000));
+        // A clock reading from before the pause is never a negative duration.
+        assertEquals(0, ActivityDiagnostics.coveredForMs(59_000));
+
+        ActivityDiagnostics.resumed();
+        assertEquals(0, ActivityDiagnostics.coveredForMs(90_000));
+    }
+
+    @Test
+    public void aDashboardOvertakenBeforeItCameToTheFrontCountsFromItsCreation() {
+        // A new process: created, and another screen is on top before it resumes.
+        ActivityDiagnostics.destroyed();
+        ActivityDiagnostics.created(300_000);
+
+        assertFalse(ActivityDiagnostics.isResumed());
+        assertEquals(0, ActivityDiagnostics.coveredForMs(300_000));
+        assertEquals(12_000, ActivityDiagnostics.coveredForMs(312_000));
+
+        ActivityDiagnostics.resumed();
+        assertEquals(0, ActivityDiagnostics.coveredForMs(320_000));
+    }
+
+    @Test
+    public void aDestroyedDashboardStillCountsAsCovered() throws Exception {
+        // Android may destroy a dashboard that another screen has covered.
+        ActivityDiagnostics.paused(100_000);
+        ActivityDiagnostics.stopped();
+        ActivityDiagnostics.destroyed();
+
+        assertFalse(ActivityDiagnostics.snapshot(101_000).getBoolean("created"));
+        assertTrue(ActivityDiagnostics.wasCreated());
+        assertFalse(ActivityDiagnostics.isResumed());
+        assertEquals(30_000, ActivityDiagnostics.coveredForMs(130_000));
+    }
+
+    @Test
     public void everyCreationIsCounted() throws Exception {
         int createsBefore = ActivityDiagnostics.snapshot(1_000).getInt("creates");
 

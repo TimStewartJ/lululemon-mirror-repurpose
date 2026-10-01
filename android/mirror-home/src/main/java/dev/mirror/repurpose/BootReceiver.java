@@ -15,10 +15,7 @@ public final class BootReceiver extends BroadcastReceiver {
         }
         if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
                 && HomeSelection.isMirrorHomeSelected(context)) {
-            context.startActivity(new Intent(context, MainActivity.class)
-                    .setAction(Intent.ACTION_MAIN)
-                    .addCategory(Intent.CATEGORY_HOME)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+            context.startActivity(ForegroundKeeper.dashboardIntent(context));
         }
     }
 }

@@ -53,6 +53,7 @@ final class HealthReport {
                 .put("fingerprint", Build.FINGERPRINT)
                 .put("display", display(context))
                 .put("input", input(context))
+                .put("power", ForegroundKeeper.power(context))
                 .put("webView", webView(context));
 
         UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
@@ -66,7 +67,10 @@ final class HealthReport {
                         (context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0)
                 .put("now", now)
                 .put("activity", ActivityDiagnostics.snapshot()
-                        .put("sleeping", automation.isSleeping()))
+                        .put("sleeping", automation.isSleeping())
+                        .put("selectedHome", HomeSelection.isMirrorHomeSelected(context))
+                        .put("front", ForegroundKeeper.front(context))
+                        .put("recovery", ForegroundKeeper.snapshot(context)))
                 .put("dashboard", DashboardDiagnostics.snapshot())
                 .put("api", ApiDiagnostics.snapshot())
                 .put("wifi", wifi(context))
@@ -98,7 +102,8 @@ final class HealthReport {
             result.put("realWidthPixels", real.x)
                     .put("realHeightPixels", real.y)
                     .put("refreshRate", display.getRefreshRate())
-                    .put("rotation", display.getRotation());
+                    .put("rotation", display.getRotation())
+                    .put("on", display.getState() == Display.STATE_ON);
         }
         return result;
     }

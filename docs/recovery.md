@@ -68,6 +68,10 @@ adb shell am start -n com.mirror.launcher/.SplashActivity
 
 This explicitly opens stock HOME for recovery; it does not change the default.
 A generic HOME intent would relaunch Mirror Home if it is still preferred.
+Stop Mirror Home first, as above: while it runs as the preferred HOME app it
+brings its dashboard back in front of any other screen after ten seconds.
+It leaves other screens alone while a computer is using the Mirror's USB
+port, so Android's settings stay open during work over ADB or scrcpy.
 To change the preference, try the visible Android HOME settings UI:
 
 ```powershell

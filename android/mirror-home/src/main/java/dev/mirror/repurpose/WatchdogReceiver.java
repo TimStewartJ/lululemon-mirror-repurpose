@@ -17,6 +17,8 @@ public final class WatchdogReceiver extends BroadcastReceiver {
         MirrorBinderClient.getInstance(context).connect();
         AutomationManager.getInstance(context).refresh();
         WeatherProvider.getInstance(context).refreshIfDue();
+        // This alarm still fires when a sleeping Android has stopped the processor.
+        ForegroundKeeper.check(context);
         // Keeps a history of the OTA supervisor's reachability between reports.
         Context application = context.getApplicationContext();
         new Thread(() -> {

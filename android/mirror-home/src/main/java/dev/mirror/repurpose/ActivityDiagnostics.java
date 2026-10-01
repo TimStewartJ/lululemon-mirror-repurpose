@@ -14,11 +14,14 @@ final class ActivityDiagnostics {
     private static volatile boolean created;
     private static volatile boolean resumed;
     private static volatile boolean focused;
+    private static volatile boolean visible;
     private static volatile int creates;
     private static volatile int pauses;
+    private static volatile int stops;
     private static volatile int focusLosses;
     private static volatile long lastResumedAt;
     private static volatile long lastPausedAt;
+    private static volatile long createdElapsed = -1L;
     private static volatile long pausedSinceElapsed = -1L;
     private static volatile long unfocusedSinceElapsed = -1L;
 
@@ -26,14 +29,50 @@ final class ActivityDiagnostics {
     }
 
     static void created() {
+        created(SystemClock.elapsedRealtime());
+    }
+
+    static void created(long elapsedRealtime) {
         created = true;
         creates++;
+        createdElapsed = elapsedRealtime;
     }
 
     static void destroyed() {
         created = false;
         resumed = false;
         focused = false;
+        visible = false;
+    }
+
+    static void started() {
+        visible = true;
+    }
+
+    /** Stopped means wholly hidden: by a full screen, or by a sleeping display. */
+    static void stopped() {
+        visible = false;
+        stops++;
+    }
+
+    /** Whether this process has shown the dashboard at all, even if Android has since destroyed it. */
+    static boolean wasCreated() {
+        return creates > 0;
+    }
+
+    static boolean isResumed() {
+        return resumed;
+    }
+
+    /**
+     * How long the dashboard has not been in front; zero while it is. One
+     * that another screen overtook before it ever got there counts from its
+     * creation.
+     */
+    static long coveredForMs(long elapsedRealtime) {
+        long paused = pausedSinceElapsed;
+        long since = paused >= 0 ? paused : createdElapsed;
+        return resumed || since < 0 ? 0L : Math.max(0L, elapsedRealtime - since);
     }
 
     static void resumed() {
@@ -86,9 +125,11 @@ final class ActivityDiagnostics {
                 .put("created", created)
                 .put("resumed", resumed)
                 .put("focused", focused)
+                .put("visible", visible)
                 .put("showing", showing())
                 .put("creates", creates)
                 .put("pauses", pauses)
+                .put("stops", stops)
                 .put("focusLosses", focusLosses)
                 .put("lastResumedAt", lastResumedAt == 0 ? JSONObject.NULL : lastResumedAt)
                 .put("lastPausedAt", lastPausedAt == 0 ? JSONObject.NULL : lastPausedAt)

@@ -1461,9 +1461,16 @@
     byId('health-crashes').textContent = crashText;
 
     var covered = Math.max(Number(activity.pausedForSeconds || 0), Number(activity.unfocusedForSeconds || 0));
-    var dashboardText = activity.sleeping ? 'Asleep'
-      : activity.showing ? 'Showing'
-        : 'Covered by another screen' + (covered >= 60 ? ' for ' + formatUptime(covered) : '');
+    var power = (health.device || {}).power || {};
+    var recovery = activity.recovery || {};
+    // A covered dashboard is covered whether or not its own display sleeps.
+    var dashboardText = power.interactive === false ? 'Display turned off by Android'
+      : !activity.showing ? 'Covered by another screen' + (covered >= 60 ? ' for ' + formatUptime(covered) : '')
+        : activity.sleeping ? 'Asleep' : 'Showing';
+    var broughtBack = Number(recovery.relaunches || 0) + Number(recovery.wakeUps || 0);
+    if (broughtBack) {
+      dashboardText += ', brought back ' + (broughtBack === 1 ? 'once' : broughtBack + ' times');
+    }
     if (dashboard.consoleErrors) {
       dashboardText += ', ' + dashboard.consoleErrors
         + (dashboard.consoleErrors === 1 ? ' script error' : ' script errors');

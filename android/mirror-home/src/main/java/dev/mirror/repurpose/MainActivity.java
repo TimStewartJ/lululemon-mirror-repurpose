@@ -173,6 +173,15 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN
                         | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (!ForegroundKeeper.hasInputDevices(getResources().getConfiguration())) {
+            // Nobody can wake a Mirror's display or dismiss a lock screen, so
+            // the dashboard's window does both when it opens. A phone's stay
+            // the business of its owner.
+            getWindow().addFlags(
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                            | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                            | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+        }
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN
                         | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
@@ -248,6 +257,18 @@ public final class MainActivity extends Activity {
         updateMediaVisibility();
         updateSleepVisibility();
         requestCameraPermissionIfNeeded();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        ActivityDiagnostics.started();
+    }
+
+    @Override
+    protected void onStop() {
+        ActivityDiagnostics.stopped();
+        super.onStop();
     }
 
     @Override

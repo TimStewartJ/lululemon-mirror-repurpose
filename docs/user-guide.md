@@ -251,6 +251,11 @@ accepted. The supervisor saves the current APK, installs the candidate, and
 restores the saved release automatically if the Home API does not become
 healthy. See [LAN OTA updates](ota-updates.md).
 
+After an update the factory launcher's setup screen can appear on the glass.
+Android starts that launcher while it replaces Mirror Home. Mirror Home takes
+the display back by itself after about fifteen seconds; from 2.2.0 on, there
+is nothing to do.
+
 ## Health
 
 **Settings > Health** says how the Mirror itself is doing, so a problem can be
@@ -261,8 +266,10 @@ found without standing in front of it:
   Android stopped the app.
 - **Crashes**: how many have been recorded, and when and what the last was.
 - **Dashboard**: whether the glass is showing the dashboard, is asleep, or is
-  covered by another screen, such as an Android prompt, and for how long.
-  Script errors on the dashboard page are counted here.
+  covered by another screen, such as the factory launcher's, and for how
+  long. Mirror Home brings a covered dashboard back by itself, so that should
+  last seconds; **brought back** says how often it has had to since it
+  started. Script errors on the dashboard page are counted here.
 - **Memory** and **Storage**: what Mirror Home uses and what is left.
 - **Updater**: whether the optional OTA supervisor is ready. Android restarts
   the supervisor now and then when memory is short, so **Not answering right

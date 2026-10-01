@@ -129,6 +129,12 @@ changed. A DHCP reservation is recommended.
 loopback status response. It exits nonzero when installation fails, recovery is
 required, or the candidate is automatically rolled back.
 
+`push` judges Mirror Home by its API, which answers whether or not the
+dashboard is in front. Android can start the factory launcher while it
+replaces Mirror Home, and that launcher's setup screen can end up on top.
+Mirror Home 2.2.0 and newer take the display back after about fifteen
+seconds; earlier versions stayed covered until Home was started again.
+
 ## Validation and rollback
 
 Before installation the supervisor:
