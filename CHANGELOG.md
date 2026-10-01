@@ -16,6 +16,9 @@
 - Give the virtual Mirror the real one's 128 MB app heap. The emulator had
   raised the setting to 256 MB for a panel this large; the suite now starts it
   with the limit and the `health` check verifies it.
+- After a restart, a reboot or a covered dashboard, require the screen to
+  show the dashboard, lit strokes on black, where any bright screen used to
+  pass.
 
 ## 2.2.0 - 2026-10-01
 

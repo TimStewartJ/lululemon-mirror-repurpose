@@ -2171,6 +2171,43 @@ class UpdaterCheckTest(unittest.TestCase):
         self.assertEqual({"runId": 12, "uptimeHours": 2.0, "previousEnd": "killed"}, ctx.details["supervisorRun"])
 
 
+class DashboardFrameTest(unittest.TestCase):
+    """After a restart the screen must show the dashboard, not merely be bright."""
+
+    def context(self, frames, directory):
+        ctx = validate.Context(FakeAdb(frames), FakeApi(), pathlib.Path(directory))
+        ctx.awake_peak = 255
+        return ctx
+
+    def test_another_apps_bright_screen_is_not_the_dashboard(self):
+        fake_time(self)
+        wallpaper = frame(255, fill=180)
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context([wallpaper, wallpaper, frame(255)], directory)
+            self.assertEqual(255, ctx.wait_lit("restart"))
+            # Both bright frames were passed over; the frame kept is the dashboard's.
+            self.assertEqual([frame(255)], ctx.adb.frames)
+            self.assertEqual(
+                screen_capture.to_png(frame(255)), (pathlib.Path(directory) / "restart.png").read_bytes()
+            )
+
+    def test_a_screen_that_stays_bright_all_over_fails_and_says_how_much_is_lit(self):
+        fake_time(self)
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context([frame(255, fill=180)], directory)
+            with self.assertRaisesRegex(
+                CheckFailed, "never became the dashboard again; brightest pixel 255; 100% of it is lit"
+            ):
+                ctx.wait_lit("restart")
+            self.assertTrue((pathlib.Path(directory) / "restart-timeout.png").is_file())
+
+    def test_a_sleeping_screen_is_still_judged_by_brightness_alone(self):
+        fake_time(self)
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context([frame(0)], directory)
+            self.assertEqual(0, ctx.wait_peak("black", lambda peak: peak <= validate.BLACK_PEAK, "asleep"))
+
+
 class ColdStartVerdictTest(unittest.TestCase):
     def context(self, frames, directory):
         health = healthy_report()

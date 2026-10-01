@@ -74,6 +74,8 @@ FADE_SETTLE_SECONDS = 12
 BLACK_PEAK = 2
 # The dashboard's strokes are near white; a fade is only visible from this up.
 MINIMUM_AWAKE_PEAK = 128
+# The dashboard is lit strokes on true black: at most this much of it is lit.
+MAX_DASHBOARD_LIT = 0.1
 # Mirror Home counts a process stopped within this long of starting as an
 # early stop rather than as its previous run (RunHistory.EARLY_STOP_MS).
 EARLY_STOP_SECONDS = 10
@@ -523,18 +525,31 @@ class Context:
         body.update(overrides)
         return self.api.expect("PUT", "/api/v1/automation", body)
 
-    def wait_peak(self, description: str, accept: Callable[[int], bool], name: str) -> int:
-        """Capture until the brightest pixel satisfies ``accept``; keep the frame."""
+    def wait_peak(
+        self,
+        description: str,
+        accept: Callable[[int], bool],
+        name: str,
+        *,
+        mostly_black: bool = False,
+    ) -> int:
+        """Capture until the brightest pixel satisfies ``accept``; keep the frame.
+
+        With ``mostly_black`` the frame must also be the dashboard's: lit
+        strokes on black. Another app's screen is bright too, but all over.
+        """
         deadline = time.monotonic() + FADE_SETTLE_SECONDS
         while True:
             shot = self.adb.capture()
             peak = screen_capture.peak_level(shot)
-            if accept(peak):
+            lit = screen_capture.lit_fraction(shot, 24) if mostly_black else 0.0
+            if accept(peak) and lit <= MAX_DASHBOARD_LIT:
                 (self.output / f"{name}.png").write_bytes(screen_capture.to_png(shot))
                 return peak
             if time.monotonic() >= deadline:
                 (self.output / f"{name}-timeout.png").write_bytes(screen_capture.to_png(shot))
-                raise CheckFailed(f"The screen never became {description}; brightest pixel {peak}")
+                detail = f"; {lit:.0%} of it is lit" if mostly_black else ""
+                raise CheckFailed(f"The screen never became {description}; brightest pixel {peak}{detail}")
 
     def lit_peak(self) -> int:
         """The awake dashboard's brightest pixel, measured once per run.
@@ -556,7 +571,9 @@ class Context:
         restart is only over once the dashboard has faded back in.
         """
         reference = self.lit_peak()
-        return self.wait_peak("lit again", lambda peak: peak >= reference * 0.8, name)
+        return self.wait_peak(
+            "the dashboard again", lambda peak: peak >= reference * 0.8, name, mostly_black=True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -680,7 +697,10 @@ def check_dashboard(ctx: Context) -> None:
     clock = screen_capture.lit_fraction(shot, 160, CLOCK_BOX)
     dark = 1.0 - screen_capture.lit_fraction(shot, 24)
     require(clock > 0.005, f"The clock area is not lit (lit {clock:.4f})")
-    require(dark > 0.9, f"Only {dark:.2%} of the dashboard is black; the mirror needs true black")
+    require(
+        dark >= 1.0 - MAX_DASHBOARD_LIT,
+        f"Only {dark:.2%} of the dashboard is black; the mirror needs true black",
+    )
     ctx.awake_peak = screen_capture.peak_level(shot)
     ctx.note("dashboardBlack", round(dark, 4))
     errors = ctx.health()["dashboard"]["consoleErrors"]
@@ -1625,7 +1645,10 @@ def upgrade_dashboard(ctx: Context) -> None:
     ctx.lit_peak()
     shot = ctx.screenshot("after-update")
     dark = 1.0 - screen_capture.lit_fraction(shot, 24)
-    require(dark > 0.9, f"Only {dark:.2%} of the dashboard is black after the update")
+    require(
+        dark >= 1.0 - MAX_DASHBOARD_LIT,
+        f"Only {dark:.2%} of the dashboard is black after the update",
+    )
     health = ctx.health()
     require(health["activity"]["showing"], f"The dashboard is not in front: {health['activity']}")
     require(
