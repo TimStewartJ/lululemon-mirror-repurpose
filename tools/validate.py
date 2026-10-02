@@ -1989,7 +1989,8 @@ def mirror_status(ctx: MirrorContext) -> None:
     ctx.note("video", {
         key: video.get(key)
         for key in ("state", "decoderName", "frameRate", "renderedFrames", "droppedFrames",
-                    "droppedFramePercent", "maxConsecutiveDroppedFrames", "loopCount", "error")
+                    "droppedFramePercent", "maxConsecutiveDroppedFrames", "loopCount", "error",
+                    "retries")
     })
     require(status.get("wifi", {}).get("connected"), "Wi-Fi is not connected")
     require(not video.get("error"), f"Background video reports an error: {video.get('error')}")

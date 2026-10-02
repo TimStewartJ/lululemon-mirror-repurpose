@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Start the background video again when its player fails. A failed player used
+  to stay stopped until the display next slept or woke. On a Mirror that left
+  the dashboard without its film for fourteen minutes: Mirror Home had been
+  restarted while the factory launcher's setup screen, which plays a video of
+  its own, held the video decoder. The player now tries again after 5, 15 and
+  60 seconds and then every five minutes, and the status counts the tries as
+  `ambientVideo.retries`.
 - Leave out the library code that nothing uses. Most of Mirror Home's compiled
   code belonged to its video player and other libraries, and Android 6
   compiles the whole of an app on the Mirror each time it installs it. Builds

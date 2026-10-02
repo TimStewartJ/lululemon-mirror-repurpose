@@ -113,6 +113,18 @@ public final class MediaPlaybackManager implements Player.Listener, AnalyticsLis
     private int ambientVideoWidth;
     private int ambientVideoHeight;
     private String ambientLastError;
+    private int ambientRetries;
+    private final AmbientVideoRetry ambientRetry = new AmbientVideoRetry();
+    private final Runnable retryAmbient = new Runnable() {
+        @Override
+        public void run() {
+            // It may have been started again since, or be wanted no longer.
+            if (mode == Mode.AMBIENT && ambientEnabled && !ambientPrepared) {
+                ambientRetries++;
+                applyAmbientState();
+            }
+        }
+    };
     private DecoderCounters ambientDecoderCounters;
     private boolean videoRendererEnabled;
 
@@ -282,6 +294,8 @@ public final class MediaPlaybackManager implements Player.Listener, AnalyticsLis
         } else if (mode == Mode.AMBIENT) {
             ambientLastError = error.getMessage();
             ambientPrepared = false;
+            mainHandler.removeCallbacks(retryAmbient);
+            mainHandler.postDelayed(retryAmbient, ambientRetry.nextDelayMs());
         }
     }
 
@@ -343,6 +357,7 @@ public final class MediaPlaybackManager implements Player.Listener, AnalyticsLis
         if (mode == Mode.AMBIENT) {
             ambientFirstFrameRendered = true;
             ambientFirstFrameAtMs = SystemClock.elapsedRealtime();
+            ambientRetry.succeeded();
         }
     }
 
@@ -580,6 +595,7 @@ public final class MediaPlaybackManager implements Player.Listener, AnalyticsLis
             result.put(
                     "error",
                     ambientLastError == null ? JSONObject.NULL : ambientLastError);
+            result.put("retries", ambientRetries);
         } catch (JSONException impossible) {
             return errorSnapshot(impossible.toString());
         }
