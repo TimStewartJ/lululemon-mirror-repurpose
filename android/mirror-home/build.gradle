@@ -55,6 +55,12 @@ android {
                 "String",
                 "BACKGROUND_VIDEO_BOOTSTRAP_TOKEN_SHA256",
                 "\"${backgroundVideoBootstrapHash}\"")
+        ndk {
+            // The speech recogniser is native code. Mirrors are ARM devices. The
+            // Android 6 emulator that every build is validated on is x86_64, and
+            // Android installs no app that lacks a library for its processor.
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
     }
 
     buildFeatures {
@@ -96,6 +102,13 @@ android {
         targetCompatibility JavaVersion.VERSION_11
     }
 
+    packaging {
+        jniLibs {
+            // JNA opens the recogniser's library by its file name, so it must be a file.
+            useLegacyPackaging true
+        }
+    }
+
     testOptions {
         unitTests.returnDefaultValues = true
     }
@@ -117,6 +130,13 @@ dependencies {
     compileOnly "androidx.annotation:annotation:1.6.0"
     implementation "org.nanohttpd:nanohttpd:2.3.1"
     implementation "com.google.zxing:core:3.5.3"
+    // The newest on-device speech recogniser that still supports Android 6.
+    implementation "com.alphacephei:vosk-android:0.3.75@aar"
+    // Vosk asks for JNA 5.18.1, which Android 6 cannot load: from 5.16.0 its
+    // Structure class needs java.util.function, new in Android 7. 5.15.0 is
+    // the last release without it.
+    //noinspection GradleDependency
+    implementation "net.java.dev.jna:jna:5.15.0@aar"
 
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"

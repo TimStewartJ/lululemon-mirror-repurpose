@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Add voice commands, recognised on the Mirror itself. Say "Mirror, go to
+  sleep", "wake up", "brighter", "dimmer" or "next video" (each has a second
+  wording, such as "good night"); the glass shows what it did, and the Mirror
+  never speaks. The name may come up to six seconds before the command, and a
+  command the recogniser has doubts about is dropped. The recogniser is also
+  given the commonest words of spoken English, so that talk is taken for them
+  and not for the Mirror's name. The Vosk recogniser runs in a process of its
+  own, so the dashboard carries on if it stops, and nothing listens until an
+  owner switches voice on. No sound is stored or leaves the Mirror. While
+  Android installs an app, as in an update of Mirror Home, the recogniser
+  stops and gives its memory back, because a Mirror has too little for both.
+  The 39 MB speech model is too large for an update package and is sent once
+  with `tools/voice.ps1 install-model`, which also switches voice on and off
+  and reports what the Mirror heard. After an update over the network the
+  microphone permission is granted through OTA supervisor 1.2.0. A spoken
+  "brighter" or "dimmer" changes the wake brightness, so it lasts. The
+  recogniser's native library makes the APK larger, 11.7 MB where 2.2.0 was
+  4.4 MB: it is there for a Mirror's ARM processor and for the x86_64 emulator
+  that validates every build. See [Voice commands](docs/voice.md).
 - Start the background video again when its player fails. A failed player used
   to stay stopped until the display next slept or woke. On a Mirror that left
   the dashboard without its film for fourteen minutes: Mirror Home had been

@@ -53,6 +53,10 @@ GET  /api/v1/automation
 PUT  /api/v1/automation
 POST /api/v1/automation/sleep
 POST /api/v1/automation/wake
+GET  /api/v1/voice
+PUT  /api/v1/voice
+PUT  /api/v1/voice/model
+DELETE /api/v1/voice/model
 GET  /api/v1/photos
 GET  /api/v1/photos/{name}
 GET  /api/v1/photos/{name}/thumbnail
@@ -133,6 +137,46 @@ when the offset is one the zone uses, and otherwise keeps the offset fixed.
 `nextUtcOffsetChange` (one entry or `null`) so a display can switch at the
 exact instant. A schedule `hold` reports `untilTime`, its local end time.
 
+### Voice
+
+Spoken commands are recognised on the Mirror; see [Voice commands](voice.md).
+`GET /api/v1/voice` reports where that stands. Times are epoch milliseconds.
+
+| Field | Contents |
+|---|---|
+| `enabled` | The switch. It is off until an owner turns it on. |
+| `state`, `detail` | `off`, `no-model` (switched on, but no speech model is installed), `no-permission` (Android has not given Mirror Home the microphone), `paused` (the recogniser has stopped while Android installs an app), `starting`, `loading`, `listening` or `error`; and a sentence about it for the controls. |
+| `wakeWord`, `commands` | What can be said: each command's `id`, the `caption` the glass shows when it is carried out, and every sentence in `say`. |
+| `model`, `maxModelBytes` | `null`, or the installed model's `name`, unpacked `bytes`, number of `files`, the `sha256` of the archive it came in and `installedAt`; and the largest archive that is accepted. |
+| `permissionGranted` | Whether Mirror Home may use the microphone. |
+| `process` | The recogniser's `pid` and `pssKb`, measured at most every half minute, and `restarts`: how often it stopped by itself since Mirror Home started. |
+| `recogniser` | `modelLoadMs`; `cpuShare`, the share of one core it used over the last five seconds; `behindMs`, how late sound reached it at worst in that time; and `listenedSeconds`. |
+| `microphone` | `levelDb` and `peakDb` of the last five seconds, in dB below full scale, and `silent` when every sample was zero. |
+| `counts` | Since Mirror Home started: `sentences` (stretches of speech the recogniser ended), `wakeWords` (the name alone), `commands`, `notUnderstood`, and `unsure` (commands the recogniser had doubts about, which are not carried out). |
+| `lastCommand`, `recent` | The last command's `id`, its time `at` and what the glass has `shown`; and up to twenty sentences that were addressed to the Mirror, each with `heard` (in which every word that is not a command's word reads `[unk]`), `confidence`, `outcome` (`command`, `wake`, `not-understood` or `unsure`), `command` and, for a command, what the glass has `shown`. Speech that was not addressed to it is counted and not kept. |
+| `testHooks` | True in a debug build only; see below. |
+
+`PUT /api/v1/voice` takes `{"enabled": true}` or `false` and answers with the
+same report. `status` carries `voice` with `enabled`, `state` and `detail`.
+
+`PUT /api/v1/voice/model` installs a speech model in place of the one
+before. The body is a zip archive of a Vosk model with
+`Content-Type: application/zip`, at most 96 MB, and optionally its SHA-256
+in `X-Content-SHA256`. The archive is unpacked below Mirror Home's own
+storage, to at most 256 MB and 64 files, and must hold `am/final.mdl`,
+`conf/mfcc.conf`, `conf/model.conf`, `graph/HCLr.fst` and `graph/Gr.fst`,
+in one folder or none. The answer is `201` with the report, `400` with the
+reason when the upload is not such an archive or does not match its
+checksum, `409` when storage is short, and `415` for another content type.
+`DELETE /api/v1/voice/model` removes the model.
+
+A debug build has two more routes, for the
+[emulator suite](validation.md#how-the-suite-speaks): `POST
+/api/v1/voice/test/clip` takes a 16 kHz mono WAV file that the recogniser
+hears in place of the microphone, and `POST /api/v1/voice/test/sentence`
+takes `{text, confidence}` as if the recogniser had heard it. Both answer
+`202`, or `409` unless voice is listening. A release build answers `404`.
+
 ### Health
 
 `GET /api/v1/health` reports how Mirror Home itself is doing, for a person or
@@ -152,6 +196,7 @@ a monitor that cannot see the glass. Times are epoch milliseconds.
 | `clock` | `timeZone`, `utcOffsetMinutes`, `source`, `knownChanges`, `nextChange` and the IANA release of the bundled table. |
 | `pairing` | `open`, `lockedForSeconds`, `wrongCodes` and the number of paired `clients`. |
 | `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. |
+| `voice` | The whole [voice report](#voice). |
 
 `appVersion`, `versionCode`, `debuggable` and `now` complete the report. It
 holds no credential, pairing code or Wi-Fi name; it does name the page the

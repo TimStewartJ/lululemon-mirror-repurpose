@@ -84,6 +84,7 @@ final class HealthReport {
                                 : nextChange.get(0))
                         .put("bundledTzdata", ZoneOffsetTable.getInstance(context).tzdata()))
                 .put("pairing", pairing.securitySnapshot())
+                .put("voice", VoiceManager.getInstance(context).snapshot())
                 .put("otaSupervisor", SupervisorProbe.check(context));
     }
 

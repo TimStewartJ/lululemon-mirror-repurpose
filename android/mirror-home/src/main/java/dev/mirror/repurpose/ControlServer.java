@@ -15,8 +15,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -39,6 +43,7 @@ public final class ControlServer extends NanoHTTPD {
     private final PairingManager pairing;
     private final PhotoLibrary photos;
     private final SystemHelperClient systemHelper;
+    private final VoiceManager voice;
     private final WeatherProvider weather;
     private final WifiProvisioner wifi;
     private final WifiDirectOnboarding wifiDirect;
@@ -56,6 +61,7 @@ public final class ControlServer extends NanoHTTPD {
         backgroundVideoProvisioner = new BackgroundVideoProvisioner(context, pairing);
         photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
+        voice = VoiceManager.getInstance(context);
         weather = WeatherProvider.getInstance(context);
         wifi = new WifiProvisioner(context);
         wifiDirect = WifiDirectOnboarding.getInstance(context);
@@ -281,6 +287,37 @@ public final class ControlServer extends NanoHTTPD {
                 automation.setManualSleeping(false);
                 return response(Response.Status.OK, automation.snapshot());
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/voice".equals(uri)) {
+                return response(Response.Status.OK, voice.snapshot());
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/voice".equals(uri)) {
+                return updateVoice(readJson(session));
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/voice/model".equals(uri)) {
+                return uploadVoiceModel(session);
+            }
+            if (Method.DELETE.equals(session.getMethod()) && "/api/v1/voice/model".equals(uri)) {
+                voice.removeModel();
+                return response(Response.Status.OK, voice.snapshot());
+            }
+            if (BuildConfig.DEBUG
+                    && Method.POST.equals(session.getMethod())
+                    && "/api/v1/voice/test/sentence".equals(uri)) {
+                // The validation suite speaks to a debug build; a release has no such door.
+                JSONObject sentence = readJson(session);
+                try {
+                    voice.injectSentence(
+                            sentence.optString("text", ""), sentence.optDouble("confidence", 1.0));
+                } catch (IOException notListening) {
+                    return error(Response.Status.CONFLICT, notListening.getMessage());
+                }
+                return response(Response.Status.ACCEPTED, new JSONObject().put("accepted", true));
+            }
+            if (BuildConfig.DEBUG
+                    && Method.POST.equals(session.getMethod())
+                    && "/api/v1/voice/test/clip".equals(uri)) {
+                return hearVoiceClip(session);
+            }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/weather".equals(uri)) {
                 return response(Response.Status.OK, weather.snapshot(true));
             }
@@ -467,6 +504,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("ambientVideo", media.ambientSnapshot());
         result.put("backgroundVideos", backgroundVideos.selectionSnapshot());
         result.put("automation", automation.snapshot());
+        result.put("voice", voice.summary());
         result.put("weather", weather.snapshot(false));
         result.put("notesVersion", notes.version());
         return result;
@@ -1015,6 +1053,95 @@ public final class ControlServer extends NanoHTTPD {
         return response(
                 changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
                 new JSONObject().put("changed", changed).put("value", value));
+    }
+
+    private Response updateVoice(JSONObject body) throws JSONException {
+        if (!(body.opt("enabled") instanceof Boolean)) {
+            return error(Response.Status.BAD_REQUEST, "enabled must be true or false");
+        }
+        voice.setEnabled(body.getBoolean("enabled"));
+        return response(Response.Status.OK, voice.snapshot());
+    }
+
+    private Response uploadVoiceModel(IHTTPSession session)
+            throws IOException, ResponseException, JSONException {
+        long contentLength = contentLength(session);
+        if (contentLength < 1 || contentLength > VoiceModelArchive.MAX_ARCHIVE_BYTES) {
+            return error(Response.Status.BAD_REQUEST, "A speech model archive is at most 96 MB");
+        }
+        String contentType = session.getHeaders().get("content-type");
+        if (contentType == null
+                || !contentType.toLowerCase(java.util.Locale.US).startsWith("application/zip")) {
+            return error(Response.Status.UNSUPPORTED_MEDIA_TYPE, "A zip Content-Type is required");
+        }
+        File cache = context.getCacheDir();
+        // Room for the archive and for what it unpacks to: seldom more than twice its size.
+        long unpacked = Math.min(VoiceModelArchive.MAX_UNPACKED_BYTES, contentLength * 4);
+        if (cache.getUsableSpace() < contentLength + unpacked) {
+            return error(Response.Status.CONFLICT, "Not enough free storage for a speech model");
+        }
+        File upload = File.createTempFile("voice-model", ".zip", cache);
+        try {
+            String sha256 = receive(session.getInputStream(), contentLength, upload);
+            String expected = session.getHeaders().get("x-content-sha256");
+            if (expected != null && !expected.trim().equalsIgnoreCase(sha256)) {
+                return error(Response.Status.BAD_REQUEST, "The upload does not match its SHA-256");
+            }
+            try {
+                voice.installModel(upload, sha256);
+            } catch (IOException refused) {
+                return error(Response.Status.BAD_REQUEST, refused.getMessage());
+            }
+            return response(Response.Status.CREATED, voice.snapshot());
+        } finally {
+            upload.delete();
+        }
+    }
+
+    private Response hearVoiceClip(IHTTPSession session)
+            throws IOException, ResponseException, JSONException {
+        long contentLength = contentLength(session);
+        if (contentLength < 1 || contentLength > 8L * 1024 * 1024) {
+            return error(Response.Status.BAD_REQUEST, "A clip is at most 8 MB");
+        }
+        File clip = File.createTempFile("voice-clip", ".wav", context.getCacheDir());
+        receive(session.getInputStream(), contentLength, clip);
+        try {
+            // The recogniser's process deletes the clip once it has read it.
+            voice.injectClip(clip);
+        } catch (IOException notListening) {
+            clip.delete();
+            return error(Response.Status.CONFLICT, notListening.getMessage());
+        }
+        return response(Response.Status.ACCEPTED, new JSONObject().put("accepted", true));
+    }
+
+    /** Writes exactly {@code length} bytes of a request body to a file; returns their SHA-256. */
+    private static String receive(InputStream input, long length, File target) throws IOException {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IOException(impossible);
+        }
+        byte[] buffer = new byte[64 * 1024];
+        long remaining = length;
+        try (OutputStream output = new FileOutputStream(target)) {
+            while (remaining > 0) {
+                int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                if (count < 0) {
+                    throw new IOException("The upload ended early");
+                }
+                output.write(buffer, 0, count);
+                digest.update(buffer, 0, count);
+                remaining -= count;
+            }
+        }
+        StringBuilder hex = new StringBuilder();
+        for (byte value : digest.digest()) {
+            hex.append(String.format(java.util.Locale.ROOT, "%02x", value));
+        }
+        return hex.toString();
     }
 
     private Response updateName(JSONObject body) throws JSONException {

@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
     private static final long AMBIENT_FADE_OUT_MS = 900L;
     private static final long AMBIENT_FADE_IN_DELAY_MS = 350L;
     private static final long AMBIENT_FADE_IN_MS = 1400L;
+    private static final long VOICE_CAPTION_MS = 2_500L;
     private static final String OFFLINE_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/offline.html";
     private static final String BUILT_IN_DASHBOARD_URL =
@@ -130,7 +131,21 @@ public final class MainActivity extends Activity {
                 requestCameraPermissionIfNeeded();
             } else if (WifiDirectOnboarding.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 renderDashboard();
+            } else if (VoiceManager.ACTION_VOICE_EVENT.equals(intent.getAction())) {
+                showVoiceEvent(
+                        intent.getStringExtra(VoiceManager.EXTRA_KIND),
+                        intent.getStringExtra(VoiceManager.EXTRA_CAPTION));
             }
+        }
+    };
+    private final Handler voiceHandler = new Handler(Looper.getMainLooper());
+    private final Runnable hideVoiceCaption = new Runnable() {
+        @Override
+        public void run() {
+            voiceCaption.animate()
+                    .alpha(0f)
+                    .setDuration(400L)
+                    .withEndAction(() -> voiceCaption.setVisibility(View.GONE));
         }
     };
 
@@ -146,6 +161,7 @@ public final class MainActivity extends Activity {
     private View ambientCurtain;
     private PlayerView playerView;
     private View sleepOverlay;
+    private TextView voiceCaption;
     private TextView nativeStatus;
     private TextView nativeCode;
     private String nativeClockZoneId = "";
@@ -235,6 +251,28 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT));
         media.attach(playerView);
 
+        // What the Mirror heard, in place of a sound: nobody wants a mirror to talk back.
+        voiceCaption = new TextView(this);
+        voiceCaption.setTextColor(TEXT_COLOR);
+        voiceCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32);
+        voiceCaption.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        voiceCaption.setGravity(Gravity.CENTER);
+        voiceCaption.setPadding(dp(28), dp(10), dp(28), dp(12));
+        // Black is plain mirror on the glass: it shows nothing itself, and
+        // keeps a film or a widget behind the words from tangling with them.
+        GradientDrawable captionBacking = new GradientDrawable();
+        captionBacking.setColor(0xD9000000);
+        captionBacking.setCornerRadius(dp(36));
+        voiceCaption.setBackground(captionBacking);
+        voiceCaption.setAlpha(0f);
+        voiceCaption.setVisibility(View.GONE);
+        FrameLayout.LayoutParams captionLayout = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        captionLayout.bottomMargin = dp(96);
+        root.addView(voiceCaption, captionLayout);
+
         sleepOverlay = new View(this);
         sleepOverlay.setBackgroundColor(Color.BLACK);
         sleepOverlay.setVisibility(View.GONE);
@@ -251,6 +289,7 @@ public final class MainActivity extends Activity {
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
         filter.addAction(AutomationManager.ACTION_STATE_CHANGED);
         filter.addAction(WifiDirectOnboarding.ACTION_STATE_CHANGED);
+        filter.addAction(VoiceManager.ACTION_VOICE_EVENT);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -330,6 +369,8 @@ public final class MainActivity extends Activity {
         statusHandler.removeCallbacks(statusRefresh);
         scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
+        voiceHandler.removeCallbacks(hideVoiceCaption);
+        voiceCaption.animate().cancel();
         ambientCurtain.animate().cancel();
         cancelDisplayFade();
         unregisterReceiver(stateReceiver);
@@ -727,6 +768,31 @@ public final class MainActivity extends Activity {
     private void updateMediaVisibility() {
         playerView.setVisibility(media.isPresentationActive() ? View.VISIBLE : View.GONE);
         updateAmbientVideoState();
+    }
+
+    /** Shows what was heard: that the Mirror listens, what it did, or that it did not follow. */
+    private void showVoiceEvent(String kind, String caption) {
+        if (voiceCaption == null || kind == null) {
+            return;
+        }
+        String text;
+        long showFor;
+        if (VoiceManager.KIND_LISTENING.equals(kind)) {
+            text = "Listening";
+            showFor = VoiceInterpreter.WINDOW_MS;
+        } else if (VoiceManager.KIND_NOT_UNDERSTOOD.equals(kind)) {
+            text = "Didn\u2019t catch that";
+            showFor = VoiceInterpreter.WINDOW_MS;
+        } else {
+            text = caption == null ? "" : caption;
+            showFor = VOICE_CAPTION_MS;
+        }
+        voiceHandler.removeCallbacks(hideVoiceCaption);
+        voiceCaption.animate().cancel();
+        voiceCaption.setText(text);
+        voiceCaption.setVisibility(View.VISIBLE);
+        voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
+        voiceHandler.postDelayed(hideVoiceCaption, showFor);
     }
 
     /** Re-arms the boundary timer so a newly saved schedule is timed precisely. */

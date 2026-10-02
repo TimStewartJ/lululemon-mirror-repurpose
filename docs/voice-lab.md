@@ -133,7 +133,10 @@ were recognised in 24.5 seconds: a real-time factor of 0.27 on one of the
 four cores, with the same answers as on the emulator. The model loads in 4 to
 5 seconds. Recognising everything the live microphone heard took 34 percent
 of one core, and recognition never fell more than 0.6 seconds behind the
-microphone.
+microphone. Unbroken speech costs about the same: with the list that Mirror
+Home 2.3.0 went on to use, its commands and about 400 common words, four
+minutes of reading aloud were recognised in 80 seconds (0.33), and in 66
+seconds (0.28) with the commands alone.
 
 **It fits beside Mirror Home.** The lab's process is about 125 MB with the
 model loaded and gives the memory back afterwards. The Mirror has about

@@ -1,5 +1,6 @@
 package dev.mirror.repurpose;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -22,6 +23,17 @@ public final class DisplayAutomationPolicyTest {
     public void activeMediaSuppressesInactivitySleep() {
         assertFalse(DisplayAutomationPolicy.shouldSleep(
                 true, true, true, true, 900_000, 300_000));
+    }
+
+    @Test
+    public void brightnessStepsStayWithinTheUsefulRange() {
+        assertEquals(230, DisplayAutomationPolicy.steppedBrightness(190, 40));
+        assertEquals(255, DisplayAutomationPolicy.steppedBrightness(230, 40));
+        assertEquals(255, DisplayAutomationPolicy.steppedBrightness(255, 40));
+        assertEquals(150, DisplayAutomationPolicy.steppedBrightness(190, -40));
+        assertEquals(15, DisplayAutomationPolicy.steppedBrightness(30, -40));
+        assertEquals(15, DisplayAutomationPolicy.steppedBrightness(15, -40));
+        assertEquals(15, DisplayAutomationPolicy.steppedBrightness(1, -40));
     }
 
     @Test

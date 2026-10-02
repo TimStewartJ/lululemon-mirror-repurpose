@@ -22,6 +22,8 @@ public final class AutomationManager implements SensorEventListener {
     private static final long EVALUATION_INTERVAL_MS = 5_000L;
     private static final long AMBIENT_UPDATE_INTERVAL_MS = 5_000L;
     private static final long MANUAL_OVERRIDE_MS = 4 * 60 * 60 * 1000L;
+    /** {@link #stepWakeBrightness} when a light sensor sets the brightness. */
+    static final int BRIGHTNESS_FOLLOWS_LIGHT = -1;
     private static final int MIN_MOTION_TIMEOUT_SECONDS = 30;
     private static final int MAX_MOTION_TIMEOUT_SECONDS = 60 * 60;
     private static volatile AutomationManager instance;
@@ -201,6 +203,50 @@ public final class AutomationManager implements SensorEventListener {
         manualState = shouldSleep;
         manualOverrideUntilElapsed = SystemClock.elapsedRealtime() + MANUAL_OVERRIDE_MS;
         applyState(shouldSleep, shouldSleep ? "manual" : "none", true);
+    }
+
+    /**
+     * Someone at the Mirror asked for the display. That ends a sleep that was
+     * asked for and counts as having been seen, so the display goes dark
+     * again when the room is empty rather than hours later. Outside the wake
+     * hours it stays awake as if woken from the controls.
+     */
+    public synchronized void wakeForPresence() {
+        long now = SystemClock.elapsedRealtime();
+        lastMotionElapsed = now;
+        boolean keptAwake = Boolean.FALSE.equals(manualState) && now < manualOverrideUntilElapsed;
+        if (!keptAwake) {
+            manualState = null;
+            manualOverrideUntilElapsed = 0;
+        }
+        evaluate();
+        if (isSleeping()) {
+            setManualSleeping(false);
+        }
+    }
+
+    /**
+     * Makes the awake display a step brighter or dimmer, as asked for at the
+     * Mirror: now, and as the level it wakes to from then on.
+     *
+     * @return the level it now wakes to, which is the one before at either
+     *     end of the range; {@link #BRIGHTNESS_FOLLOWS_LIGHT} if a light
+     *     sensor sets the brightness, which leaves no level to change
+     */
+    public synchronized int stepWakeBrightness(int step) {
+        if (configStore.isAmbientEnabled() && lightSensor != null) {
+            return BRIGHTNESS_FOLLOWS_LIGHT;
+        }
+        int current = configStore.getWakeBrightness();
+        int target = DisplayAutomationPolicy.steppedBrightness(current, step);
+        if (target != current) {
+            configStore.setWakeBrightness(target);
+            if (!isSleeping()) {
+                brightnessApplied = mirror.setBrightness(target);
+            }
+            broadcast();
+        }
+        return target;
     }
 
     public void refresh() {

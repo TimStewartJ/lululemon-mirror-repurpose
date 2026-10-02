@@ -18,8 +18,13 @@ public final class MirrorHomeApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        ProcessHealth.start(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
         System.setProperty("java.io.tmpdir", getCacheDir().getAbsolutePath());
+        if (VoiceService.isVoiceProcess()) {
+            // The recogniser's process runs none of Mirror Home's own services,
+            // and its runs are not the dashboard's.
+            return;
+        }
+        ProcessHealth.start(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
         if (BuildConfig.OTA_HEALTH_FAILURE_TEST) {
             return;
         }
@@ -30,6 +35,7 @@ public final class MirrorHomeApplication extends Application {
         MediaPlaybackManager.getInstance(this);
         AutomationManager.getInstance(this);
         WeatherProvider.getInstance(this);
+        VoiceManager.getInstance(this).start();
         startService(new Intent(this, ControlServerService.class));
         WatchdogReceiver.schedule(this);
     }

@@ -30,6 +30,7 @@ public final class ConfigStore {
     private static final String KEY_WEATHER_LONGITUDE = "weather_longitude";
     private static final String KEY_WEATHER_LOCATION_NAME = "weather_location_name";
     private static final String KEY_WEATHER_UNITS = "weather_units";
+    private static final String KEY_VOICE_ENABLED = "voice_enabled";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
        to the built-in dashboard instead of the offline page. */
     private static final String[] RETIRED_DASHBOARD_URLS = {
@@ -248,5 +249,19 @@ public final class ConfigStore {
                 .putInt(KEY_MOTION_TIMEOUT_SECONDS, motionTimeoutSeconds)
                 .putInt(KEY_MOTION_SENSITIVITY, motionSensitivity)
                 .apply();
+    }
+
+    /** Changes the awake brightness alone, as a spoken "brighter" does. */
+    public void setWakeBrightness(int wakeBrightness) {
+        preferences.edit().putInt(KEY_WAKE_BRIGHTNESS, wakeBrightness).apply();
+    }
+
+    /** Whether the Mirror listens for spoken commands. Off until its owner turns it on. */
+    public boolean isVoiceEnabled() {
+        return preferences.getBoolean(KEY_VOICE_ENABLED, false);
+    }
+
+    public void setVoiceEnabled(boolean enabled) {
+        preferences.edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply();
     }
 }
