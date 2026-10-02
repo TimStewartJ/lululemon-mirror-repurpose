@@ -47,7 +47,10 @@ All three are done from the computer that is paired with the Mirror for
 
    This downloads Vosk's small model for US English from its makers, checks
    it against the checksum kept in `tools/voice.py`, and sends it to the
-   Mirror, which unpacks and checks it. It stays through updates.
+   Mirror, which unpacks and checks it. It stays through updates. Without the
+   tools, download `vosk-model-small-en-us-0.15.zip` from
+   [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models) and
+   give it to **Settings > Voice > Speech model > Install** in the controls.
 
 2. **The microphone permission.** A Mirror has nothing to tap "Allow" on.
    An installation over USB grants it. After an update over the network,

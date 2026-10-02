@@ -15,12 +15,15 @@
   stops and gives its memory back, because a Mirror has too little for both.
   The 39 MB speech model is too large for an update package and is sent once
   with `tools/voice.ps1 install-model`, which also switches voice on and off
-  and reports what the Mirror heard. After an update over the network the
-  microphone permission is granted through OTA supervisor 1.2.0. A spoken
-  "brighter" or "dimmer" changes the wake brightness, so it lasts. The
-  recogniser's native library makes the APK larger, 11.7 MB where 2.2.0 was
-  4.4 MB: it is there for a Mirror's ARM processor and for the x86_64 emulator
-  that validates every build. See [Voice commands](docs/voice.md).
+  and reports what the Mirror heard. **Settings > Voice** in the controls has
+  the same: the switch, what voice is waiting for, what can be said, what was
+  said to the Mirror lately, and a way to install the model from a phone or
+  computer without the tools. After an update over the network the microphone
+  permission is granted through OTA supervisor 1.2.0. A spoken "brighter" or
+  "dimmer" changes the wake brightness, so it lasts. The recogniser's native
+  library makes the APK larger, 11.7 MB where 2.2.0 was 4.4 MB: it is there
+  for a Mirror's ARM processor and for the x86_64 emulator that validates
+  every build. See [Voice commands](docs/voice.md).
 - The emulator suite checks voice end to end: nine new checks play recordings
   of synthetic speech to a debug build in place of a microphone, and cover a
   refused or unloadable model, the rules about the Mirror's name, a recogniser

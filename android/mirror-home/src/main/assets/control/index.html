@@ -441,6 +441,26 @@
           <p id="display-message" class="status inset" role="status"></p>
         </form>
 
+        <h2 class="section-title">Voice</h2>
+        <div class="group">
+          <label class="row"><div class="row-main"><span class="row-label">Voice commands</span><span class="row-sub">Recognised on the mirror itself. No sound is stored or sent anywhere.</span></div><input id="voice-enabled" class="switch" type="checkbox" disabled></label>
+          <p id="voice-status" class="status inset voice-status" role="status"></p>
+          <div class="row"><div class="row-main"><span class="row-label">Speech model</span><span id="voice-model" class="row-sub">—</span></div><button id="voice-model-choose" type="button" class="btn small">Install</button></div>
+          <div id="voice-model-progress" class="upload-progress hidden"><span></span></div>
+          <input id="voice-model-file" class="hidden" type="file" accept=".zip,application/zip">
+          <p id="voice-message" class="status inset" role="status"></p>
+          <details class="disclosure">
+            <summary><span class="row-label">What to say</span><span class="chevron" aria-hidden="true"></span></summary>
+            <ul id="voice-phrases" class="phrases"></ul>
+            <p class="hint inset">Say the mirror’s name first. If you pause after it, the mirror shows “Listening” and waits six seconds for the rest. It answers on the glass and never out loud.</p>
+          </details>
+          <details class="disclosure">
+            <summary><span class="row-label">Heard lately</span><span class="chevron" aria-hidden="true"></span></summary>
+            <ul id="voice-heard" class="heard"></ul>
+            <p id="voice-heard-summary" class="hint inset"></p>
+          </details>
+        </div>
+
         <h2 class="section-title">Clock</h2>
         <form id="clock-form" class="group">
           <label class="row"><span class="row-label">Time zone</span><input id="time-zone" class="row-input" placeholder="America/Los_Angeles" required></label>

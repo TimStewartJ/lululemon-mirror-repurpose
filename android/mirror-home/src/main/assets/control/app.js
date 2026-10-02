@@ -30,6 +30,8 @@
     canRollback: false
   };
   var noteList = [];
+  var voiceReport = null;
+  var voiceBusy = false;
   var notesVersion = null;
   var noteLimit = 1000;
   var editingNoteId = '';
@@ -592,6 +594,7 @@
           renderWeatherStatus(next.weather);
         }
         if (next.automation) renderMotionStatus(next.automation);
+        renderVoiceSummary(next.voice);
         renderHomeStatus();
         renderNowPlaying();
         renderHomePreview();
@@ -1493,6 +1496,121 @@
     byId('health-report').textContent = JSON.stringify(health, null, 2);
   }
 
+  /* ---------- Voice ---------- */
+
+  function voiceStatusText(voice) {
+    var silent = voiceReport && voiceReport.microphone && voiceReport.microphone.silent;
+    switch (voice.state) {
+      case 'off':
+        return 'Off. Nothing is listening.';
+      case 'no-model':
+        return 'Waiting for a speech model. Install one to start listening.';
+      case 'no-permission':
+        return 'Waiting for the microphone permission. Grant it from a computer: '
+          + 'tools\\ota.ps1 grant-permission microphone --confirm';
+      case 'listening':
+        return silent ? 'Listening, but the microphone delivers no sound.' : 'Listening for \u201cMirror\u201d.';
+      case 'paused':
+        return 'Paused while an update is installed. It starts again by itself.';
+      case 'error':
+        return voice.detail || 'The recogniser stopped.';
+      default:
+        return 'Starting\u2026';
+    }
+  }
+
+  /* The switch and where voice stands; the status carries this much every few seconds. */
+  function renderVoiceSummary(voice) {
+    if (!voice) return;
+    var toggle = byId('voice-enabled');
+    if (!voiceBusy) {
+      toggle.disabled = false;
+      toggle.checked = Boolean(voice.enabled);
+    }
+    var element = byId('voice-status');
+    element.textContent = '';
+    if (voice.state === 'listening') {
+      var dot = document.createElement('span');
+      dot.className = 'live-dot online';
+      dot.setAttribute('aria-hidden', 'true');
+      element.appendChild(dot);
+    }
+    element.appendChild(document.createTextNode(voiceStatusText(voice)));
+    element.classList.toggle('error', voice.state === 'error');
+    element.classList.toggle('quiet', voice.state === 'off');
+  }
+
+  function renderVoice(report) {
+    voiceReport = report;
+    var model = report.model;
+    byId('voice-model').textContent = !model
+      ? 'Not installed. Choose the model\u2019s zip file here, or run tools\\voice.ps1 install-model on a computer.'
+      : model.name ? model.name + ', ' + formatBytes(model.bytes) : 'Installed';
+    byId('voice-model-choose').textContent = model ? 'Replace' : 'Install';
+
+    var name = report.wakeWord || 'mirror';
+    var spokenName = name.charAt(0).toUpperCase() + name.slice(1);
+    var phrases = byId('voice-phrases');
+    phrases.textContent = '';
+    (report.commands || []).forEach(function (command) {
+      var item = document.createElement('li');
+      (command.say || []).forEach(function (sentence, index) {
+        var rest = sentence.indexOf(name + ' ') === 0 ? sentence.substring(name.length + 1) : sentence;
+        if (index) {
+          var or = document.createElement('span');
+          or.className = 'or';
+          or.textContent = ' or ';
+          item.appendChild(or);
+        }
+        item.appendChild(document.createTextNode(
+          '\u201c' + (index ? '' : spokenName + ', ') + rest + '\u201d'));
+      });
+      phrases.appendChild(item);
+    });
+
+    var recent = report.recent || [];
+    var heard = byId('voice-heard');
+    heard.textContent = '';
+    recent.slice().reverse().forEach(function (entry) {
+      var item = document.createElement('li');
+      var time = document.createElement('time');
+      time.textContent = new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      var said = document.createElement('span');
+      said.className = 'said';
+      /* The recogniser knows only the commands' words; anything else arrives as [unk]. */
+      said.textContent = '\u201c' + String(entry.heard || '').replace(/\[unk\]/g, '\u2026') + '\u201d';
+      var outcome = document.createElement('span');
+      outcome.className = 'outcome';
+      /* For a command, what the glass showed: "Sleeping", or why nothing changed. */
+      outcome.textContent = entry.outcome === 'command' ? (entry.shown || 'Done')
+        : entry.outcome === 'wake' ? 'Listened'
+          : entry.outcome === 'unsure' ? 'Unsure, ignored'
+            : 'Not understood';
+      item.appendChild(time);
+      item.appendChild(said);
+      item.appendChild(outcome);
+      heard.appendChild(item);
+    });
+    var counts = report.counts || {};
+    var summary = 'Nothing has been said to the mirror since it last started.';
+    if (recent.length) {
+      var commands = Number(counts.commands || 0);
+      summary = 'Since the mirror last started: ' + commands + (commands === 1 ? ' command' : ' commands') + ' carried out';
+      if (counts.unsure) summary += ', ' + counts.unsure + ' ignored because the mirror was unsure';
+      if (counts.notUnderstood) summary += ', ' + counts.notUnderstood + ' not understood';
+      summary += '.';
+    }
+    byId('voice-heard-summary').textContent = summary + ' Talk that does not start with its name is not kept.';
+    renderVoiceSummary(report);
+  }
+
+  function refreshVoice() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/voice').then(renderVoice).catch(function (error) {
+      setMessage('voice-message', error.message, true);
+    });
+  }
+
   function refreshAll() {
     return refreshStatus()
       .then(function () {
@@ -1507,6 +1625,7 @@
           refreshBackgroundVideos(),
           refreshPhotos(),
           refreshNotes(),
+          refreshVoice(),
           refreshHealth()
         ]);
       })
@@ -1535,7 +1654,10 @@
       if (name === 'display' && dashboardLayout) editor.relayout();
       if (name === 'home' && savedLayout) homeRenderer.relayout();
     });
-    if (name === 'settings') refreshHealth();
+    if (name === 'settings') {
+      refreshHealth();
+      refreshVoice();
+    }
   }
 
   document.querySelectorAll('.tab').forEach(function (tab) {
@@ -2711,6 +2833,94 @@
       .then(forgetLocalCredential);
   });
 
+  /* ---------- Voice ---------- */
+
+  byId('voice-enabled').addEventListener('change', function () {
+    var toggle = byId('voice-enabled');
+    var wanted = toggle.checked;
+    voiceBusy = true;
+    toggle.disabled = true;
+    setMessage('voice-message', '');
+    request('/api/v1/voice', json('PUT', { enabled: wanted })).then(function (report) {
+      voiceBusy = false;
+      renderVoice(report);
+      /* The recogniser takes some seconds to load its model. */
+      if (wanted) window.setTimeout(refreshVoice, 6000);
+    }).catch(function (error) {
+      voiceBusy = false;
+      toggle.disabled = false;
+      toggle.checked = !wanted;
+      setMessage('voice-message', error.message, true);
+    });
+  });
+
+  byId('voice-model-choose').addEventListener('click', function () {
+    byId('voice-model-file').click();
+  });
+
+  byId('voice-model-file').addEventListener('change', function () {
+    var input = byId('voice-model-file');
+    var file = input.files[0];
+    if (!file) return;
+    var maxBytes = Number((voiceReport && voiceReport.maxModelBytes) || 96 * 1024 * 1024);
+    if (!/\.zip$/i.test(file.name) || file.size < 1 || file.size > maxBytes) {
+      setMessage(
+        'voice-message',
+        'Choose a speech model\u2019s zip file, no larger than ' + formatBytes(maxBytes) + '.',
+        true);
+      input.value = '';
+      return;
+    }
+
+    var progress = byId('voice-model-progress');
+    var bar = progress.querySelector('span');
+    var button = byId('voice-model-choose');
+    button.disabled = true;
+    progress.classList.remove('hidden');
+    bar.style.width = '0%';
+    setMessage('voice-message', 'Sending ' + file.name + '\u2026');
+
+    function finish(message, error) {
+      progress.classList.add('hidden');
+      button.disabled = false;
+      input.value = '';
+      setMessage('voice-message', message, error);
+    }
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('PUT', '/api/v1/voice/model');
+    xhr.timeout = 15 * 60 * 1000;
+    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.setRequestHeader('Content-Type', 'application/zip');
+    xhr.upload.addEventListener('progress', function (event) {
+      if (!event.lengthComputable) return;
+      var percent = Math.min(100, Math.round(event.loaded * 100 / event.total));
+      bar.style.width = percent + '%';
+      setMessage('voice-message', percent < 100
+        ? 'Sending ' + file.name + '\u2026 ' + percent + '%'
+        : 'The mirror is unpacking the model\u2026');
+    });
+    xhr.addEventListener('load', function () {
+      var body = {};
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (error) {
+        body = {};
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finish(body.error || 'The upload failed (' + xhr.status + ').', true);
+        return;
+      }
+      finish('');
+      renderVoice(body);
+      toast('Speech model installed');
+    });
+    xhr.addEventListener('error', function () { finish('The upload did not reach the mirror.', true); });
+    xhr.addEventListener('timeout', function () { finish('The upload took too long.', true); });
+    xhr.send(file);
+  });
+
   /* ---------- Boot ---------- */
 
   if (!byId('time-zone').value) {
@@ -2721,7 +2931,10 @@
   alignedTick();
   window.setInterval(function () {
     /* Unpaired, this re-reads whether the mirror is showing a code yet. */
-    if (!document.hidden) refreshStatus().catch(function () {});
+    if (document.hidden) return;
+    refreshStatus().catch(function () {});
+    /* What the mirror heard changes while Settings is open. */
+    if (token && byId('settings').classList.contains('active')) refreshVoice();
   }, 10000);
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) refreshStatus().catch(function () {});

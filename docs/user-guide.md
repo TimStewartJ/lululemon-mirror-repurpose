@@ -59,8 +59,8 @@ The control application has four sections:
 - **Display**: what the mirror shows, the layout editor, weather, and photos.
   It also manages private background videos stored separately from the app.
 - **Schedule**: sleep/wake times, wake brightness, and presence sensing.
-- **Settings**: name, clock, Wi-Fi, the recovery setup network, paired
-  devices, version/address details, and the Mirror's health.
+- **Settings**: name, voice commands, clock, Wi-Fi, the recovery setup
+  network, paired devices, version/address details, and the Mirror's health.
 
 ## Dashboards
 
@@ -222,6 +222,29 @@ and turns the physical panel backlight completely off while Android, the
 camera monitor, and network controls remain active. Wake fades back in to the
 selected brightness over two seconds. A change of mind mid-fade reverses
 smoothly from the current level.
+
+## Voice commands
+
+Say "Mirror, go to sleep", "Mirror, wake up", "Mirror, brighter", "Mirror,
+dimmer" or "Mirror, next video". The Mirror recognises this by itself: no
+sound is stored or leaves it, and it answers on the glass, never out loud.
+Nothing listens until you switch it on.
+
+**Settings > Voice** has the switch, and under it where voice stands:
+**Listening**, or what it is waiting for. Two things are needed once:
+
+- a speech model on the Mirror. **Install** takes the model's zip file from
+  this device; from a computer, `.\tools\voice.ps1 install-model` downloads
+  and sends it in one step;
+- Android's permission to use the microphone, which an installation over USB
+  grants and an update over the network does not. The page then says how to
+  grant it from a computer.
+
+**What to say** lists every command with its second wording. **Heard
+lately** lists what was said to the Mirror since it last started and what it
+did, which is where to look if it ever acts on its own. See
+[Voice commands](voice.md) for how it decides, what it costs the Mirror and
+what it keeps.
 
 ## Media
 

@@ -57,7 +57,8 @@ The project intentionally separates:
   restores the local known-good release after failure.
 - **Device-hosted controls**: a responsive local web application served by
   Mirror Home itself for phone/desktop pairing, dashboards, schedules, photos,
-  Wi-Fi, media, private background-video libraries, and client revocation.
+  Wi-Fi, media, voice commands, private background-video libraries, and client
+  revocation.
 
 ## Supported hardware
 
@@ -101,7 +102,8 @@ network when neither a managed SSID nor an active Wi-Fi connection exists,
 supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
-sensing, cached local weather, precision dashboard editing, signed LAN OTA
+sensing, voice commands recognised on the Mirror itself, cached local weather,
+precision dashboard editing, signed LAN OTA
 updates with automatic rollback, content-addressed background videos stored
 outside the APK, a health report that survives restarts, and watchdog
 recovery. Media3
@@ -133,8 +135,9 @@ References: [User guide](docs/user-guide.md),
 [no-touchscreen ADB authorization](docs/provisioning.md#initial-adb-authorization-without-a-touchscreen)),
 [Automation](docs/automation.md),
 [Background videos](docs/background-videos.md),
+[Voice commands](docs/voice.md),
 [LAN OTA updates](docs/ota-updates.md), [Validation](docs/validation.md),
-[Voice lab](docs/voice-lab.md) (an experiment),
+[Voice lab](docs/voice-lab.md) (the experiment that came before voice commands),
 [Casting roadmap](docs/casting-roadmap.md), and
 [OS replacement](docs/os-replacement.md).
 
