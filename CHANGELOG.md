@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- OTA supervisor 1.2.0 adds authenticated, explicit runtime-permission
+  grants and revocations for Mirror Home's microphone, camera and Wi-Fi
+  location permissions. A same-certificate supervisor upgrade initially
+  needs authorized ADB; later Home features can declare a permission in an
+  OTA update and have it granted over the LAN without another USB visit.
+  No permission is automatically granted. See
+  [LAN OTA updates](docs/ota-updates.md#runtime-permissions-without-another-usb-visit).
 - Keep the emulator suite dependable when the Android Emulator is not. Hours
   after 2.2.0 was tagged, `sdkmanager` began to install emulator 37.2.12, which
   exits when Android 6 reboots in about every second run. CI failed for the

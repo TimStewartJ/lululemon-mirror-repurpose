@@ -247,6 +247,18 @@ final class OtaAuthenticator {
         return encodeHex(mac.doFinal(canonical.getBytes(StandardCharsets.UTF_8)));
     }
 
+    static void verifyBodySha256(byte[] body, String expected) throws AuthException {
+        byte[] expectedBytes;
+        try {
+            expectedBytes = decodeHex(expected);
+        } catch (IllegalArgumentException error) {
+            throw new AuthException("Invalid OTA body SHA-256");
+        }
+        if (!MessageDigest.isEqual(sha256(body), expectedBytes)) {
+            throw new AuthException("OTA request body SHA-256 does not match");
+        }
+    }
+
     private static byte[] sha256(byte[] value) throws AuthException {
         try {
             return MessageDigest.getInstance("SHA-256").digest(value);

@@ -189,6 +189,48 @@ pending unauthorized
         second = signed_headers("token", "GET", "/api/v1/status", EMPTY_SHA256)
         self.assertNotEqual(first["X-Ota-Counter"], second["X-Ota-Counter"])
 
+    def test_ota_permissions_is_read_only(self):
+        client = OtaClient("127.0.0.1", "token")
+        with mock.patch.object(client, "request", return_value={}) as request:
+            client.permissions()
+        request.assert_called_once_with("GET", "/api/v1/permissions")
+
+    def test_ota_permission_change_is_explicit_and_home_only(self):
+        client = OtaClient("127.0.0.1", "token")
+        for granted in (True, False):
+            with mock.patch.object(client, "request", return_value={}) as request:
+                client.change_permission("microphone", granted)
+            arguments = request.call_args
+            self.assertEqual(("POST", "/api/v1/permissions"), arguments.args[:2])
+            self.assertEqual(
+                {
+                    "packageName": "dev.mirror.repurpose",
+                    "permission": "android.permission.RECORD_AUDIO",
+                    "granted": granted,
+                    "confirm": "CHANGE_RUNTIME_PERMISSION",
+                },
+                json.loads(arguments.args[2]),
+            )
+            self.assertEqual("application/json", arguments.kwargs["content_type"])
+
+    def test_ota_permission_client_rejects_unrelated_permissions_and_nonbooleans(self):
+        client = OtaClient("127.0.0.1", "token")
+        with mock.patch.object(client, "request") as request:
+            for permission, granted in (("contacts", True), ("microphone", "true")):
+                with self.assertRaises(OtaClientError):
+                    client.change_permission(permission, granted)
+        request.assert_not_called()
+
+    def test_ota_permission_cli_requires_confirmation(self):
+        tool = TOOLS / "otactl.py"
+        result = subprocess.run(
+            [sys.executable, str(tool), "grant-permission", "microphone"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--confirm", result.stderr)
+
     def test_ota_push_fails_when_supervisor_rolls_back(self):
         client = OtaClient("127.0.0.1", "token")
         with mock.patch.object(

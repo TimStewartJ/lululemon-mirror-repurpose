@@ -27,6 +27,12 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_TOKEN_FILE = REPO / ".secrets" / "mirror-ota.json"
 DEFAULT_BOOTSTRAP_FILE = REPO / ".secrets" / "mirror-ota-bootstrap.txt"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+RUNTIME_PERMISSIONS = {
+    "microphone": "android.permission.RECORD_AUDIO",
+    "camera": "android.permission.CAMERA",
+    "fine-location": "android.permission.ACCESS_FINE_LOCATION",
+    "coarse-location": "android.permission.ACCESS_COARSE_LOCATION",
+}
 TERMINAL_STATES = {
     "succeeded",
     "rolled_back",
@@ -147,6 +153,25 @@ class OtaClient:
 
     def status(self) -> dict:
         return self.request("GET", "/api/v1/status")
+
+    def permissions(self) -> dict:
+        return self.request("GET", "/api/v1/permissions")
+
+    def change_permission(self, permission: str, granted: bool) -> dict:
+        if permission not in RUNTIME_PERMISSIONS or not isinstance(granted, bool):
+            raise OtaClientError("Expected an allowlisted permission and a boolean grant state")
+        body = json.dumps(
+            {
+                "packageName": "dev.mirror.repurpose",
+                "permission": RUNTIME_PERMISSIONS[permission],
+                "granted": granted,
+                "confirm": "CHANGE_RUNTIME_PERMISSION",
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self.request(
+            "POST", "/api/v1/permissions", body, content_type="application/json"
+        )
 
     def push(self, apk: pathlib.Path) -> dict:
         body = apk.read_bytes()
@@ -418,6 +443,16 @@ def main() -> None:
     deprovision_parser = subparsers.add_parser("deprovision")
     deprovision_parser.add_argument("--serial")
     subparsers.add_parser("status")
+    subparsers.add_parser("permissions")
+    for command in ("grant-permission", "revoke-permission"):
+        permission_parser = subparsers.add_parser(command)
+        permission_parser.add_argument("permission", choices=RUNTIME_PERMISSIONS)
+        permission_parser.add_argument(
+            "--confirm",
+            action="store_true",
+            required=True,
+            help="explicitly confirm changing Mirror Home's runtime permission",
+        )
     push_parser = subparsers.add_parser("push")
     push_parser.add_argument("apk", type=pathlib.Path)
     subparsers.add_parser("rollback")
@@ -440,6 +475,12 @@ def main() -> None:
         client.progress = lambda text: print(text, file=sys.stderr, flush=True)
         if args.command == "status":
             result = client.status()
+        elif args.command == "permissions":
+            result = client.permissions()
+        elif args.command in {"grant-permission", "revoke-permission"}:
+            result = client.change_permission(
+                args.permission, args.command == "grant-permission"
+            )
         elif args.command == "push":
             if not args.apk.is_file():
                 raise OtaClientError(f"APK does not exist: {args.apk}")

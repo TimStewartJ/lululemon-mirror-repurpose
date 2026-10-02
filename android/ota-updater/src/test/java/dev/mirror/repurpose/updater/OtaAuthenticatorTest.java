@@ -100,4 +100,24 @@ public final class OtaAuthenticatorTest {
         assertTrue(OtaAuthenticator.bootstrapTokenMatches(token, hash.toString()));
         assertTrue(!OtaAuthenticator.bootstrapTokenMatches("wrong", hash.toString()));
     }
+
+    @Test
+    public void actualPermissionBodyMustMatchTheSignedHash() throws Exception {
+        byte[] body = "{\"granted\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(body);
+        StringBuilder hash = new StringBuilder();
+        for (byte item : digest) {
+            hash.append(String.format(java.util.Locale.US, "%02x", item & 0xff));
+        }
+        OtaAuthenticator.verifyBodySha256(body, hash.toString());
+        try {
+            OtaAuthenticator.verifyBodySha256(
+                    "{\"granted\":false}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    hash.toString());
+        } catch (OtaAuthenticator.AuthException expected) {
+            assertTrue(expected.getMessage().contains("does not match"));
+            return;
+        }
+        throw new AssertionError("Altered permission body was accepted");
+    }
 }

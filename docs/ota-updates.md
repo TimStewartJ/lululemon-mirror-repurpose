@@ -191,9 +191,57 @@ To intentionally remove device-owner status:
 Do not deprovision during an update. Removing the supervisor afterward also
 removes unattended OTA capability.
 
+## Runtime permissions without another USB visit
+
+Supervisor 1.2.0 can grant or revoke four runtime permissions for the
+same-certificate Mirror Home app: microphone, camera, fine location and
+coarse location. It cannot grant permissions to another app, change a
+device-wide permission policy, or grant a permission that Home does not
+declare.
+
+Upgrade an already provisioned supervisor with its same-certificate release
+APK using authorized ADB:
+
+```powershell
+.\tools\ota.ps1 build-supervisor
+adb -s DEVICE_SERIAL install -r `
+  .\android\ota-updater\build\outputs\apk\release\ota-updater-release.apk
+.\tools\ota.ps1 status
+.\tools\ota.ps1 permissions
+```
+
+Do not uninstall, re-enroll device ownership or provision a new token. An
+in-place update preserves ownership, the existing LAN credential and the
+known-good Home backup. Keep USB available until signed LAN requests work.
+
+For a later feature, first deliver a signed Home OTA update that declares
+the required permission. Then grant it:
+
+```powershell
+.\tools\ota.ps1 grant-permission microphone --confirm
+.\tools\ota.ps1 permissions
+```
+
+Names are `microphone`, `camera`, `fine-location` and `coarse-location`.
+Revocation uses `revoke-permission NAME --confirm`; it sets Android's
+device-owner policy to denied, rather than merely clearing that policy and
+leaving access granted. A later explicit grant restores access. Grants are
+not performed automatically on installation or at startup.
+
+Both reads and changes use the existing HMAC and replay protection. Changes
+also verify the actual JSON body's signed hash, require an explicit
+confirmation value, check Home's signing certificate and manifest, reject
+an active OTA transaction, and verify Android's resulting grant and policy
+state. The response reports all four permissions because Android 6 may
+also change related permissions in the same permission group.
+
+Mirror Home 2.2.0 does not declare the microphone permission; requesting its
+grant therefore fails clearly. This does not grant access to the separate
+voice lab, which still uses its own authorized ADB installation.
+
 ## Security boundary
 
-Port `8791` is an update endpoint, not a shell:
+Port `8791` is an update and narrow permission-control endpoint, not a shell:
 
 - no command execution or arbitrary package names,
 - no bearer secret transmitted on requests,

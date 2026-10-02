@@ -7,6 +7,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -99,6 +100,12 @@ final class OtaServer extends NanoHTTPD {
             if (Method.GET.equals(session.getMethod()) && "/api/v1/status".equals(path)) {
                 return response(Response.Status.OK, manager.snapshot());
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/permissions".equals(path)) {
+                return response(Response.Status.OK, manager.permissionsSnapshot());
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/permissions".equals(path)) {
+                return changePermission(session, bodySha256);
+            }
             if (Method.PUT.equals(session.getMethod()) && "/api/v1/update".equals(path)) {
                 return uploadUpdate(session, bodySha256);
             }
@@ -129,6 +136,38 @@ final class OtaServer extends NanoHTTPD {
         } catch (IOException | ResponseException error) {
             return error(Response.Status.BAD_REQUEST, "Unable to read OTA request");
         }
+    }
+
+    private Response changePermission(IHTTPSession session, String expectedSha256)
+            throws IOException, ResponseException, OtaException, OtaAuthenticator.AuthException,
+            JSONException {
+        long length = contentLength(session);
+        if (length < 1 || length > 1024) {
+            return error(Response.Status.BAD_REQUEST, "Permission request must be 1-1024 bytes");
+        }
+        String contentType = session.getHeaders().get("content-type");
+        if (contentType == null
+                || !"application/json".equalsIgnoreCase(contentType.split(";", 2)[0].trim())) {
+            return error(Response.Status.UNSUPPORTED_MEDIA_TYPE, "JSON Content-Type is required");
+        }
+        byte[] body = new byte[(int) length];
+        int offset = 0;
+        while (offset < body.length) {
+            int count = session.getInputStream().read(body, offset, body.length - offset);
+            if (count < 0) {
+                return error(Response.Status.BAD_REQUEST, "Permission request body is incomplete");
+            }
+            offset += count;
+        }
+        OtaAuthenticator.verifyBodySha256(body, expectedSha256);
+        RuntimePermissions.Request request;
+        try {
+            request = RuntimePermissions.Request.parse(
+                    new JSONObject(new String(body, StandardCharsets.UTF_8)));
+        } catch (JSONException | IllegalArgumentException error) {
+            return error(Response.Status.BAD_REQUEST, error.getMessage());
+        }
+        return response(Response.Status.OK, manager.changePermission(request));
     }
 
     private Response uploadUpdate(IHTTPSession session, String expectedSha256)

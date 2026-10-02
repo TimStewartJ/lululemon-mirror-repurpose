@@ -183,6 +183,8 @@ POST /api/v1/provision             loopback + bootstrap secret
 POST /api/v1/provision/confirm     loopback + HMAC
 POST /api/v1/provision/recover     loopback + bootstrap secret
 GET  /api/v1/status                HMAC
+GET  /api/v1/permissions           HMAC; Home's allowlisted runtime permissions
+POST /api/v1/permissions           HMAC + verified JSON body + explicit confirmation
 PUT  /api/v1/update                HMAC + signed APK body
 POST /api/v1/rollback              HMAC
 POST /api/v1/deprovision           loopback + HMAC + explicit confirmation
@@ -199,3 +201,21 @@ lowercase-body-sha256
 ```
 
 See [LAN OTA updates](ota-updates.md) for lifecycle and recovery behavior.
+
+From supervisor 1.2.0, a permission change accepts only this shape:
+
+```json
+{
+  "packageName": "dev.mirror.repurpose",
+  "permission": "android.permission.RECORD_AUDIO",
+  "granted": true,
+  "confirm": "CHANGE_RUNTIME_PERMISSION"
+}
+```
+
+Unknown fields are rejected. The permission must be `RECORD_AUDIO`,
+`CAMERA`, `ACCESS_FINE_LOCATION` or `ACCESS_COARSE_LOCATION`, with the
+`android.permission.` prefix, and declared by the installed same-certificate
+Home app. `granted: false` explicitly denies it. The JSON body is limited to
+1024 bytes; its actual SHA-256 must match the authenticated hash. No global
+permission policy is changed.

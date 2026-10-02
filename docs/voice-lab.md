@@ -213,8 +213,21 @@ python tools\voice_lab.py --serial SERIAL setup `
 ```
 
 The app is installed with `adb install -g`, which grants the microphone
-permission. Nobody can answer a permission dialog on a Mirror, which is also
-why this cannot be done over the air.
+permission. Nobody can answer a permission dialog on a Mirror, and the OTA
+supervisor only installs Mirror Home, so the lab cannot be installed over the
+air.
+
+### The microphone permission for Mirror Home
+
+A voice feature in Mirror Home itself needs the permission too, and an update
+that declares `RECORD_AUDIO` does not grant it. Without a dialog, Android 6
+lets only a device owner grant an app a runtime permission
+([`DevicePolicyManager.setPermissionGrantState`](https://android.googlesource.com/platform/frameworks/base/+/android-6.0.1_r1/core/java/android/app/admin/DevicePolicyManager.java)).
+From version 1.2.0 the OTA supervisor, which is a provisioned Mirror's device
+owner, does that for Mirror Home on an authenticated, explicitly confirmed
+request; see
+[Runtime permissions](ota-updates.md#runtime-permissions-without-another-usb-visit).
+It grants nothing to the lab.
 
 ## Commands
 

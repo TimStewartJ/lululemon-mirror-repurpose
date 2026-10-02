@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -25,7 +26,10 @@ import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -58,6 +62,7 @@ final class OtaManager {
     private final Context context;
     private final SharedPreferences preferences;
     private final ApkInspector inspector;
+    private final RuntimePermissions runtimePermissions;
     private final File root;
     private final File candidateApk;
     private final File backupApk;
@@ -74,6 +79,45 @@ final class OtaManager {
         } catch (ApkInspector.InspectionException error) {
             throw new IllegalStateException("Unable to initialize APK validation", error);
         }
+        runtimePermissions = new RuntimePermissions(new RuntimePermissions.Backend() {
+            @Override
+            public Set<String> prepare() throws OtaException {
+                requireDeviceOwner();
+                requireIdle();
+                try {
+                    inspector.requireTrustedHome(inspector.installedHome());
+                    PackageInfo home = OtaManager.this.context.getPackageManager()
+                            .getPackageInfo(OtaConstants.HOME_PACKAGE, PackageManager.GET_PERMISSIONS);
+                    if (home.applicationInfo.targetSdkVersion < 23) {
+                        throw new OtaException("Mirror Home must use runtime permissions");
+                    }
+                    return home.requestedPermissions == null
+                            ? new HashSet<String>()
+                            : new HashSet<>(Arrays.asList(home.requestedPermissions));
+                } catch (ApkInspector.InspectionException | PackageManager.NameNotFoundException error) {
+                    throw new OtaException("Unable to validate installed Mirror Home", error);
+                }
+            }
+
+            @Override
+            public boolean granted(String permission) {
+                return OtaManager.this.context.getPackageManager()
+                        .checkPermission(permission, OtaConstants.HOME_PACKAGE)
+                        == PackageManager.PERMISSION_GRANTED;
+            }
+
+            @Override
+            public int grantState(String permission) throws OtaException {
+                return permissionPolicyManager().getPermissionGrantState(
+                        deviceAdmin(), OtaConstants.HOME_PACKAGE, permission);
+            }
+
+            @Override
+            public boolean setGrantState(String permission, int state) throws OtaException {
+                return permissionPolicyManager().setPermissionGrantState(
+                        deviceAdmin(), OtaConstants.HOME_PACKAGE, permission, state);
+            }
+        });
         root = new File(this.context.getFilesDir(), "updates");
         if (!root.isDirectory() && !root.mkdirs()) {
             throw new IllegalStateException("Unable to create OTA storage");
@@ -223,6 +267,9 @@ final class OtaManager {
             result.put("apiVersion", 1);
             result.put("updaterVersion", BuildConfig.VERSION_NAME);
             result.put("deviceOwner", isDeviceOwner());
+            result.put("runtimePermissionControl", new JSONObject()
+                    .put("packageName", OtaConstants.HOME_PACKAGE)
+                    .put("allowlist", new JSONArray(RuntimePermissions.ALLOWLIST)));
             result.put("deviceFingerprint", Build.FINGERPRINT);
             result.put("supportedFingerprint", BuildConfig.SUPPORTED_FINGERPRINT);
             result.put("state", state());
@@ -296,6 +343,41 @@ final class OtaManager {
         DevicePolicyManager manager =
                 (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
         return manager != null && manager.isDeviceOwnerApp(context.getPackageName());
+    }
+
+    synchronized JSONObject permissionsSnapshot() throws OtaException, JSONException {
+        try {
+            return runtimePermissions.snapshot();
+        } catch (SecurityException | IllegalArgumentException error) {
+            Log.w(TAG, "Unable to read runtime permissions", error);
+            throw new OtaException("Android rejected reading runtime permissions", error);
+        }
+    }
+
+    synchronized JSONObject changePermission(RuntimePermissions.Request request)
+            throws OtaException, JSONException {
+        try {
+            JSONObject result = runtimePermissions.change(request);
+            Log.i(TAG, "Runtime permission " + request.permission
+                    + (request.granted ? " granted" : " denied") + " for " + OtaConstants.HOME_PACKAGE);
+            return result;
+        } catch (SecurityException | IllegalArgumentException error) {
+            Log.w(TAG, "Unable to change runtime permission " + request.permission, error);
+            throw new OtaException("Android rejected the runtime permission change", error);
+        }
+    }
+
+    private DevicePolicyManager permissionPolicyManager() throws OtaException {
+        DevicePolicyManager manager =
+                (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
+        if (manager == null) {
+            throw new OtaException("Device policy manager is unavailable");
+        }
+        return manager;
+    }
+
+    private ComponentName deviceAdmin() {
+        return new ComponentName(context, OtaDeviceAdminReceiver.class);
     }
 
     synchronized void clearDeviceOwner() throws OtaException {
