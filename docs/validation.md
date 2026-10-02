@@ -64,6 +64,10 @@ emulator down, and exits non-zero if any check failed. A run takes about
 five minutes. `python tools/check.py --emulator` runs it after the other
 build, test and lint lanes.
 
+A debug build leaves out the same unused library code as a release build
+(`android/mirror-home/proguard-rules.pro`), so that code which was wrongly
+left out fails here and not on a Mirror.
+
 | Option | Effect |
 |---|---|
 | `--quick` | Skip the check that reboots the emulator. |

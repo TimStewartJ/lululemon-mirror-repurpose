@@ -137,11 +137,13 @@ seconds; earlier versions stayed covered until Home was started again.
 `.\tools\validate.ps1 mirror` says whether the dashboard is in front.
 
 Android may stop the supervisor's process while the update is installed,
-because memory is short at that moment. The supervisor restarts within
-seconds and carries on from its saved state. `push` reports the silence,
-keeps waiting, and prints each step as the supervisor reaches it. If it loses
-contact for good, run `status` to see how the update ended before pushing
-anything again.
+because memory is short at that moment: Android 6 compiles the whole app as
+it installs it. Mirror Home 2.3.0 and newer are a fifth of the size to
+compile, and the supervisor was not stopped in the updates measured since.
+When it is, it restarts within seconds and carries on from its saved state.
+`push` reports the silence, keeps waiting, and prints each step as the
+supervisor reaches it. If it loses contact for good, run `status` to see how
+the update ended before pushing anything again.
 
 ## Validation and rollback
 

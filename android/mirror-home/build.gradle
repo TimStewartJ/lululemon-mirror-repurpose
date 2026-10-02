@@ -73,9 +73,18 @@ android {
     }
 
     buildTypes {
+        // Both builds leave out the code that nothing uses (proguard-rules.pro).
+        // The emulator suite runs a debug build, and it should meet the same
+        // missing code as a Mirror does.
+        debug {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro"
+        }
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro"
             if (hasReleaseSigning) {
                 signingConfig signingConfigs.release
             }

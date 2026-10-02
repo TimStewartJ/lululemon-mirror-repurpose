@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Leave out the library code that nothing uses. Most of Mirror Home's compiled
+  code belonged to its video player and other libraries, and Android 6
+  compiles the whole of an app on the Mirror each time it installs it. Builds
+  now drop what nothing calls, and rename nothing, which takes the code from
+  10 MB to 2 MB. On a Mirror, Android compiled an update in about 7 seconds
+  where it took about 27, with a quarter less memory, and the OTA supervisor,
+  which Android used to stop for want of memory at that moment, kept running.
+  Debug builds leave out the same code, so that the emulator suite fails when
+  something that is needed has been dropped.
 - OTA supervisor 1.2.0 adds authenticated, explicit runtime-permission
   grants and revocations for Mirror Home's microphone, camera and Wi-Fi
   location permissions. A same-certificate supervisor upgrade initially
