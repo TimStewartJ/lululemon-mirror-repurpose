@@ -40,6 +40,9 @@ DEFAULT_OUTPUT = REPO / "build" / "voice-lab"
 DEFAULT_MIRROR_CONFIG = REPO / ".secrets" / "mirror-background-video.json"
 # The name the lab is paired under, so that an owner recognises and can revoke it.
 PAIRED_NAME = "Voice lab (temporary)"
+# Media volume step, of 15, for test sounds unless another is asked for. A
+# Mirror's speakers are loud in a room: step 9 was too loud for its owner.
+QUIET_VOLUME = 4
 # Extras travel through a shell on the device; keep them to plain words.
 SAFE_VALUE = re.compile(r"[A-Za-z0-9_./:-]+")
 
@@ -374,7 +377,9 @@ def main(arguments: list[str] | None = None) -> int:
     record.add_argument("--effects", action="store_true", help="turn on the device's own noise and echo processing")
     record.add_argument("--tone", type=int, default=0, help="play a tone of this many Hz on the speakers meanwhile")
     record.add_argument("--play", help="a clip on the device to play on the speakers meanwhile")
-    record.add_argument("--volume", type=int, help="media volume step to play at")
+    record.add_argument(
+        "--volume", type=int, default=QUIET_VOLUME, help=f"media volume step to play at (default {QUIET_VOLUME})"
+    )
 
     self_test = commands.add_parser(
         "selftest", help="play clips on the device's speakers and recognise what its microphone heard"
@@ -382,7 +387,9 @@ def main(arguments: list[str] | None = None) -> int:
     self_test.add_argument("--clips", type=pathlib.Path, required=True, help="folder of .wav clips to play")
     self_test.add_argument("--commands", help="name of the command list on the device")
     self_test.add_argument("--source", default="VOICE_RECOGNITION")
-    self_test.add_argument("--volume", type=int, help="media volume step to play at")
+    self_test.add_argument(
+        "--volume", type=int, default=QUIET_VOLUME, help=f"media volume step to play at (default {QUIET_VOLUME})"
+    )
     self_test.add_argument("--confidence", default="0.5")
 
     decode = commands.add_parser("decode", help="recognise the clips on the device and time it")
@@ -411,7 +418,9 @@ def main(arguments: list[str] | None = None) -> int:
     tone = commands.add_parser("tone", help="play a tone on the speakers")
     tone.add_argument("--hz", type=int, default=440)
     tone.add_argument("--seconds", type=int, default=2)
-    tone.add_argument("--volume", type=int, help="media volume step to use meanwhile")
+    tone.add_argument(
+        "--volume", type=int, default=QUIET_VOLUME, help=f"media volume step to play at (default {QUIET_VOLUME})"
+    )
 
     pairing = commands.add_parser("pair", help="pair the lab with Mirror Home so that --act can command it")
     pairing.add_argument("--config", type=pathlib.Path, default=DEFAULT_MIRROR_CONFIG)
@@ -441,7 +450,7 @@ def main(arguments: list[str] | None = None) -> int:
                 "record", name=options.name, keep=results, timeout=options.seconds + 60, seconds=options.seconds,
                 source=options.source, rate=options.rate, channels=options.channels,
                 effects="1" if options.effects else None, tone=options.tone or None,
-                play=options.play, volume=options.volume,
+                play=options.play, volume=options.volume if options.play or options.tone else None,
             )
             target = options.output / "recordings" / f"{options.name}.wav"
             lab.pull(result["file"], target)

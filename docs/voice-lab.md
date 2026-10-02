@@ -121,18 +121,73 @@ talk), the lab put Mirror Home to sleep and woke it through its API on each
 command and ignored the rest. Mirror Home stayed the same process, with
 about 640 MB of the emulator's memory still free.
 
-## What only a Mirror can show
+## What a Mirror showed
 
-- **The microphone.** The emulator has none. The factory software declares a
-  microphone and the permission to record; what an app gets from it, at what
-  distance, with how much noise, is unmeasured.
-- **Speed.** The emulator runs on a desktop processor, where a command list
-  takes 3 to 6 percent of real time. A Mirror's Cortex-A53 cores are many
-  times slower; whether recognition keeps up with speech there has to be
-  timed there.
-- **Living beside Mirror Home.** A Mirror with Mirror Home 2.2.0 running
-  reports about 400 MB of its 952 MB free. The recogniser needs about 120 MB
-  of that, and its work must not cost the background video frames.
+The emulator has no microphone and a desktop processor, so three things
+could only be measured on a Mirror. Measured on 2026-10-02 on one (four
+Cortex-A53 cores at up to 1.2 GHz, 929 MB of memory, Android 6.0.1) that was
+running Mirror Home 2.2.0 with a background video:
+
+**Its processor keeps up.** With the four-command list, 91 seconds of clips
+were recognised in 24.5 seconds: a real-time factor of 0.27 on one of the
+four cores, with the same answers as on the emulator. The model loads in 4 to
+5 seconds. Recognising everything the live microphone heard took 34 percent
+of one core, and recognition never fell more than 0.6 seconds behind the
+microphone.
+
+**It fits beside Mirror Home.** The lab's process is about 125 MB with the
+model loaded and gives the memory back afterwards. The Mirror has about
+390 MB free with Mirror Home alone and kept at least 279 MB free, above the
+216 MB at which Android calls memory low. Mirror Home stayed the same
+process, and its background video dropped no frame in five minutes of
+listening. The warmest sensor rose from 41 to 49 degrees Celsius.
+
+**The microphone works for an ordinary app.** All five Android sound sources
+open, from 8 to 48 kHz, mono and stereo. As `VOICE_RECOGNITION` at 16 kHz a
+quiet room reads about 60 dB below full scale, and a voice 15 to 20 dB below
+it: about 45 dB above the room, without clipping.
+`VOICE_COMMUNICATION` is about 25 dB quieter than the other sources. A
+stereo recording's second channel is a weaker, different signal with mains
+hum; nothing yet shows a second usable microphone. The device offers an echo
+canceller and a noise suppressor but no gain control, and has neither a
+speech recogniser nor a speech synthesiser installed.
+
+**Spoken commands work.** In five minutes at the Mirror its owner spoke 16
+complete commands. All 16 were understood, each with full confidence, and
+Mirror Home carried each out about a second after its last word. Some two
+minutes of ordinary conversation beside the Mirror in that time set off
+none. Three other tries failed, each in a way a real feature can meet:
+
+| Said | Heard | A feature should |
+| --- | --- | --- |
+| "mirror", a pause, "go to sleep" | two sentences, `mirror` and `go to sleep` | let the wake word open a few seconds in which the command may follow |
+| "mirror, mirror go to sleep" | `mirror mirror go to sleep` | take a repeated wake word as one |
+| "mirror, brightness down" | `mirror [unk]` | know more than one wording for a command, or hand free sentences to a larger model |
+
+The first two rules would have understood 18 of 18, and add no wrong command
+to the eight hours of read speech measured on the emulator.
+
+**It hears across a room, by its owner's account.** Some of the 16 commands
+were spoken from across the room and worked as well as those from arm's
+length. The recording cannot say which. The Mirror evens out loudness before
+an app gets the sound: nearly every command arrived with its peaks 3 to 7 dB
+below full scale, 40 to 51 dB above the room. How far that reaches has not
+been measured.
+
+**The gate saves little in a lived-in room.** It was open 69 to 84 percent of
+the time: the microphone is sensitive, and the gate opens just above the
+level of a silent room. Recognising everything costs a third of one core, so
+a feature can do without the gate or give it a higher threshold.
+
+**A Mirror does not understand its own speakers.** Ten clips played at
+volume step 9 of 15 reached its microphone near full scale, and none of the
+eight commands in them was recognised. Step 9 is also loud in a room, so the
+lab plays its sounds at step 4 unless told otherwise.
+
+### Still open
+
+- **An ordinary day.** How often a household's own talk sets off a command
+  over hours, rather than minutes, has not been counted on a Mirror.
 
 ## Set up
 
@@ -169,11 +224,11 @@ Every command needs `--serial`. Results are kept under `build/voice-lab/`.
 | --- | --- |
 | `setup [--model FOLDER] [--clips FOLDER] [--commands FILE]` | Installs the app and copies the model, sound clips and command list to it. |
 | `info` | Processor, memory, the microphone settings that open, the device's own sound processing, speech engines. |
-| `record --name NAME [--seconds N] [--source S] [--rate HZ] [--channels 1\|2] [--effects] [--tone HZ \| --play CLIP] [--volume STEP]` | Records the microphone, fetches the recording and prints its levels. `--source` is `MIC`, `VOICE_RECOGNITION`, `VOICE_COMMUNICATION`, `CAMCORDER` or `DEFAULT`. |
-| `selftest --clips FOLDER [--commands commands.txt] [--volume STEP]` | Plays each clip on the device's speakers, records it with its microphone and recognises the recordings. Needs nobody in the room. |
+| `record --name NAME [--seconds N] [--source S] [--rate HZ] [--channels 1\|2] [--effects] [--tone HZ \| --play CLIP] [--volume STEP]` | Records the microphone, fetches the recording and prints its levels. `--source` is `MIC`, `VOICE_RECOGNITION`, `VOICE_COMMUNICATION`, `CAMCORDER` or `DEFAULT`. A tone or clip plays at volume step 4 of 15 unless `--volume` gives another. |
+| `selftest --clips FOLDER [--commands commands.txt] [--volume STEP]` | Plays each clip on the device's speakers, at volume step 4 of 15 unless `--volume` gives another, records it with its microphone and recognises the recordings. Needs nobody in the room, and is heard by everybody in it. |
 | `decode [--clips FOLDER_ON_DEVICE] [--only PREFIX] [--commands commands.txt] [--gate]` | Recognises sound files on the device and times it. Without `--commands` it takes dictation. `--clips recordings` recognises what `record` recorded. |
 | `listen [--seconds N] [--commands commands.txt] [--act] [--save NAME] [--no-gate] [--source S] [--input CLIP]` | Recognises the live microphone and reports how far recognition fell behind it. `--act` sends each command to Mirror Home, and puts its sleep schedule and brightness back when listening ends. `--save` keeps what the microphone heard and fetches it. `--input` hears a clip on the device at speaking pace in place of the microphone. |
-| `tone [--hz N] [--seconds N] [--volume STEP]` | Plays a tone on the speakers. |
+| `tone [--hz N] [--seconds N] [--volume STEP]` | Plays a tone on the speakers, at volume step 4 of 15 unless `--volume` gives another. |
 | `pair` | Pairs the lab with Mirror Home as "Voice lab (temporary)", using the credential in `.secrets/mirror-background-video.json`, so that `--act` can command it. |
 | `remove` | Revokes that pairing, uninstalls the app and deletes its folder with every recording. |
 
@@ -199,7 +254,8 @@ $voice.Speak("mirror, go to sleep"); $voice.Dispose()
    and its process.
 3. **The microphone, with nobody there.** `record --name room --seconds 10`
    for the room's noise, then `selftest` to hear whether the microphone
-   picks up the Mirror's own speakers and whether that is understood.
+   picks up the Mirror's own speakers and whether that is understood. Tell
+   the household first: the Mirror speaks.
 4. **Live, with a person.** `pair`, then
    `listen --commands commands.txt --act --save live --seconds 180`. Say each
    command at arm's length, from the middle of the room and from its far

@@ -428,6 +428,31 @@ class CommandLineTest(unittest.TestCase):
                       [call[:2] for call in lab.calls])
         self.assertIn("kitchen.wav", output)
 
+    @mock.patch("voice_lab.time.sleep", lambda _seconds: None)
+    def test_sounds_are_played_quietly_unless_a_volume_is_asked_for(self):
+        recording = {"ok": True, "file": "recordings/x.wav", "stats": [SummaryTest.STATS]}
+        for arguments, expected in (
+            (("tone",), "--es volume 4"),
+            (("tone", "--volume", "7"), "--es volume 7"),
+            (("record", "--name", "x", "--play", "clips/a.wav"), "--es play clips/a.wav --es volume 4"),
+            (("record", "--name", "x", "--tone", "440"), "--es tone 440 --es volume 4"),
+        ):
+            lab = FakeLab(recording)
+            self.assertEqual(0, self.run_main(*arguments, lab=lab)[0])
+            self.assertIn(expected, lab.started_with())
+        self.assertEqual(4, voice_lab.QUIET_VOLUME)
+
+    @mock.patch("voice_lab.time.sleep", lambda _seconds: None)
+    def test_a_silent_recording_leaves_the_volume_alone(self):
+        lab = FakeLab({"ok": True, "file": "recordings/x.wav", "stats": [SummaryTest.STATS]})
+        self.assertEqual(0, self.run_main("record", "--name", "x", lab=lab)[0])
+        self.assertNotIn("volume", lab.started_with())
+
+    def test_the_self_test_is_quiet_by_default(self):
+        with mock.patch("voice_lab.selftest", return_value="done") as tested:
+            self.assertEqual(0, self.run_main("selftest", "--clips", "clips")[0])
+        self.assertEqual(4, tested.call_args.args[1].volume)
+
     def test_removing_uninstalls_and_deletes_the_recordings(self):
         lab = FakeLab()
         with mock.patch("voice_lab.unpair", return_value=True):

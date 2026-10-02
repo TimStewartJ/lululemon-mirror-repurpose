@@ -25,8 +25,10 @@
   device itself. On the Android 6 emulator the Vosk recogniser, with JNA held
   at 5.15.0, understood every command of a four-command list in noise and
   across an echoing room, in about 120 MB of memory, and took a command from
-  other speech at most once in two hours. The microphone and the speed on a
-  Mirror's processor are still to be measured on a Mirror. See
+  other speech at most once in two hours. On a Mirror it recognises 3.7
+  times faster than real time on one core, beside Mirror Home and its
+  background video, and understood all 16 complete commands its owner spoke
+  to it, some of them from across the room. See
   [Voice lab](docs/voice-lab.md).
 
 ## 2.2.0 - 2026-10-01
