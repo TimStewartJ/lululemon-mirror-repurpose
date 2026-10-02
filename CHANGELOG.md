@@ -21,6 +21,14 @@
   recogniser's native library makes the APK larger, 11.7 MB where 2.2.0 was
   4.4 MB: it is there for a Mirror's ARM processor and for the x86_64 emulator
   that validates every build. See [Voice commands](docs/voice.md).
+- The emulator suite checks voice end to end: nine new checks play recordings
+  of synthetic speech to a debug build in place of a microphone, and cover a
+  refused or unloadable model, the rules about the Mirror's name, a recogniser
+  that stops, an installation that needs its memory, a missing microphone
+  permission, restarts and a reboot. A release build is checked as far as it
+  can be without speaking to it. CI downloads the speech model by checksum and
+  caches it. When the dashboard logs a script error, the run now says which,
+  even if the process that logged it was restarted since.
 - Start the background video again when its player fails. A failed player used
   to stay stopped until the display next slept or woke. On a Mirror that left
   the dashboard without its film for fourteen minutes: Mirror Home had been

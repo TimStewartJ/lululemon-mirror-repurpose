@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime
+import hashlib
 import http.client
+import io
 import json
 import os
 import pathlib
@@ -28,11 +30,13 @@ import subprocess
 import sys
 import time
 import traceback
+import zipfile
 from dataclasses import dataclass, field
 from typing import Callable
 
 import android_emulator
 import screen_capture
+import voice
 import webview_devtools
 
 
@@ -120,6 +124,29 @@ PREREQUISITE_CHECKS = ("install", "first-pairing")
 # The system's own window while an app starts is bright in a light theme.
 BRIGHT_FRAME_LEVEL = 40.0
 CLOCK_BOX = (0.0, 0.0, 0.7, 0.3)
+# The recogniser has a process of its own, named after Mirror Home's.
+VOICE_PROCESS = f"{PACKAGE}:voice"
+# Speech for an emulator, which has no microphone worth the name.
+VOICE_CLIPS = REPO / "tools" / "validation-clips"
+# What Mirror Home wants in a speech model's archive before it tries the model.
+VOICE_MODEL_FILES = ("am/final.mdl", "conf/mfcc.conf", "conf/model.conf", "graph/HCLr.fst", "graph/Gr.fst")
+# A Mirror loads the model in four seconds; a shared runner is given longer.
+VOICE_LISTENING_SECONDS = 120
+# A sentence ends once a second or so of silence has followed it.
+VOICE_ACT_SECONDS = 30
+# How long a command may follow the Mirror's name (VoiceInterpreter.WINDOW_MS).
+VOICE_WINDOW_SECONDS = 6
+# What one "brighter" adds to the wake brightness (VoiceManager.BRIGHTNESS_STEP).
+VOICE_BRIGHTNESS_STEP = 40
+# Where the glass says what it heard: low, in the middle.
+VOICE_CAPTION_BOX = (0.2, 0.84, 0.8, 0.98)
+# How long it says what it did (MainActivity.VOICE_CAPTION_MS), and fades.
+VOICE_CAPTION_SECONDS = 3
+# The caption's strokes light at least this much more of that box.
+VOICE_CAPTION_LIT = 0.002
+RECORD_AUDIO = "android.permission.RECORD_AUDIO"
+NO_SPEECH_MODEL = "no speech model on this computer; fetch it with: python tools/voice.py fetch-model"
+NO_TEST_SPEECH = "a release build cannot be given test speech"
 
 
 class CheckFailed(AssertionError):
@@ -155,20 +182,21 @@ class Api:
         data: bytes | None = None,
         content_type: str | None = None,
         timeout: float = 20.0,
+        headers: dict[str, str] | None = None,
     ) -> Reply:
-        headers = {"Accept": "application/json"}
+        sent = {"Accept": "application/json", **(headers or {})}
         payload = data
         if body is not None:
             payload = json.dumps(body).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            sent["Content-Type"] = "application/json"
         if content_type:
-            headers["Content-Type"] = content_type
+            sent["Content-Type"] = content_type
         bearer = self.token if token is True else token
         if bearer:
-            headers["Authorization"] = "Bearer " + bearer
+            sent["Authorization"] = "Bearer " + bearer
         connection = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
         try:
-            connection.request(method, path, body=payload, headers=headers)
+            connection.request(method, path, body=payload, headers=sent)
             response = connection.getresponse()
             raw = response.read()
         finally:
@@ -370,10 +398,17 @@ class Context:
         self.details: dict = {}
         self.forwards: list[int] = []
         self.console_errors_before_restarts = 0
+        # What those errors were: a process that ends takes its list along.
+        self.console_errors_kept: list = []
         self.zone_table = json.loads(ZONE_TABLE.read_text(encoding="utf-8"))
         self.awake_peak = 0
         self.debuggable: bool | None = None
         self.apk: pathlib.Path | None = None
+        # The speech model on this computer, if it has one; and its checksum.
+        self.voice_model: pathlib.Path | None = None
+        self.voice_checksum = ""
+        # Whether a check of this run switched voice on, for the checks after restarts.
+        self.voice_left_on = False
         self.kept: dict = {}
         self.dismissed: list[str] = []
         # The emulator this run started, if it did; its process can end under it.
@@ -500,8 +535,14 @@ class Context:
 
         Nothing starts it again here: Android does, because it is the HOME app.
         """
-        self.console_errors_before_restarts += self.health()["dashboard"]["consoleErrors"]
+        self.keep_console_errors(self.health())
         self.adb.shell("am", "force-stop", PACKAGE)
+
+    def keep_console_errors(self, health: dict) -> None:
+        """Remember what the dashboard logged, before its process ends and forgets it."""
+        dashboard = health["dashboard"]
+        self.console_errors_before_restarts += dashboard["consoleErrors"]
+        self.console_errors_kept.extend(dashboard.get("recentConsoleErrors") or [])
 
     def set_clock(self, zone: str, offset: int, changes: list | None, *, clock_24_hour: bool = False) -> dict:
         body = {"timeZone": zone, "utcOffsetMinutes": offset, "clock24Hour": clock_24_hour}
@@ -1131,6 +1172,472 @@ def check_health(ctx: Context) -> None:
     ctx.note("power", health["device"]["power"])
 
 
+# ---------------------------------------------------------------------------
+# Voice commands. The suite speaks through two doors that only a debug build
+# has: one takes a recording in place of the microphone, the other a sentence
+# as if the recogniser had just heard it.
+# ---------------------------------------------------------------------------
+
+
+def voice_state(ctx: Context) -> dict:
+    return ctx.api.expect("GET", "/api/v1/voice")
+
+
+def voice_process_running(ctx: Context) -> bool:
+    return any(line.split()[-1:] == [VOICE_PROCESS] for line in ctx.adb.shell("ps").splitlines())
+
+
+def model_archive(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def wait_voice(ctx: Context, wanted: str, timeout: float) -> dict:
+    """Wait for voice to reach a state; say where it stood if it never does."""
+    seen: dict = {}
+
+    def reached() -> bool:
+        seen.update(voice_state(ctx))
+        return seen["state"] == wanted
+
+    try:
+        wait_for(f"voice to be {wanted}", reached, timeout=timeout)
+    except CheckFailed:
+        raise CheckFailed(
+            f"Voice was not {wanted} within {int(timeout)} s; it is "
+            f"{seen.get('state', 'unanswered')}: {seen.get('detail', '')}"
+        ) from None
+    return dict(seen)
+
+
+def listening_voice(ctx: Context, *, spoken_to: bool = True) -> dict:
+    """Voice listening with the speech model: as an earlier check left it, or set up now.
+
+    Skips the check where that cannot be: on a computer without the model,
+    and, if the check speaks to the Mirror, on a release build.
+    """
+    state = voice_state(ctx)
+    if spoken_to and not state["testHooks"]:
+        raise CheckSkipped(NO_TEST_SPEECH)
+    if ctx.voice_model is None:
+        raise CheckSkipped(NO_SPEECH_MODEL)
+    if not ctx.voice_checksum:
+        ctx.voice_checksum = voice.sha256_file(ctx.voice_model)
+    if not state["model"] or state["model"]["sha256"] != ctx.voice_checksum:
+        installed = ctx.api.expect(
+            "PUT", "/api/v1/voice/model",
+            data=ctx.voice_model.read_bytes(),
+            content_type="application/zip",
+            headers={"X-Content-SHA256": ctx.voice_checksum},
+            timeout=600,
+            status=201,
+        )
+        require(
+            installed["model"] and installed["model"]["sha256"] == ctx.voice_checksum,
+            f"The Mirror reports another model than the one sent: {installed['model']}",
+        )
+    if not state["enabled"]:
+        ctx.api.expect("PUT", "/api/v1/voice", {"enabled": True})
+    ctx.voice_left_on = True
+    return wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+
+
+def hear(ctx: Context, clip: str) -> None:
+    """Play a recording to the recogniser in place of the microphone."""
+    ctx.api.expect(
+        "POST", "/api/v1/voice/test/clip",
+        data=(VOICE_CLIPS / clip).read_bytes(), content_type="audio/wav", status=202,
+    )
+
+
+def say(ctx: Context, text: str, confidence: float = 1.0) -> None:
+    """Hand over a sentence as if the recogniser had just heard it."""
+    ctx.api.expect(
+        "POST", "/api/v1/voice/test/sentence", {"text": text, "confidence": confidence}, status=202
+    )
+
+
+def asleep(ctx: Context) -> bool:
+    return ctx.api.expect("GET", "/api/v1/automation")["sleeping"]
+
+
+def check_voice_off(ctx: Context) -> None:
+    state = voice_state(ctx)
+    require(
+        state["enabled"] is False and state["state"] == "off",
+        f"Voice is {state['state']} before anyone switched it on",
+    )
+    require(state["model"] is None, f"A speech model is installed already: {state['model']}")
+    require(not voice_process_running(ctx), "The recogniser's process runs although voice is off")
+    said = [sentence for command in state["commands"] for sentence in command["say"]]
+    require(
+        state["wakeWord"] == "mirror" and said and all(sentence.startswith("mirror ") for sentence in said),
+        f"The controls are not told what can be said: {describe(state['commands'])}",
+    )
+    require(ctx.status()["voice"]["state"] == "off", "The status does not say that voice is off")
+    require(ctx.health()["voice"]["state"] == "off", "The health report does not say that voice is off")
+    require(
+        ctx.api.call("GET", "/api/v1/voice", token="not-a-credential").status == 401,
+        "Voice can be read without a pairing",
+    )
+    require(
+        ctx.api.call("PUT", "/api/v1/voice", {"enabled": "yes"}).status == 400,
+        "A switch position that is neither on nor off is accepted",
+    )
+    wanted = ctx.api.expect("PUT", "/api/v1/voice", {"enabled": True})
+    try:
+        require(
+            wanted["state"] == "no-model",
+            f"Switched on without a speech model, voice is {wanted['state']}",
+        )
+        time.sleep(2)
+        require(not voice_process_running(ctx), "The recogniser's process runs without a speech model")
+        if wanted["testHooks"]:
+            unheard = ctx.api.call("POST", "/api/v1/voice/test/sentence", {"text": "mirror go to sleep"})
+            require(
+                unheard.status == 409 and not asleep(ctx),
+                "A sentence was taken while nothing listens",
+            )
+    finally:
+        ctx.api.expect("PUT", "/api/v1/voice", {"enabled": False})
+    ctx.note("canBeSaid", said)
+    ctx.note("microphoneAllowed", state["permissionGranted"])
+
+
+def check_voice_model(ctx: Context) -> None:
+    def upload(data: bytes, content_type: str = "application/zip", **options) -> Reply:
+        return ctx.api.call(
+            "PUT", "/api/v1/voice/model", data=data, content_type=content_type, timeout=120, **options
+        )
+
+    # It has every file Mirror Home looks for, and nothing in them.
+    hollow = model_archive({
+        f"hollow-model/{name}": b"not what a speech model holds\n" * 40 for name in VOICE_MODEL_FILES
+    })
+    refused = (
+        ("an archive sent as something else", upload(hollow, "application/json"), 415),
+        ("what is no archive", upload(b"no archive at all " * 64), 400),
+        ("an archive without a model", upload(model_archive({"notes/README": b"nothing"})), 400),
+        (
+            "an archive that names a file outside itself",
+            upload(model_archive({"../../shared_prefs/planted.xml": b"<map/>"})),
+            400,
+        ),
+        (
+            "an archive that is not what its checksum says",
+            upload(hollow, headers={"X-Content-SHA256": "0" * 64}),
+            400,
+        ),
+    )
+    for what, reply, status in refused:
+        require(
+            reply.status == status,
+            f"{what} was answered {reply.status}, not {status}: {describe(reply.body)}",
+        )
+    require(voice_state(ctx)["model"] is None, "A refused upload left a speech model behind")
+    if ctx.inspectable():
+        planted = ctx.adb.shell("run-as", PACKAGE, "ls", "shared_prefs", check=False)
+        require("planted" not in planted, "An archive wrote a file outside the model's folder")
+
+    run = ctx.health()["process"]["runId"]
+    installed = upload(hollow)
+    require(installed.status == 201, f"A well-formed archive was refused: {describe(installed.body)}")
+    require(
+        installed.body["model"]["name"] == "hollow-model",
+        f"The model is reported as {installed.body['model']}",
+    )
+    ctx.api.expect("PUT", "/api/v1/voice", {"enabled": True})
+    try:
+        failed = wait_voice(ctx, "error", 60)
+        health = ctx.health()
+        require(
+            health["process"]["runId"] == run and health["crashes"]["count"] == 0,
+            "Mirror Home did not carry on over a speech model that cannot be loaded",
+        )
+        require(
+            health["voice"]["state"] == "error",
+            f"The health report says voice is {health['voice']['state']}",
+        )
+    finally:
+        ctx.api.expect("PUT", "/api/v1/voice", {"enabled": False})
+        removed = ctx.api.expect("DELETE", "/api/v1/voice/model")
+    require(removed["model"] is None and removed["state"] == "off", f"After removal: {describe(removed)}")
+    wait_for(
+        "the recogniser's process to end", lambda: not voice_process_running(ctx), timeout=20
+    )
+    ctx.note("unloadableModel", failed["detail"])
+
+
+def check_voice_listens(ctx: Context) -> None:
+    listening = listening_voice(ctx, spoken_to=False)
+    require(voice_process_running(ctx), "No process of its own holds the recogniser")
+    # It measures itself every five seconds.
+    measured: dict = {}
+
+    def has_measured() -> bool:
+        measured.update(voice_state(ctx))
+        return measured["recogniser"]["cpuShare"] is not None
+
+    wait_for("the recogniser's first measurements", has_measured, timeout=30)
+    require(measured["state"] == "listening", f"Voice stopped listening: {measured['detail']}")
+    memory = measured["process"]["pssKb"]
+    require(memory and memory < 250_000, f"The recogniser's process holds {memory} KB")
+    require(
+        measured["recogniser"]["behindMs"] < 2_000,
+        f"The recogniser is {measured['recogniser']['behindMs']} ms behind the microphone",
+    )
+    health = ctx.health()["voice"]
+    require(health["state"] == "listening", f"The health report says voice is {health['state']}")
+    require(ctx.status()["voice"]["state"] == "listening", "The status does not say that voice listens")
+    ctx.note("model", listening["model"]["name"])
+    ctx.note("modelLoadMs", measured["recogniser"]["modelLoadMs"])
+    ctx.note("recogniserPssKb", memory)
+    ctx.note("cpuShare", measured["recogniser"]["cpuShare"])
+    ctx.note("microphoneSilent", measured["microphone"]["silent"])
+
+
+def check_voice_commands(ctx: Context) -> None:
+    listening_voice(ctx)
+    ctx.lit_peak()
+    # A spoken "wake up" ends an earlier check's leftovers as well as a sleep.
+    say(ctx, "mirror wake up")
+    wait_for("the Mirror to be awake", lambda: not asleep(ctx), timeout=10)
+    before = voice_state(ctx)["counts"]
+    try:
+        hear(ctx, "mirror-go-to-sleep.wav")
+        wait_for("the Mirror to sleep when told to", lambda: asleep(ctx), timeout=VOICE_ACT_SECONDS)
+        ctx.wait_peak("black", lambda peak: peak <= BLACK_PEAK, "voice-asleep")
+        hear(ctx, "mirror-wake-up.wav")
+        wait_for("the Mirror to wake when told to", lambda: not asleep(ctx), timeout=VOICE_ACT_SECONDS)
+        ctx.wait_lit("voice-awake")
+        acted = voice_state(ctx)
+        require(
+            acted["counts"]["commands"] == before["commands"] + 2,
+            f"Two commands were spoken and {acted['counts']['commands'] - before['commands']} counted",
+        )
+        hear(ctx, "talk-of-sleep.wav")
+        wait_for(
+            "the recogniser to have heard the talk",
+            lambda: voice_state(ctx)["counts"]["sentences"] > acted["counts"]["sentences"],
+            timeout=VOICE_ACT_SECONDS,
+        )
+        # Its last words may arrive as a sentence of their own.
+        time.sleep(3)
+        after = voice_state(ctx)
+        require(
+            not asleep(ctx) and after["counts"]["commands"] == acted["counts"]["commands"],
+            f"Talk that holds a command's words was taken for a command: {describe(after['recent'][-2:])}",
+        )
+    finally:
+        # A sleep that was asked for lasts four hours; saving the schedule ends it.
+        ctx.set_automation(enabled=False)
+    ctx.note("heard", [entry["heard"] for entry in after["recent"][-2:]])
+    ctx.note("sentences", after["counts"]["sentences"] - before["sentences"])
+
+
+def check_voice_wake_word(ctx: Context) -> None:
+    listening_voice(ctx)
+    ctx.lit_peak()
+
+    def brightness() -> int:
+        return ctx.api.expect("GET", "/api/v1/automation")["wakeBrightness"]
+
+    def shown() -> str:
+        return voice_state(ctx)["lastCommand"]["shown"]
+
+    try:
+        usual = ctx.set_automation(enabled=False)["wakeBrightness"]
+        # A command ends the wait that an earlier name may have begun.
+        say(ctx, "mirror wake up")
+        wait_for("the Mirror to be awake", lambda: not asleep(ctx), timeout=10)
+        start = voice_state(ctx)["counts"]
+
+        say(ctx, "go to sleep")
+        # Long enough for the glass to have stopped saying that it woke.
+        time.sleep(VOICE_CAPTION_SECONDS + 1)
+        require(not asleep(ctx), "A command without the Mirror's name was carried out")
+
+        frames = [ctx.adb.capture()]
+        unlit = screen_capture.lit_fraction(frames[0], 128, VOICE_CAPTION_BOX)
+
+        def captioned() -> bool:
+            frames.append(ctx.adb.capture())
+            return screen_capture.lit_fraction(frames[-1], 128, VOICE_CAPTION_BOX) > unlit + VOICE_CAPTION_LIT
+
+        say(ctx, "mirror")
+        try:
+            wait_for("a caption", captioned, timeout=VOICE_WINDOW_SECONDS, interval=0.1)
+        except CheckFailed:
+            raise CheckFailed("The glass did not show that the Mirror listens after its name") from None
+        finally:
+            (ctx.output / "voice-listening.png").write_bytes(screen_capture.to_png(frames[-1]))
+
+        # The name, a pause, then the command: two sentences to the recogniser.
+        say(ctx, "mirror")
+        say(ctx, "go to sleep")
+        wait_for("a command that follows the name to be carried out", lambda: asleep(ctx), timeout=10)
+
+        say(ctx, "mirror brighter")
+        wait_for("a dark Mirror to wake when spoken to", lambda: not asleep(ctx), timeout=10)
+        require(
+            shown() == "Awake" and brightness() == usual,
+            f"Spoken to while dark, the Mirror showed {shown()!r} and wakes at {brightness()}",
+        )
+        say(ctx, "mirror brighter")
+        wait_for(
+            "the wake brightness to rise",
+            lambda: brightness() == usual + VOICE_BRIGHTNESS_STEP,
+            timeout=10,
+        )
+        require(shown() == "Brighter", f"The glass showed {shown()!r} for brighter")
+        say(ctx, "mirror dimmer")
+        wait_for("the wake brightness to fall again", lambda: brightness() == usual, timeout=10)
+        say(ctx, "mirror dimmer", 0.6)
+        time.sleep(1)
+        require(brightness() == usual, "A command the recogniser was unsure of was carried out")
+
+        say(ctx, "mirror [unk]")
+        wait_for(
+            "the glass to say that it did not follow",
+            lambda: "catch that" in ctx.native_text(),
+            timeout=VOICE_WINDOW_SECONDS,
+            interval=0.1,
+        )
+
+        say(ctx, "mirror")
+        time.sleep(VOICE_WINDOW_SECONDS + 1.5)
+        say(ctx, "go to sleep")
+        time.sleep(1)
+        require(not asleep(ctx), "A command was carried out long after the Mirror's name")
+
+        counts = voice_state(ctx)["counts"]
+        counted = {key: counts[key] - start[key] for key in ("commands", "wakeWords", "notUnderstood", "unsure")}
+        require(
+            counted == {"commands": 4, "wakeWords": 3, "notUnderstood": 1, "unsure": 1},
+            f"What was said is counted as {counted}",
+        )
+    finally:
+        ctx.set_automation(enabled=False)
+    ctx.note("counted", counted)
+
+
+def check_voice_recovers(ctx: Context) -> None:
+    listening = listening_voice(ctx, spoken_to=False)
+    run = ctx.health()["process"]["runId"]
+    stopped = listening["process"]["pid"]
+    ctx.adb.shell("kill", str(stopped))
+
+    def back():
+        state = voice_state(ctx)
+        again = state["state"] == "listening" and state["process"]["pid"] not in (None, stopped)
+        return state if again else None
+
+    returned = wait_for("the recogniser to come back", back, timeout=VOICE_LISTENING_SECONDS)
+    require(
+        returned["process"]["restarts"] == listening["process"]["restarts"] + 1,
+        f"The stop was not counted: {returned['process']}",
+    )
+    health = ctx.health()
+    require(
+        health["process"]["runId"] == run and health["crashes"]["count"] == 0,
+        "Mirror Home did not carry on when its recogniser stopped",
+    )
+    require(health["activity"]["showing"], f"The dashboard is not in front: {health['activity']}")
+    if returned["testHooks"]:
+        try:
+            hear(ctx, "mirror-go-to-sleep.wav")
+            wait_for(
+                "the Mirror to follow a command after the recogniser came back",
+                lambda: asleep(ctx),
+                timeout=VOICE_ACT_SECONDS,
+            )
+        finally:
+            ctx.set_automation(enabled=False)
+    ctx.note("stoppedProcess", stopped)
+    ctx.note("newProcess", returned["process"]["pid"])
+
+
+def check_voice_steps_aside(ctx: Context) -> None:
+    listening = listening_voice(ctx, spoken_to=False)
+    run = ctx.health()["process"]["runId"]
+    # An update begins with Android being told of an installation. Android 6
+    # compiles what it installs, with memory that the recogniser would hold.
+    created = ctx.adb.shell("pm", "install-create")
+    session = re.search(r"\[(\d+)\]", created)
+    require(session is not None, f"Android began no installation: {created.strip()}")
+    try:
+        wait_voice(ctx, "paused", 20)
+        wait_for(
+            "the recogniser's process to end while an app is installed",
+            lambda: not voice_process_running(ctx),
+            timeout=20,
+        )
+    finally:
+        ctx.adb.shell("pm", "install-abandon", session.group(1), check=False)
+    returned = wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+    require(
+        returned["process"]["restarts"] == listening["process"]["restarts"],
+        f"Stepping aside was counted as a recogniser that stopped: {returned['process']}",
+    )
+    require(
+        ctx.health()["process"]["runId"] == run,
+        "Mirror Home did not carry on while its recogniser stepped aside",
+    )
+    ctx.note("installation", int(session.group(1)))
+
+
+def check_voice_permission(ctx: Context) -> None:
+    listening_voice(ctx, spoken_to=False)
+    ctx.keep_console_errors(ctx.health())
+    # Android stops an app that loses a permission. A Mirror that was updated
+    # from a release without voice is where this one starts: not allowed yet.
+    ctx.adb.shell("pm", "revoke", PACKAGE, RECORD_AUDIO)
+    try:
+        waiting = wait_voice(ctx, "no-permission", 60)
+        require(not waiting["permissionGranted"], "Voice reports a permission that was taken away")
+        require(not voice_process_running(ctx), "The recogniser runs without the microphone permission")
+    finally:
+        ctx.adb.shell("pm", "grant", PACKAGE, RECORD_AUDIO)
+    # Nobody restarts anything: Mirror Home looks every ten seconds.
+    wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+    ctx.wait_dashboard()
+    ctx.wait_lit("voice-permission")
+
+
+def check_voice_returns(ctx: Context) -> None:
+    state = voice_state(ctx)
+    if ctx.voice_model is None:
+        raise CheckSkipped(NO_SPEECH_MODEL)
+    if ctx.voice_left_on:
+        require(
+            state["enabled"] and state["model"],
+            "Voice was switched on with a speech model before the restarts, and is not after them: "
+            f"{state['state']}",
+        )
+        wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+    else:
+        listening_voice(ctx, spoken_to=False)
+    if state["testHooks"]:
+        try:
+            hear(ctx, "mirror-go-to-sleep.wav")
+            wait_for("the Mirror to sleep when told to", lambda: asleep(ctx), timeout=VOICE_ACT_SECONDS)
+        finally:
+            ctx.set_automation(enabled=False)
+    off = ctx.api.expect("PUT", "/api/v1/voice", {"enabled": False})
+    require(off["state"] == "off", f"Switched off, voice is {off['state']}")
+    wait_for(
+        "the recogniser's process to end once voice is off",
+        lambda: not voice_process_running(ctx),
+        timeout=20,
+    )
+    removed = ctx.api.expect("DELETE", "/api/v1/voice/model")
+    require(removed["model"] is None, f"The speech model was not removed: {removed['model']}")
+    ctx.voice_left_on = False
+
+
 def has_stock_launcher(ctx: Context) -> bool:
     return bool(ctx.adb.shell("pm", "path", STOCK_LAUNCHER, check=False).strip())
 
@@ -1356,7 +1863,7 @@ def check_quick_restart(ctx: Context) -> None:
     before = wait_past_start(ctx)
     first = before["process"]["runId"]
     started = time.monotonic()
-    ctx.console_errors_before_restarts += before["dashboard"]["consoleErrors"]
+    ctx.keep_console_errors(before)
     ctx.adb.shell("am", "force-stop", PACKAGE)
     # Android starts its HOME app again at once. Once that process answers it
     # has recorded its start; stop it while it is still starting.
@@ -1390,7 +1897,7 @@ def check_quick_restart(ctx: Context) -> None:
 
 def check_reboot(ctx: Context) -> None:
     before = ctx.health()
-    ctx.console_errors_before_restarts += before["dashboard"]["consoleErrors"]
+    ctx.keep_console_errors(before)
     zone = ctx.api.expect("GET", "/api/v1/preferences")["timeZone"]
     ctx.adb.run("reboot")
     time.sleep(5)
@@ -1444,9 +1951,11 @@ def check_reboot(ctx: Context) -> None:
 def check_script_errors(ctx: Context) -> None:
     dashboard = ctx.health()["dashboard"]
     total = ctx.console_errors_before_restarts + dashboard["consoleErrors"]
+    logged = ctx.console_errors_kept + dashboard["recentConsoleErrors"]
+    ctx.note("scriptErrors", logged)
     require(
         total == 0,
-        f"The dashboard logged {total} script errors during the run: {dashboard['recentConsoleErrors']}",
+        f"The dashboard logged {total} script errors during the run: {describe(logged, 600)}",
     )
     require(ctx.health()["api"]["unhandledErrors"] == 0, "The API hit an unhandled error")
     ctx.screenshot("final")
@@ -1469,12 +1978,21 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("offline-fallback", "An unreachable web page falls back to the offline clock", check_offline_fallback, False),
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),
+    ("voice-off", "Voice commands are off until switched on, and nothing listens", check_voice_off, False),
+    ("voice-model", "What is no speech model is refused; one that cannot be loaded harms nothing", check_voice_model, False),
+    ("voice-listens", "With the speech model installed and voice on, a process of its own listens", check_voice_listens, False),
+    ("voice-commands", "Told by name to sleep and to wake, the Mirror does; talk in the room does nothing", check_voice_commands, False),
+    ("voice-wake-word", "A command counts after the Mirror's name, at once or after a pause, and if heard for sure", check_voice_wake_word, False),
+    ("voice-recovers", "A recogniser that stops comes back, and the dashboard never notices", check_voice_recovers, False),
+    ("voice-steps-aside", "While Android installs an app, voice gives back its memory; then it listens again", check_voice_steps_aside, False),
+    ("voice-permission", "Without the microphone permission voice waits, and starts once it is given", check_voice_permission, False),
     ("returns-to-front", "A screen that covers the dashboard does not stay in front", check_returns_to_front, False),
     ("wakes-display", "A display that Android put to sleep is woken again", check_wakes_display, False),
     ("cold-start", "Starting Home never lights the whole screen", check_cold_start, False),
     ("restart", "A stopped process is recorded and Home comes back paired", check_restart, False),
     ("quick-restart", "A process stopped while starting is counted, not reported as the previous run", check_quick_restart, False),
     ("reboot", "After a reboot the dashboard appears by itself with its settings", check_reboot, True),
+    ("voice-returns", "After the restarts voice listens again by itself; switched off, nothing remains", check_voice_returns, False),
     ("script-errors", "The dashboard logged no script errors during the run", check_script_errors, False),
 ]
 
@@ -1671,6 +2189,7 @@ UPGRADE_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("dashboard-after", "The dashboard is back on true black with no errors", upgrade_dashboard, False),
     ("pairing-after", "With no code on display, the updated Home refuses pairing attempts", check_pairing_closed, False),
     ("returns-to-front", "A screen that covers the updated dashboard does not stay in front", check_returns_to_front, False),
+    ("voice-off", "The updated Home has voice commands, switched off, and nothing listens", check_voice_off, False),
 ]
 
 
@@ -1866,6 +2385,27 @@ def selected_checks(only: str | None, checks: list[tuple[str, str, Callable, boo
     return names.union(PREREQUISITE_CHECKS)
 
 
+def speech_model(named: pathlib.Path | None) -> pathlib.Path | None:
+    """The speech model the voice checks install, or None to skip those that need it.
+
+    A model that was asked for must be there. Otherwise the one that
+    ``tools/voice.py fetch-model`` keeps is used if this computer has it.
+    """
+    if named is not None:
+        if not named.is_file():
+            raise CheckFailed(f"Speech model not found: {named}")
+        return named
+    if not voice.DEFAULT_MODEL.is_file():
+        print(f"Voice checks that need the speech model will be skipped: {NO_SPEECH_MODEL}", flush=True)
+        return None
+    if voice.sha256_file(voice.DEFAULT_MODEL) != voice.MODEL_SHA256:
+        raise CheckFailed(
+            f"{voice.DEFAULT_MODEL} is not the speech model this suite knows; "
+            "delete it and run: python tools/voice.py fetch-model"
+        )
+    return voice.DEFAULT_MODEL
+
+
 def run_emulator(options: argparse.Namespace) -> int:
     only = selected_checks(options.only, EMULATOR_CHECKS)
     earlier = options.upgrade_from
@@ -1878,6 +2418,7 @@ def run_emulator(options: argparse.Namespace) -> int:
     output = options.output or default_output(target)
     output.mkdir(parents=True, exist_ok=True)
     apk = options.apk or DEBUG_APK
+    voice_model = speech_model(options.voice_model)
     if not options.apk and not options.skip_build:
         build_debug_apk()
     if not apk.is_file():
@@ -1920,6 +2461,7 @@ def run_emulator(options: argparse.Namespace) -> int:
         context = Context(adb, Api("127.0.0.1", port), output)
         context.forwards.append(port)
         context.apk = apk
+        context.voice_model = voice_model
         context.emulator = emulator
         if earlier is not None:
             results = run_checks(UPGRADE_CHECKS, context)
@@ -1932,6 +2474,7 @@ def run_emulator(options: argparse.Namespace) -> int:
             "emulator": emulator_version,
             "emulatorStoppedAnswering": not answering,
             "apk": str(apk),
+            "voiceModel": str(voice_model) if voice_model else None,
             "systemDialogsClosed": context.dismissed,
             **({"upgradeFrom": str(earlier)} if earlier is not None else {}),
         })
@@ -2448,6 +2991,11 @@ def main(arguments: list[str] | None = None) -> int:
         "--upgrade-from",
         type=pathlib.Path,
         help="rehearse an update: install this earlier APK, set it up, then install the build under test over it",
+    )
+    emulator.add_argument(
+        "--voice-model",
+        type=pathlib.Path,
+        help="speech model archive for the voice checks (default: the one tools/voice.py fetch-model keeps, if present)",
     )
     emulator.add_argument("--serial", help="use this running emulator instead of starting one")
     emulator.add_argument("--keep-running", action="store_true", help="leave the emulator running afterwards")

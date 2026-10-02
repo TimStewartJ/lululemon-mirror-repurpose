@@ -75,8 +75,21 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The voice checks recognise speech with the model an owner installs.
+      - name: Restore the speech model
+        uses: actions/cache@v4
+        with:
+          path: build/voice
+          key: speech-model-30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498
+
+      - name: Download the speech model unless it was restored
+        run: python tools/voice.py fetch-model
+
       - name: Run the Android 6 emulator suite
-        run: python tools/validate.py emulator --output build/validation/ci
+        run: >-
+          python tools/validate.py emulator
+          --voice-model build/voice/vosk-model-small-en-us-0.15.zip
+          --output build/validation/ci
 
       - name: Keep the report, screenshots and logs
         if: always()

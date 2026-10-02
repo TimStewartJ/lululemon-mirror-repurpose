@@ -53,6 +53,15 @@ Python standard library. Its virtual device lives in `build/emulator/` and
 takes about 2 GB while a run is in progress; the disk images are deleted when
 the run ends.
 
+The checks of [voice commands](voice.md) that recognise speech need the
+speech model, a 39 MB download that is kept in `build/voice/`:
+
+```powershell
+.\tools\voice.ps1 fetch-model
+```
+
+Without it those checks are skipped, and the run says so when it starts.
+
 ### Running it
 
 ```powershell
@@ -73,7 +82,8 @@ left out fails here and not on a Mirror.
 | `--quick` | Skip the check that reboots the emulator. |
 | `--only NAMES` | Run only these checks, comma-separated. `install` and `first-pairing` always run, because the others need the pairing they make. |
 | `--skip-build` | Install the debug APK that is already built. |
-| `--apk PATH` | Install this APK instead. It may be a release build: `clock-switch`, `pairing-widget` and `notes` are then skipped, because only debug builds let their page be read, and the other checks judge the screen and the API. |
+| `--apk PATH` | Install this APK instead. It may be a release build: `clock-switch`, `pairing-widget` and `notes` are then skipped, because only debug builds let their page be read, and the other checks judge the screen and the API. The two voice checks that speak to the Mirror are skipped as well; see [How the suite speaks](#how-the-suite-speaks). |
+| `--voice-model PATH` | Use this speech model archive for the voice checks, and fail if it is missing. By default the one in `build/voice/` is used if it is there. |
 | `--window` | Show the emulator's screen while it runs. |
 | `--keep-running` | Leave the emulator running afterwards, to look around. |
 | `--serial emulator-NNNN` | Use an emulator that is already running. Mirror Home is reinstalled on it and made its HOME app. One with a touchscreen fails `health`, because Mirror Home leaves an attended device alone. |
@@ -106,13 +116,48 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `offline-fallback` | An unreachable web dashboard falls back to the offline clock, and clearing the address brings the built-in dashboard back. |
 | `control-page` | The control page, everything it references and the dashboard's files are served, with a content security policy and no framing; the bundled zone table is not served. |
 | `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, a 128 MB app heap, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. |
+| `voice-off` | On a fresh installation voice commands are off, no speech model is installed and no recogniser runs. The controls are told what can be said, and the status and the health report say that voice is off. Switched on without a model, voice waits for one and still nothing runs. |
+| `voice-model` | An upload that is not a zip archive, holds no speech model, names a file outside itself or differs from its checksum is refused and leaves nothing behind. An archive with the right files and nothing in them installs; the recogniser then reports that it cannot load it, and Mirror Home carries on as the same process. |
+| `voice-listens` | The speech model installs with its checksum, and with voice switched on a process of its own loads it and listens, holding less than 250 MB and keeping up with the microphone. |
+| `voice-commands` | A recording of "Mirror, go to sleep" fades the display to black, and one of "Mirror, wake up" brings the dashboard back. A recording of talk that holds the words "go to sleep" without the Mirror's name does nothing. |
+| `voice-wake-word` | A command without the Mirror's name does nothing. After the name the glass shows that the Mirror listens, and a command that follows within six seconds is carried out; one that follows later is not. Spoken to while dark, the Mirror wakes. "Brighter" and "dimmer" change the wake brightness by a step. A command that the recogniser was unsure of is not carried out, and what follows the name without being a command gets "Didn't catch that". |
+| `voice-recovers` | The recogniser's process is stopped. It comes back by itself and follows a spoken command, and Mirror Home is the same process throughout, with no crash recorded. |
+| `voice-steps-aside` | Android is told of an installation, which is how an update begins. Voice reports that it is paused and the recogniser's process ends, leaving its memory to the installation. When the installation is given up, voice listens again; none of it counts as a recogniser that stopped, and Mirror Home is the same process throughout. |
+| `voice-permission` | The microphone permission is taken away, as it is missing after an update from a release without voice. Voice waits and no recogniser runs. Once the permission is given, voice starts listening without being asked to. |
 | `returns-to-front` | The other HOME app is started over the dashboard. Mirror Home leaves it for ten seconds, then takes the display back without creating a second dashboard. This runs twice: from the arrangement a boot leaves, and from the one an update can leave (see [Rehearsing an update](#rehearsing-an-update)). |
 | `wakes-display` | Android itself is put to sleep, which turns the panel off. Mirror Home wakes it and the dashboard is back within seconds. |
 | `cold-start` | Starting Mirror Home never lights the whole screen, since on mirror glass a white starting window is a bright flash, and the dashboard then fades in. |
 | `restart` | A stopped process is recorded as the previous run, Android starts its HOME app again, Home comes back paired, and the dashboard returns to the glass. |
 | `quick-restart` | A process stopped within seconds of starting, as Android 6 does while it replaces a HOME app, is counted as an early stop and not reported as the previous run. |
 | `reboot` | After a reboot the dashboard comes to the front by itself, and pairing and the clock survive. |
+| `voice-returns` | After the restarts and the reboot before it, voice is still switched on, listens again by itself and follows a spoken command. Switched off, its process ends; the speech model is then removed. |
 | `script-errors` | The dashboard logged no script error and the API hit no unhandled error during the whole run. |
+
+### How the suite speaks
+
+An emulator has no microphone worth the name: Android's recorder opens and
+delivers silence. A debug build of Mirror Home therefore has two doors that
+a release build lacks, and the suite speaks through them:
+
+- `POST /api/v1/voice/test/clip` takes a WAV recording, which the recogniser
+  hears in place of the microphone. The three recordings in
+  `tools/validation-clips/` are synthetic speech; its README says how they
+  were made. This exercises the whole path: the recogniser's native library
+  on Android 6, the speech model, and what Mirror Home does with a sentence.
+- `POST /api/v1/voice/test/sentence` hands over a sentence as if the
+  recogniser had just heard it, with the confidence it would report. The
+  rules about the Mirror's name are checked this way, since they do not
+  depend on sound.
+
+Both answer `409` unless voice is listening.
+
+`voice-off` and `voice-model` run everywhere. The other voice checks need
+the speech model and are skipped without it. A release build has neither
+door, so `voice-commands` and `voice-wake-word` are skipped on it, and the
+rest check what they can without speaking: that the recogniser loads the
+model and listens, comes back when it is stopped, steps aside for an
+installation, waits for the microphone permission, and listens again after
+the restarts.
 
 ### Evidence
 
@@ -190,7 +235,14 @@ The emulator has none of the Mirror's hardware or vendor software, so these
 still need the real unit:
 
 - brightness and backlight control through the stock `com.mirror.services`
-  Binder;
+  Binder; a spoken "brighter" changes the saved wake brightness here, and no
+  backlight;
+- the microphones and what Android does to their sound, and with them how
+  well a voice is understood across a room; `docs/voice-lab.md` has what was
+  measured on a Mirror;
+- the recogniser's ARM build, which is the one a Mirror runs. Every APK also
+  carries its x86_64 build, which is the one the emulator runs, because
+  Android installs no app that lacks a library for its processor;
 - background video on the hardware decoder, and playback smoothness;
 - camera presence sensing;
 - Wi-Fi, the Wi-Fi Direct setup network and its QR codes (the emulator has
@@ -235,8 +287,9 @@ first:
 | `dashboard-after` | The dashboard is back on true black, in front, with no script or API errors, and Mirror Home is still the HOME app. |
 | `pairing-after` | With no code on display, the updated Home refuses pairing attempts. |
 | `returns-to-front` | A screen that covers the updated dashboard does not stay in front; the same check as in the suite. |
+| `voice-off` | The updated Home has voice commands, switched off, with no recogniser running; the same check as in the suite. |
 
-The last check is there because of what an update did to a Mirror. While
+`returns-to-front` is there because of what an update did to a Mirror. While
 Android 6 replaces a HOME app it needs another one, and if it asks at the
 wrong instant it starts the factory launcher. The new Mirror Home then starts
 its dashboard itself, the launcher moves on to its setup screen, and that

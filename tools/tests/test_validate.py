@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import hashlib
 import http.server
 import io
 import json
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
@@ -472,6 +474,7 @@ class RequireEmulatorTest(unittest.TestCase):
             options = argparse.Namespace(
                 output=pathlib.Path(directory) / "out", apk=apk, skip_build=True, serial="10.0.0.196:5555",
                 keep_running=False, window=False, quick=False, only=None, density=160, upgrade_from=None,
+                voice_model=apk,
             )
             with mock.patch.object(validate.subprocess, "run", side_effect=run), \
                     mock.patch.object(validate.android_emulator, "sdk_root", return_value=pathlib.Path(directory)), \
@@ -496,6 +499,7 @@ class ApiTest(unittest.TestCase):
                     "path": self.path,
                     "authorization": self.headers.get("Authorization"),
                     "content_type": self.headers.get("Content-Type"),
+                    "checksum": self.headers.get("X-Content-SHA256"),
                     "body": self.rfile.read(length),
                 })
                 if self.path == "/styles.css":
@@ -547,6 +551,16 @@ class ApiTest(unittest.TestCase):
         self.api.call("GET", "/api/v1/clients", token="someone-else")
         self.assertIsNone(self.seen[0]["authorization"])
         self.assertEqual("Bearer " + "someone-else", self.seen[1]["authorization"])
+
+    def test_sends_a_file_with_its_type_and_further_headers(self):
+        self.api.call(
+            "PUT", "/api/v1/voice/model", data=b"PK archive", content_type="application/zip",
+            headers={"X-Content-SHA256": "abc123"},
+        )
+        request = self.seen[0]
+        self.assertEqual(("application/zip", "abc123", b"PK archive"),
+                         (request["content_type"], request["checksum"], request["body"]))
+        self.assertEqual("Bearer " + "paired-credential", request["authorization"])
 
     def test_returns_other_content_as_bytes(self):
         self.assertEqual(b"body{}", self.api.call("GET", "/styles.css", token=None).body)
@@ -1136,6 +1150,578 @@ class RestartVerdictTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(CheckSkipped, "too slow to stop a process within its first seconds"):
                 validate.check_quick_restart(mirror.context(directory))
+
+
+CLIP_SENTENCES = {
+    "mirror-go-to-sleep.wav": [("mirror go to sleep", 1.0)],
+    "mirror-wake-up.wav": [("mirror wake up", 1.0)],
+    # What the recogniser makes of "I am going to sleep early tonight".
+    "talk-of-sleep.wav": [("[unk] go to sleep [unk]", 1.0), ("night", 1.0)],
+}
+SPOKEN = {
+    "go to sleep": "sleep", "good night": "sleep", "wake up": "wake", "good morning": "wake",
+    "brighter": "brighter", "dimmer": "dimmer",
+}
+
+
+def glass(*, dashboard=True, caption=False):
+    """A small frame of the glass: one lit stroke of the dashboard, one of a caption."""
+    width, height = 10, 50
+    pixels = bytearray(bytes([0, 0, 0, 255]) * (width * height))
+    for lit, column, row in ((dashboard, 1, 2), (caption, 5, 45)):
+        if lit:
+            offset = (row * width + column) * 4
+            pixels[offset:offset + 3] = b"\xff\xff\xff"
+    return screen_capture.Screenshot(width, height, bytes(pixels))
+
+
+class SpeakingMirror:
+    """Mirror Home's voice as the checks meet it: the API, the recogniser's
+    process and the caption on the glass. ``faults`` name what a build gets wrong."""
+
+    def __init__(self, test, *faults, test_hooks=True):
+        self.clock = fake_time(test)
+        self.faults = set(faults)
+        self.test_hooks = test_hooks
+        self.enabled = "on-from-the-start" in self.faults
+        self.model = None
+        self.permission = True
+        self.sleeping = False
+        self.wake_brightness = 180
+        self.run = 7
+        self.pid = 4100
+        self.restarts = 0
+        self.down = False
+        self.installing = False
+        self.has_listened = False
+        self.planted = False
+        self.counts = {"sentences": 0, "wakeWords": 0, "commands": 0, "notUnderstood": 0, "unsure": 0}
+        self.recent = []
+        self.last_command = None
+        self.window_until = 0.0
+        self.caption = ""
+        self.caption_until = 0.0
+        self.clips = {
+            (validate.VOICE_CLIPS / name).read_bytes(): sentences
+            for name, sentences in CLIP_SENTENCES.items()
+        }
+        self.api = FakeApi()
+        self.api.call = self.call
+        self.adb = FakeAdb()
+        self.adb.shell = self.shell
+        self.adb.capture = self.capture
+
+    def context(self, directory, *, model=True):
+        ctx = validate.Context(self.adb, self.api, pathlib.Path(directory))
+        ctx.awake_peak = 255
+        if model:
+            ctx.voice_model = pathlib.Path(directory) / "model.zip"
+            ctx.voice_model.write_bytes(validate.model_archive({
+                f"vosk-model-test/{name}": b"weights" for name in validate.VOICE_MODEL_FILES
+            }))
+        return ctx
+
+    def state(self):
+        if not self.enabled:
+            return "off"
+        if self.model is None:
+            return "no-model"
+        if not self.permission:
+            return "no-permission"
+        if self.installing and "listens-through-installations" not in self.faults:
+            return "paused"
+        if self.model["name"] == "hollow-model":
+            return "error"
+        if self.down or "never-listens" in self.faults:
+            return "starting"
+        self.has_listened = True
+        return "listening"
+
+    def process_running(self):
+        state = self.state()
+        if state == "no-permission":
+            return "runs-unpermitted" in self.faults
+        if state in ("off", "no-model"):
+            return "process-lingers" in self.faults and self.has_listened
+        if state == "paused":
+            return "keeps-its-memory" in self.faults
+        return not self.down
+
+    def voice(self):
+        state = self.state()
+        running = self.process_running()
+        return {
+            "enabled": self.enabled,
+            "state": state,
+            "detail": {"error": "The speech model could not be loaded"}.get(state, f"Voice is {state}"),
+            "wakeWord": "mirror",
+            "commands": [
+                {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep", "mirror good night"]},
+                {"id": "wake", "caption": "Awake", "say": ["mirror wake up", "mirror good morning"]},
+            ],
+            "model": self.model,
+            "permissionGranted": self.permission,
+            "process": {
+                "pid": self.pid if running else None,
+                "pssKb": (300_000 if "heavy" in self.faults else 120_000) if running else None,
+                "restarts": self.restarts,
+            },
+            "recogniser": {
+                "modelLoadMs": 1300, "cpuShare": 0.03 if state == "listening" else None,
+                "behindMs": 0, "listenedSeconds": 5,
+            },
+            "microphone": {"levelDb": -120.0, "peakDb": -120.0, "silent": True},
+            "counts": dict(self.counts),
+            "lastCommand": self.last_command,
+            "recent": list(self.recent),
+            "testHooks": self.test_hooks,
+        }
+
+    def call(self, method, path, body=None, **options):
+        self.api.calls.append((method, path, body))
+        route = (method, path)
+        if options.get("token") == "not-a-credential" and "open-to-all" not in self.faults:
+            return Reply(401, {"error": "Unauthorized"}, {})
+        if route == ("GET", "/api/v1/voice"):
+            return Reply(200, self.voice(), {})
+        if route == ("PUT", "/api/v1/voice"):
+            if not isinstance(body.get("enabled"), bool):
+                return Reply(400, {"error": "enabled must be true or false"}, {})
+            self.enabled = body["enabled"]
+            return Reply(200, self.voice(), {})
+        if route == ("PUT", "/api/v1/voice/model"):
+            return self.upload(options["data"], options.get("content_type") or "", options.get("headers") or {})
+        if route == ("DELETE", "/api/v1/voice/model"):
+            if "model-stays" not in self.faults:
+                self.model = None
+            return Reply(200, self.voice(), {})
+        if route == ("POST", "/api/v1/voice/test/sentence"):
+            if self.state() != "listening" and "hears-while-off" not in self.faults:
+                return Reply(409, {"error": "Voice is not listening"}, {})
+            self.hear(body["text"], body.get("confidence", 1.0))
+            return Reply(202, {"accepted": True}, {})
+        if route == ("POST", "/api/v1/voice/test/clip"):
+            if self.state() != "listening":
+                return Reply(409, {"error": "Voice is not listening"}, {})
+            for text, confidence in self.clips[options["data"]]:
+                self.hear(text, confidence)
+            return Reply(202, {"accepted": True}, {})
+        if route == ("GET", "/api/v1/automation"):
+            return Reply(200, {"sleeping": self.sleeping, "wakeBrightness": self.wake_brightness}, {})
+        if route == ("PUT", "/api/v1/automation"):
+            self.sleeping = False
+            self.wake_brightness = body["wakeBrightness"]
+            return Reply(200, {"sleeping": False, "wakeBrightness": self.wake_brightness}, {})
+        if route == ("GET", "/api/v1/health"):
+            report = healthy_report()
+            crashed = "crashes-on-a-bad-model" in self.faults and self.state() == "error"
+            report["process"]["runId"] = self.run + (1 if crashed else 0)
+            report["voice"] = self.voice()
+            return Reply(200, report, {})
+        if route == ("GET", "/api/v1/status"):
+            return Reply(200, {"voice": {"enabled": self.enabled, "state": self.state()}}, {})
+        raise AssertionError(f"Unexpected {method} {path}")
+
+    def upload(self, data, content_type, headers):
+        if not content_type.startswith("application/zip"):
+            return Reply(415, {"error": "A zip Content-Type is required"}, {})
+        checksum = hashlib.sha256(data).hexdigest()
+        claimed = headers.get("X-Content-SHA256")
+        if claimed and claimed != checksum and "trusts-any-checksum" not in self.faults:
+            return Reply(400, {"error": "The upload does not match its SHA-256"}, {})
+        try:
+            names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+        except zipfile.BadZipFile:
+            return Reply(400, {"error": "The upload is not a zip archive"}, {})
+        if any(".." in name for name in names):
+            self.planted = "follows-paths" in self.faults
+            return Reply(400, {"error": "The archive names a file outside itself"}, {})
+        root = names[0].split("/")[0]
+        if not all(f"{root}/{name}" in names for name in validate.VOICE_MODEL_FILES):
+            return Reply(400, {"error": "This is not a speech model"}, {})
+        self.model = {"name": root, "bytes": len(data), "files": len(names), "sha256": checksum, "installedAt": 0}
+        return Reply(201, self.voice(), {})
+
+    def hear(self, text, confidence=1.0):
+        now = self.clock.now
+        self.counts["sentences"] += 1
+        words = text.split()
+        named = bool(words) and words[0] == "mirror"
+        while words and words[0] == "mirror":
+            words.pop(0)
+        rest = " ".join(words)
+        sure = confidence >= 0.8 or "acts-when-unsure" in self.faults
+        addressed = named or now <= self.window_until or "needs-no-name" in self.faults
+        command = SPOKEN.get(rest)
+        if command is None and "takes-talk-for-commands" in self.faults:
+            command = next((name for wording, name in SPOKEN.items() if wording in rest), None)
+            addressed = True
+        if named and not rest:
+            if sure:
+                self.counts["wakeWords"] += 1
+                self.window_until = now + (600 if "window-never-closes" in self.faults else 6)
+                self.show("Listening", 6)
+            else:
+                self.counts["unsure"] += 1
+        elif command and addressed:
+            if not sure:
+                self.counts["unsure"] += 1
+                return
+            self.window_until = 0.0
+            self.counts["commands"] += 1
+            shown = self.carry_out(command)
+            self.last_command = {"id": command, "at": 0, "shown": shown}
+            self.recent.append({"heard": text, "outcome": "command", "command": command})
+            self.show(shown, 2.5)
+        elif named:
+            self.counts["notUnderstood"] += 1
+            self.window_until = now + 6
+            self.show("Didn\u2019t catch that", 6)
+
+    def carry_out(self, command):
+        if command == "sleep":
+            self.sleeping = "deaf" not in self.faults
+            return "Sleeping"
+        was_sleeping = self.sleeping
+        self.sleeping = False
+        if command == "wake" or was_sleeping:
+            return "Awake"
+        step = 40 if command == "brighter" else -40
+        self.wake_brightness = max(15, min(255, self.wake_brightness + step))
+        return "Brighter" if step > 0 else "Dimmer"
+
+    def show(self, caption, seconds):
+        self.caption = "" if "no-caption" in self.faults else caption
+        self.caption_until = self.clock.now + seconds
+
+    def captioned(self):
+        return bool(self.caption) and self.clock.now <= self.caption_until and not self.sleeping
+
+    def capture(self):
+        return glass(dashboard=not self.sleeping, caption=self.captioned())
+
+    def shell(self, *arguments, **_options):
+        self.adb.commands.append(("shell", *arguments))
+        if arguments == ("ps",):
+            lines = ["USER PID PPID VSIZE RSS WCHAN PC NAME", f"u0_a55 2604 1 1 1 0 0 S {validate.PACKAGE}"]
+            if self.process_running():
+                lines.append(f"u0_a55 {self.pid} 1 1 1 0 0 S {validate.VOICE_PROCESS}")
+            return "\n".join(lines)
+        if arguments[0] == "kill":
+            if "dashboard-goes-too" in self.faults:
+                self.run += 1
+            if "stays-down" in self.faults:
+                self.down = True
+            else:
+                self.pid += 1
+                self.restarts += 1
+        elif arguments[:3] == ("run-as", validate.PACKAGE, "ls"):
+            return "planted.xml\n" if self.planted else "preferences.xml\n"
+        elif arguments[:2] == ("pm", "revoke"):
+            self.permission = False
+            self.run += 1
+        elif arguments[:2] == ("pm", "grant"):
+            self.permission = "never-notices-the-grant" not in self.faults
+        elif arguments[:2] == ("pm", "install-create"):
+            if "no-installations" in self.faults:
+                return "Error: java.lang.SecurityException"
+            self.installing = True
+            return "Success: created install session [1234]"
+        elif arguments[:2] == ("pm", "install-abandon"):
+            self.installing = "stays-away" in self.faults
+            self.pid += 1
+            if "counts-stepping-aside" in self.faults:
+                self.restarts += 1
+            if "dashboard-goes-too" in self.faults:
+                self.run += 1
+        elif arguments[0] == "cat":
+            return f'<node text="{self.caption if self.captioned() else ""}" bounds="[0,0][1,1]" />'
+        return ""
+
+
+class VoiceVerdictTest(unittest.TestCase):
+    NEED_LISTENING = (
+        validate.check_voice_listens, validate.check_voice_commands, validate.check_voice_wake_word,
+        validate.check_voice_recovers, validate.check_voice_steps_aside, validate.check_voice_permission,
+        validate.check_voice_returns,
+    )
+
+    def run_check(self, check, *faults, **options):
+        mirror = SpeakingMirror(self, *faults, **{k: v for k, v in options.items() if k == "test_hooks"})
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = mirror.context(directory, model=options.get("model", True))
+            if "prepare" in options:
+                options["prepare"](mirror, ctx)
+            check(ctx)
+            return mirror, ctx
+
+    def fails(self, check, fault, message, **options):
+        with self.assertRaisesRegex(CheckFailed, message):
+            self.run_check(check, fault, **options)
+
+    def test_every_check_passes_on_a_build_that_behaves(self):
+        for name, _, check, _ in validate.EMULATOR_CHECKS:
+            if name.startswith("voice-"):
+                with self.subTest(name):
+                    self.run_check(check)
+
+    def test_voice_is_off_until_switched_on_and_is_left_off(self):
+        mirror, ctx = self.run_check(validate.check_voice_off)
+        self.assertFalse(mirror.enabled)
+        self.assertEqual("mirror go to sleep", ctx.details["canBeSaid"][0])
+        self.fails(validate.check_voice_off, "on-from-the-start", "Voice is no-model before anyone switched it on")
+        self.fails(validate.check_voice_off, "open-to-all", "Voice can be read without a pairing")
+        self.fails(validate.check_voice_off, "hears-while-off", "A sentence was taken while nothing listens")
+
+    def test_a_release_build_is_not_handed_a_sentence_while_off(self):
+        mirror, _ = self.run_check(validate.check_voice_off, test_hooks=False)
+        self.assertNotIn("/api/v1/voice/test/sentence", [path for _, path, _ in mirror.api.calls])
+
+    def test_what_is_no_model_must_be_refused_and_leave_nothing_behind(self):
+        mirror, ctx = self.run_check(validate.check_voice_model)
+        self.assertEqual("The speech model could not be loaded", ctx.details["unloadableModel"])
+        self.assertIsNone(mirror.model)
+        self.assertFalse(mirror.enabled)
+        self.fails(validate.check_voice_model, "trusts-any-checksum", "not what its checksum says was answered 201, not 400")
+        self.fails(validate.check_voice_model, "follows-paths", "wrote a file outside the model's folder")
+        self.fails(validate.check_voice_model, "crashes-on-a-bad-model", "did not carry on over a speech model that cannot be loaded")
+        self.fails(validate.check_voice_model, "model-stays", "After removal")
+
+    def test_a_model_that_cannot_be_loaded_is_switched_off_and_removed_even_when_the_check_fails(self):
+        mirror = SpeakingMirror(self, "crashes-on-a-bad-model")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(CheckFailed):
+                validate.check_voice_model(mirror.context(directory))
+        self.assertFalse(mirror.enabled)
+        self.assertIsNone(mirror.model)
+
+    def test_listening_installs_the_model_with_its_checksum_and_switches_voice_on(self):
+        mirror, ctx = self.run_check(validate.check_voice_listens)
+        self.assertEqual("vosk-model-test", ctx.details["model"])
+        self.assertEqual(120_000, ctx.details["recogniserPssKb"])
+        self.assertTrue(mirror.enabled and ctx.voice_left_on)
+        self.assertEqual(mirror.model["sha256"], ctx.voice_checksum)
+        uploads = [call for call in mirror.api.calls if call[:2] == ("PUT", "/api/v1/voice/model")]
+        self.assertEqual(1, len(uploads))
+        self.fails(validate.check_voice_listens, "never-listens", "Voice was not listening within 120 s; it is starting")
+        self.fails(validate.check_voice_listens, "heavy", "The recogniser's process holds 300000 KB")
+
+    def test_a_model_that_is_installed_already_is_not_sent_again(self):
+        mirror = SpeakingMirror(self)
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = mirror.context(directory)
+            validate.check_voice_listens(ctx)
+            validate.check_voice_recovers(ctx)
+        uploads = [call for call in mirror.api.calls if call[:2] == ("PUT", "/api/v1/voice/model")]
+        self.assertEqual(1, len(uploads))
+
+    def test_checks_that_need_the_recogniser_skip_without_a_model(self):
+        for check in self.NEED_LISTENING:
+            with self.subTest(check.__name__):
+                with self.assertRaisesRegex(CheckSkipped, "no speech model on this computer"):
+                    self.run_check(check, model=False)
+
+    def test_a_release_build_is_checked_as_far_as_it_can_be_without_speaking_to_it(self):
+        for check in (validate.check_voice_commands, validate.check_voice_wake_word):
+            with self.subTest(check.__name__):
+                with self.assertRaisesRegex(CheckSkipped, "a release build cannot be given test speech"):
+                    self.run_check(check, test_hooks=False)
+        for check in (validate.check_voice_listens, validate.check_voice_recovers,
+                      validate.check_voice_steps_aside, validate.check_voice_permission,
+                      validate.check_voice_returns):
+            with self.subTest(check.__name__):
+                mirror, _ = self.run_check(check, test_hooks=False)
+                spoken = [path for _, path, _ in mirror.api.calls if path.startswith("/api/v1/voice/test/")]
+                self.assertEqual([], spoken)
+        self.fails(validate.check_voice_recovers, "stays-down", "waiting for the recogniser to come back",
+                   test_hooks=False)
+        self.fails(validate.check_voice_returns, "process-lingers", "process to end once voice is off",
+                   test_hooks=False)
+
+    def test_spoken_commands_act_and_talk_does_not(self):
+        mirror, ctx = self.run_check(validate.check_voice_commands)
+        self.assertEqual(["mirror go to sleep", "mirror wake up"], ctx.details["heard"])
+        self.assertEqual(4, ctx.details["sentences"])
+        self.assertFalse(mirror.sleeping)
+        self.fails(validate.check_voice_commands, "deaf", "waiting for the Mirror to sleep when told to")
+        self.fails(validate.check_voice_commands, "takes-talk-for-commands", "Talk that holds a command's words was taken for a command")
+
+    def test_a_mirror_left_asleep_by_a_failed_check_is_woken(self):
+        mirror = SpeakingMirror(self, "takes-talk-for-commands")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(CheckFailed):
+                validate.check_voice_commands(mirror.context(directory))
+        self.assertFalse(mirror.sleeping)
+
+    def test_only_what_follows_the_name_for_sure_counts(self):
+        mirror, ctx = self.run_check(validate.check_voice_wake_word)
+        self.assertEqual({"commands": 4, "wakeWords": 3, "notUnderstood": 1, "unsure": 1}, ctx.details["counted"])
+        self.assertEqual(180, mirror.wake_brightness)
+        self.fails(validate.check_voice_wake_word, "needs-no-name", "A command without the Mirror's name was carried out")
+        self.fails(validate.check_voice_wake_word, "no-caption", "The glass did not show that the Mirror listens")
+        self.fails(validate.check_voice_wake_word, "acts-when-unsure", "A command the recogniser was unsure of was carried out")
+        self.fails(validate.check_voice_wake_word, "window-never-closes", "carried out long after the Mirror's name")
+
+    def test_the_caption_of_the_command_before_is_not_taken_for_the_next(self):
+        # "Awake" is still on the glass when the name is said, unless the check waits.
+        mirror = SpeakingMirror(self)
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = mirror.context(directory)
+            validate.check_voice_wake_word(ctx)
+            self.assertTrue((pathlib.Path(directory) / "voice-listening.png").is_file())
+
+    def test_a_stopped_recogniser_must_return_alone(self):
+        mirror, ctx = self.run_check(validate.check_voice_recovers)
+        self.assertEqual((4100, 4101), (ctx.details["stoppedProcess"], ctx.details["newProcess"]))
+        self.assertIn(("shell", "kill", "4100"), mirror.adb.commands)
+        self.fails(validate.check_voice_recovers, "stays-down", "waiting for the recogniser to come back")
+        self.fails(validate.check_voice_recovers, "dashboard-goes-too", "did not carry on when its recogniser stopped")
+
+    def test_voice_steps_aside_while_an_app_is_installed(self):
+        mirror, ctx = self.run_check(validate.check_voice_steps_aside)
+        self.assertEqual(1234, ctx.details["installation"])
+        self.assertFalse(mirror.installing)
+        self.assertEqual(0, mirror.restarts)
+        self.fails(validate.check_voice_steps_aside, "no-installations", "Android began no installation: Error")
+        self.fails(validate.check_voice_steps_aside, "listens-through-installations",
+                   "Voice was not paused within 20 s; it is listening")
+        self.fails(validate.check_voice_steps_aside, "keeps-its-memory", "process to end while an app is installed")
+        self.fails(validate.check_voice_steps_aside, "stays-away", "Voice was not listening within 120 s; it is paused")
+        self.fails(validate.check_voice_steps_aside, "counts-stepping-aside", "counted as a recogniser that stopped")
+        self.fails(validate.check_voice_steps_aside, "dashboard-goes-too", "did not carry on while its recogniser stepped aside")
+
+    def test_the_installation_is_given_up_when_the_check_fails(self):
+        mirror = SpeakingMirror(self, "listens-through-installations")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(CheckFailed):
+                validate.check_voice_steps_aside(mirror.context(directory))
+        self.assertEqual(("shell", "pm", "install-abandon", "1234"), mirror.adb.commands[-1])
+
+    def test_voice_waits_for_the_microphone_permission(self):
+        mirror, _ = self.run_check(validate.check_voice_permission)
+        self.assertTrue(mirror.permission)
+        self.fails(validate.check_voice_permission, "runs-unpermitted", "runs without the microphone permission")
+        self.fails(validate.check_voice_permission, "never-notices-the-grant", "it is no-permission")
+
+    def test_the_permission_is_given_back_when_the_check_fails(self):
+        mirror = SpeakingMirror(self, "runs-unpermitted")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(CheckFailed):
+                validate.check_voice_permission(mirror.context(directory))
+        self.assertEqual(("shell", "pm", "grant", validate.PACKAGE, validate.RECORD_AUDIO), mirror.adb.commands[-1])
+
+    def test_after_the_restarts_voice_must_still_be_on_and_end_switched_off(self):
+        mirror, ctx = self.run_check(validate.check_voice_returns)
+        self.assertFalse(mirror.enabled or ctx.voice_left_on)
+        self.assertIsNone(mirror.model)
+        self.fails(validate.check_voice_returns, "process-lingers", "process to end once voice is off")
+
+        def switched_on_earlier(_mirror, ctx):
+            ctx.voice_left_on = True
+
+        with self.assertRaisesRegex(CheckFailed, "switched on with a speech model before the restarts, and is not after them: off"):
+            self.run_check(validate.check_voice_returns, prepare=switched_on_earlier)
+
+    def test_the_voice_checks_come_before_the_restarts_and_the_last_after_them(self):
+        names = [name for name, _, _, _ in validate.EMULATOR_CHECKS]
+        voice_checks = [name for name in names if name.startswith("voice-")]
+        self.assertEqual(
+            ["voice-off", "voice-model", "voice-listens", "voice-commands", "voice-wake-word",
+             "voice-recovers", "voice-steps-aside", "voice-permission", "voice-returns"],
+            voice_checks,
+        )
+        self.assertLess(names.index("voice-permission"), names.index("restart"))
+        self.assertGreater(names.index("voice-returns"), names.index("reboot"))
+        self.assertEqual("voice-off", validate.UPGRADE_CHECKS[-1][0])
+
+    def test_the_clips_are_sixteen_kilohertz_mono_as_the_recogniser_takes_them(self):
+        import wave
+
+        for name in CLIP_SENTENCES:
+            with wave.open(str(validate.VOICE_CLIPS / name), "rb") as clip:
+                self.assertEqual((1, 2, 16_000), (clip.getnchannels(), clip.getsampwidth(), clip.getframerate()), name)
+                self.assertLess(clip.getnframes() / clip.getframerate(), 4, name)
+
+
+class SpeechModelTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.kept = pathlib.Path(self.directory.name) / "kept-model.zip"
+        patcher = mock.patch.object(validate.voice, "DEFAULT_MODEL", self.kept)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_model_that_is_named_must_be_there(self):
+        named = pathlib.Path(self.directory.name) / "named.zip"
+        with self.assertRaisesRegex(CheckFailed, "Speech model not found"):
+            validate.speech_model(named)
+        named.write_bytes(b"any model")
+        self.assertEqual(named, validate.speech_model(named))
+
+    def test_without_one_the_checks_that_need_it_are_skipped_and_the_run_says_so(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertIsNone(validate.speech_model(None))
+        self.assertIn("python tools/voice.py fetch-model", output.getvalue())
+
+    def test_the_kept_model_is_used_only_if_it_is_the_known_one(self):
+        self.kept.write_bytes(b"the model")
+        with self.assertRaisesRegex(CheckFailed, "is not the speech model this suite knows"):
+            validate.speech_model(None)
+        with mock.patch.object(validate.voice, "MODEL_SHA256", hashlib.sha256(b"the model").hexdigest()):
+            self.assertEqual(self.kept, validate.speech_model(None))
+
+    def test_a_missing_model_stops_the_run_before_anything_is_built_or_started(self):
+        with mock.patch.object(validate.android_emulator, "Emulator") as emulator, \
+                mock.patch.object(validate, "build_debug_apk") as build, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(1, validate.main(["emulator", "--voice-model", str(self.kept)]))
+        emulator.assert_not_called()
+        build.assert_not_called()
+        self.assertIn("validate: Speech model not found", errors.getvalue())
+
+    def test_a_model_archive_holds_the_files_it_is_given(self):
+        archive = zipfile.ZipFile(io.BytesIO(validate.model_archive({"m/am/final.mdl": b"a", "m/conf/x.conf": b"b"})))
+        self.assertEqual(["m/am/final.mdl", "m/conf/x.conf"], archive.namelist())
+        self.assertEqual(b"b", archive.read("m/conf/x.conf"))
+
+
+class ScriptErrorsTest(unittest.TestCase):
+    ERROR = {"message": "Uncaught TypeError: undefined is not a function", "source": "custom.js", "line": 61}
+
+    def context(self, directory, *, errors=0, recent=()):
+        self.report = healthy_report()
+        self.report["dashboard"].update(consoleErrors=errors, recentConsoleErrors=list(recent))
+        api = FakeApi({("GET", "/api/v1/health"): lambda _body: self.report})
+        return validate.Context(FakeAdb([frame(255)]), api, pathlib.Path(directory))
+
+    def test_a_run_without_script_errors_passes_and_keeps_the_last_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory)
+            ctx.restart_home()
+            validate.check_script_errors(ctx)
+            self.assertEqual([], ctx.details["scriptErrors"])
+            self.assertTrue((pathlib.Path(directory) / "final.png").is_file())
+
+    def test_an_error_that_a_restarted_process_took_along_is_still_counted_and_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory, errors=1, recent=[self.ERROR])
+            ctx.restart_home()
+            self.assertIn(("shell", "am", "force-stop", validate.PACKAGE), ctx.adb.commands)
+            # The process that Android starts in its place knows of no error.
+            self.report = healthy_report()
+            with self.assertRaisesRegex(CheckFailed, "logged 1 script errors during the run: .*Uncaught TypeError"):
+                validate.check_script_errors(ctx)
+
+    def test_errors_of_every_process_of_the_run_add_up(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ctx = self.context(directory, errors=2, recent=[self.ERROR, self.ERROR])
+            ctx.keep_console_errors(self.report)
+            self.report = healthy_report()
+            self.report["dashboard"].update(consoleErrors=1, recentConsoleErrors=[dict(self.ERROR, line=7)])
+            with self.assertRaisesRegex(CheckFailed, "logged 3 script errors"):
+                validate.check_script_errors(ctx)
+            self.assertEqual([61, 61, 7], [error["line"] for error in ctx.details["scriptErrors"]])
 
 
 class SystemDialogTest(unittest.TestCase):
