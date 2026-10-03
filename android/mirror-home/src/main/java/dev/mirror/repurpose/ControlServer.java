@@ -819,19 +819,9 @@ public final class ControlServer extends NanoHTTPD {
         if (length < 0 || length > MAX_BODY_BYTES) {
             throw new IOException("Request body is too large");
         }
-        byte[] bytes = new byte[length];
-        InputStream input = session.getInputStream();
-        int read = 0;
-        while (read < length) {
-            int count = input.read(bytes, read, length - read);
-            if (count < 0) {
-                throw new IOException("Request body ended early");
-            }
-            read += count;
-        }
         return length == 0
                 ? new JSONObject()
-                : new JSONObject(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+                : new JSONObject(RequestText.read(session.getInputStream(), length));
     }
 
     private static Response.IStatus boardStatus(int status) {
@@ -1387,46 +1377,22 @@ public final class ControlServer extends NanoHTTPD {
                     Response.Status.BAD_REQUEST,
                     "Content-Length is required");
         }
+        int length;
         try {
-            if (Integer.parseInt(lengthValue) > MAX_BODY_BYTES) {
-                throw new ResponseException(
-                        Response.Status.BAD_REQUEST,
-                        "Request body is too large");
-            }
+            length = Integer.parseInt(lengthValue);
         } catch (NumberFormatException error) {
             throw new ResponseException(
                     Response.Status.BAD_REQUEST,
                     "Invalid Content-Length header");
         }
-        Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
-        String body = files.get("postData");
-        if (body == null && files.get("content") != null) {
-            body = readTemporaryBody(files.get("content"));
+        if (length < 0 || length > MAX_BODY_BYTES) {
+            throw new ResponseException(
+                    Response.Status.BAD_REQUEST,
+                    "Request body is too large");
         }
-        if (body == null || body.isEmpty()) {
-            return new JSONObject();
-        }
-        return new JSONObject(body);
-    }
-
-    private static String readTemporaryBody(String path) throws IOException {
-        File source = new File(path);
-        if (!source.isFile() || source.length() > MAX_BODY_BYTES) {
-            throw new IOException("Invalid temporary request body");
-        }
-        try (FileInputStream input = new FileInputStream(source);
-                ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-                output.write(buffer, 0, count);
-                if (output.size() > MAX_BODY_BYTES) {
-                    throw new IOException("Request body is too large");
-                }
-            }
-            return new String(output.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
-        }
+        // Not NanoHTTPD's parseBody: it reads a POST as ASCII; see RequestText.
+        String body = RequestText.read(session.getInputStream(), length);
+        return body.trim().isEmpty() ? new JSONObject() : new JSONObject(body);
     }
 
     private static long contentLength(IHTTPSession session) throws ResponseException {

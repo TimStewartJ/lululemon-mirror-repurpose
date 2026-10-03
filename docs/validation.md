@@ -112,6 +112,7 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `pairing-window` | **Show code** needs a credential, pairs exactly one more device, and a revoked credential stops working. |
 | `pairing-lockout` | Five wrong codes lock pairing, even for the correct code, with a `Retry-After`; an owner's new code clears the lock. |
 | `pairing-widget` | The Pairing code widget shows the current code and opens pairing only while it is on the glass. |
+| `note-text` | A note with an accent, a degree sign, Japanese characters and a symbol, sent as the phone controls send it, is stored and answered unchanged. |
 | `notes` | A note posted through the API appears on the glass and leaves it when deleted. |
 | `board-api` | Starting with nothing but the address, as a program would: the board's guide is served without a credential and each example in it works as written. A chosen id creates and then replaces, `PATCH` marks an item done, an ISO 8601 time is read as given, accented and non-Latin text survives whatever `Content-Type` it was sent with, every refusal names the field and points at the guide, pages of a listing add up to the whole, and an item leaves when its time is up, which the glass is told of. |
 | `board-glass` | Seven items go on a Board widget too small for them. The glass lists them a page at a time, in the API's order, and turns pages until each item was shown; no page is taller than the widget. A reminder counts down, an overdue to-do says how long ago, a done item is struck through, and an emptied board leaves the glass. |

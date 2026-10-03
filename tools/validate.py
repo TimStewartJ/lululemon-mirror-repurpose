@@ -1318,6 +1318,23 @@ def check_board_glass(ctx: Context) -> None:
         ctx.api.expect("PUT", "/api/v1/dashboard/layout", json.loads(original))
 
 
+NOTE_TEXT = "Caf\u00e9 at 72\u00b0, \u65e5\u672c \u2600"
+
+
+def check_note_text(ctx: Context) -> None:
+    # As the phone controls send it: UTF-8 bytes, and a Content-Type that names no charset.
+    raw = json.dumps({"text": NOTE_TEXT}, ensure_ascii=False).encode("utf-8")
+    created = ctx.api.call("POST", "/api/v1/notes", data=raw, content_type="application/json")
+    require(created.status == 201, f"Posting a note answered {created.status}: {describe(created.body)}")
+    note = created.body["note"]
+    try:
+        require(note["text"] == NOTE_TEXT, f"The note was answered as {note['text']!r}")
+        kept = [entry["text"] for entry in ctx.api.expect("GET", "/api/v1/notes")["notes"] if entry["id"] == note["id"]]
+        require(kept == [NOTE_TEXT], f"The note is kept as {kept!r}")
+    finally:
+        ctx.api.call("DELETE", f"/api/v1/notes/{note['id']}")
+
+
 def check_offline_fallback(ctx: Context) -> None:
     ctx.api.expect("PUT", "/api/v1/dashboard", {"url": UNREACHABLE_PAGE})
     try:
@@ -2225,6 +2242,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("pairing-window", "Show code pairs one more device, once", check_pairing_window, False),
     ("pairing-lockout", "Five wrong codes lock pairing; an owner's new code clears it", check_pairing_lockout, False),
     ("pairing-widget", "The Pairing code widget opens pairing while it is on the glass", check_pairing_widget, False),
+    ("note-text", "A note keeps its accents, signs and other scripts", check_note_text, False),
     ("notes", "A note posted from the controls appears on the glass", check_notes, False),
     ("board-api", "A program with only the address can learn the board, post to it and clear it", check_board_api, False),
     ("board-glass", "A board with more than fits turns its pages until everything was shown", check_board_glass, False),

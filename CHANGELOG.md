@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep accents, signs and other scripts in what the controls send. A new note
+  such as "Café at 72°" was stored with replacement characters in place of the
+  é and the °, in every release so far: the web server read a posted request
+  as ASCII unless its Content-Type named a charset, and browsers name none for
+  JSON. Every JSON request is now read as UTF-8, and the emulator suite posts
+  such a note the way the controls do and reads it back (`note-text`).
 - Add voice commands, recognised on the Mirror itself. Say "Mirror, go to
   sleep", "wake up", "brighter", "dimmer" or "next video" (each has a second
   wording, such as "good night"); the glass shows what it did, and the Mirror

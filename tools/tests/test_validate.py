@@ -1686,6 +1686,44 @@ class SpeechModelTest(unittest.TestCase):
         self.assertEqual(b"b", archive.read("m/conf/x.conf"))
 
 
+class NoteTextTest(unittest.TestCase):
+    def mirror(self, *, garbles=False):
+        notes = []
+        sent = []
+
+        def call(method, path, body=None, **options):
+            sent.append((method, path, options))
+            if (method, path) == ("POST", "/api/v1/notes"):
+                text = json.loads(options["data"].decode("ascii" if garbles else "utf-8", errors="replace"))["text"]
+                notes.append({"id": "n1", "text": text})
+                return Reply(201, {"note": notes[-1]}, {})
+            if (method, path) == ("GET", "/api/v1/notes"):
+                return Reply(200, {"notes": list(notes)}, {})
+            if (method, path) == ("DELETE", "/api/v1/notes/n1"):
+                notes.clear()
+                return Reply(200, {}, {})
+            raise AssertionError(f"Unexpected {method} {path}")
+
+        api = FakeApi()
+        api.call = call
+        return api, notes, sent
+
+    def test_a_note_is_sent_as_the_controls_send_it_and_must_come_back_unchanged(self):
+        api, notes, sent = self.mirror()
+        with tempfile.TemporaryDirectory() as directory:
+            validate.check_note_text(validate.Context(FakeAdb([frame(255)]), api, pathlib.Path(directory)))
+        self.assertEqual([], notes)
+        self.assertEqual("application/json", sent[0][2]["content_type"])
+        self.assertIn("\u00e9".encode("utf-8"), sent[0][2]["data"])
+
+    def test_a_build_that_reads_the_note_as_ascii_fails_and_the_note_is_deleted(self):
+        api, notes, _ = self.mirror(garbles=True)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(CheckFailed, "The note was answered as"):
+                validate.check_note_text(validate.Context(FakeAdb([frame(255)]), api, pathlib.Path(directory)))
+        self.assertEqual([], notes)
+
+
 class ScriptErrorsTest(unittest.TestCase):
     ERROR = {"message": "Uncaught TypeError: undefined is not a function", "source": "custom.js", "line": 61}
 
