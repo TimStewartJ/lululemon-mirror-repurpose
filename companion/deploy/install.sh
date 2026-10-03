@@ -20,16 +20,23 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# A system may have an older Node.js without npm on the path, and the one that
+# is wanted in nvm, which a shell that is not a login shell has not loaded.
+lacks_node() {
+  ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 ||
+    [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -lt 24 ]
+}
 # nvm.sh reads unset variables, so it is loaded before the strict mode below.
-if ! command -v node >/dev/null 2>&1 && [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+if lacks_node && [ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
   . "${NVM_DIR:-$HOME/.nvm}/nvm.sh"
 fi
 set -euo pipefail
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js was not found. Install Node 24, for example with nvm, and run this again." >&2
+if lacks_node; then
+  echo "Node.js 24 with npm was not found. Install it, for example with nvm, and run this again." >&2
   exit 1
 fi
+echo "Using Node.js $(node --version) at $(command -v node)."
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 was not found. Install Python 3.10 or later and run this again." >&2
   exit 1

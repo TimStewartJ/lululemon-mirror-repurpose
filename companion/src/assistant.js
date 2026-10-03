@@ -9,6 +9,13 @@ const NAME = /^\s*(?:(?:hey|hi|ok|okay)[\s,]+)?(?:mirror|mira|mirra)\b[\s,.!?;:-
 // What speech recognition writes when it hears no words: [BLANK_AUDIO], (music).
 const ANNOTATION = /[[(][^\])]*[\])]/g;
 
+const SECOND_LOOK =
+  "Weigh those words once more before you let them pass. " +
+  "They are for you if they ask for something you can do or tell (the time, the weather, the board, a list, a reminder, " +
+  "the background, the brightness, the display), or greet you or thank you. Then answer them or act on them now. " +
+  "They are not for you if someone is telling or asking another person something, or speaking about a mirror " +
+  "and not to one. Then call ignore again.";
+
 /** Takes one leading "mirror", "hey mirror" and the like off a transcript. */
 export function withoutName(transcript) {
   return transcript.replace(NAME, "").trim();
@@ -157,27 +164,55 @@ export function createAssistant({
       }
       const fresh = isFresh();
       const turn = newTurn("conversation", seen.state, seen.at);
+      // Typed words cannot have been overheard, and a sentence that both the
+      // mirror and the transcript have beginning with its name was said to it.
+      turn.certain = source !== "voice" || named === true;
       const agentStarted = clock.now();
       let text = "";
       let failure = null;
+      const run = (prompt, fresh, timeoutMs) =>
+        within(
+          brain.run({ session: "conversation", fresh, system: conversationSystem(memory.lines()), prompt, tools: conversationTools, turn, timeoutMs }),
+          timeoutMs + 1500,
+        );
       try {
-        const asked = brain.run({
-          session: "conversation",
-          fresh,
-          system: conversationSystem(memory.lines()),
-          prompt: conversationMessage({
-            words,
-            source,
-            addressed,
-            named,
-            question: asksSomething(lastReply) ? lastReply : "",
-            snapshot: seen.state?.snapshot ?? null,
-          }),
-          tools: conversationTools,
-          turn,
-          timeoutMs: budget,
-        });
-        text = (await within(asked, budget + 1500)).text;
+        text = (
+          await run(
+            conversationMessage({
+              words,
+              source,
+              addressed,
+              named,
+              question: asksSomething(lastReply) ? lastReply : "",
+              snapshot: seen.state?.snapshot ?? null,
+            }),
+            fresh,
+            budget,
+          )
+        ).text;
+        // A model that passed such words over all the same, and so said
+        // nothing, is asked once more.
+        const left = started + answerWithinMs - clock.now() - 1500;
+        if (turn.certain && !oneLine(text) && turn.changes === 0 && left >= 3000) {
+          log("request.passed_over", { id });
+          text = (
+            await run(
+              "Those words were addressed to you and are meant for you. Answer them now in one line, or act on them. Do not call ignore.",
+              false,
+              Math.min(agentTimeoutMs, left),
+            )
+          ).text;
+        }
+        // Words that may or may not have been for the mirror, and were
+        // passed over, get a second look. Asked once, the model drops about
+        // one request in four that was said to it, now this one and now
+        // that; talk between people it drops both times.
+        const leftToLook = started + answerWithinMs - clock.now() - 1500;
+        if (!turn.certain && turn.ignored !== null && leftToLook >= 3000) {
+          turn.ignored = null;
+          log("request.second_look", { id });
+          text = (await run(SECOND_LOOK, false, Math.min(agentTimeoutMs, leftToLook))).text;
+        }
       } catch (error) {
         failure = error;
       }

@@ -26,6 +26,7 @@ import { talkTools } from "./tools/talk.js";
  * @property {"conversation"|"greeting"|"tend"} kind
  * @property {string[]} acted Names of the tools that ran, in order.
  * @property {string|null} ignored The reason given to the ignore tool, if it ran.
+ * @property {boolean} [certain] True when the words were surely meant for the mirror: typed, or begun with its name.
  * @property {boolean} closed Set when the run is over; a tool call that comes later is refused.
  * @property {number} changes How many tools altered the mirror in this run.
  * @property {number} [deadline] After this moment a greeting may no longer speak.
@@ -39,6 +40,9 @@ export function newTurn(kind, state = null, stateAt = 0) {
   return { kind, acted: [], ignored: null, closed: false, changes: 0, state, stateAt };
 }
 
+// In a conversation the answer itself is the line on the glass. Given the say
+// tool as well, the model answered through it and the line was shown twice.
+const NOT_FOR_KIND = { conversation: ["say"] };
 const FOR_KIND = {
   conversation: null,
   greeting: ["say"],
@@ -62,7 +66,8 @@ export function createTools(context) {
 /** The tools a kind of run may use: a greeting may only speak, a tending run may only tidy. */
 export function toolsFor(kind, tools) {
   const allowed = FOR_KIND[kind];
-  return allowed ? tools.filter((tool) => allowed.includes(tool.name)) : tools;
+  const kept = (NOT_FOR_KIND[kind] ?? []);
+  return tools.filter((tool) => (allowed ? allowed.includes(tool.name) : !kept.includes(tool.name)));
 }
 
 /**

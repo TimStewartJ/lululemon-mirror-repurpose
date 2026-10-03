@@ -55,7 +55,9 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   assert.match(system, /"palmer" is "calmer"/);
   assert.match(system, /Never say you did something that a tool refused/);
   assert.match(system, /What you remember about this household\n- Nothing yet\./);
-  assert.equal(tools.length, 13);
+  assert.match(system, /When you are unsure whether words were meant for you, they were/);
+  assert.equal(tools.length, 12);
+  assert.ok(!tools.includes("say"), "the answer is the line; there is no second way to show one");
 });
 
 test("a due time worked out by the model lands on the board at the right instant", async (t) => {
@@ -91,13 +93,13 @@ test("with the name heard by the mirror, a transcript without it goes ahead all 
   assert.equal(body.heard, "Miro, make it brighter");
   assert.equal(body.ignored, false);
   assert.equal(brain.runs.length, 1);
-  assert.match(brain.runs[0].prompt, /^Heard when the word "mirror" was picked up:\n"Miro, make it brighter"/);
+  assert.match(brain.runs[0].prompt, /^Your name was heard, and then:\n"Miro, make it brighter"/);
 });
 
 test("after a pause or in answer to a question the words are taken as they are", async (t) => {
   const { say, brain } = await startCompanion(t, [{ text: "Which one?" }, { text: "Mirror it is." }]);
   assert.equal((await say(speech("mirror the film please"), { addressed: "window" })).body.heard, "mirror the film please");
-  assert.match(brain.runs[0].prompt, /^Heard a moment after your name was said:\n"mirror the film please"/);
+  assert.match(brain.runs[0].prompt, /^Said a moment after your name:\n"mirror the film please"/);
   assert.equal((await say(speech("Mirror"), { addressed: "follow-up", id: "utt-2" })).body.heard, "Mirror");
   assert.match(brain.runs[1].prompt, /^You asked: "Which one\?"\nHeard in answer:\n"Mirror"\nIf this is plainly not an answer to you, call ignore\./);
 });
@@ -122,6 +124,7 @@ test("nothing intelligible is ignored without asking the model", async (t) => {
 test("words not meant for the mirror are ignored by the model's decision", async (t) => {
   const { say, mirror, brain } = await startCompanion(t, [
     { calls: [{ tool: "ignore", args: { reason: "a remark about a mirror, not a request" } }, { tool: "set_power", args: { state: "asleep" } }] },
+    { calls: [{ tool: "ignore", args: { reason: "still a remark about a mirror" } }] },
   ]);
   const { status, body } = await say(speech("The mirror in the hall needs cleaning before the guests arrive."));
   assert.equal(status, 200);
@@ -132,10 +135,12 @@ test("words not meant for the mirror are ignored by the model's decision", async
     ignored: true,
     reason: "not-addressed",
     listen: false,
-    acted: ["ignore"],
+    acted: ["ignore", "ignore"],
     ms: body.ms,
   });
   assert.equal(mirror.state.automation.sleeping, false, "ignore ends the turn");
+  assert.match(brain.runs[1].prompt, /^Weigh those words once more/, "it is only dropped at a second look");
+  assert.equal(brain.runs[1].fresh, false);
   assert.equal(brain.ended, 1, "overheard talk does not leave a conversation open");
 });
 
@@ -150,6 +155,8 @@ test("a long or many-lined answer is made to fit the glass", async (t) => {
   const { ask } = await startCompanion(t, [
     { text: "**Here is your list:**\n- milk\n- eggs\n" + "and more ".repeat(40) },
     { calls: [{ tool: "set_power", args: { state: "awake" } }], text: "  " },
+    // Typed words that get no answer are put to the model once more.
+    { text: "" },
     { text: "" },
   ]);
   const long = (await ask("what is on my list?")).body.reply;
@@ -158,6 +165,38 @@ test("a long or many-lined answer is made to fit the glass", async (t) => {
   assert.match(long, /^Here is your list: - milk - eggs and more/);
   assert.equal((await ask("wake up")).body.reply, "Done.", "an act without words is still confirmed");
   assert.equal((await ask("hm")).body.reply, "I have no answer to that.");
+});
+
+test("words that were surely for the mirror cannot be passed over as talk: the model is asked once more", async (t) => {
+  const passedOver = { calls: [{ tool: "ignore", args: { reason: "sounds like talk" } }], text: "" };
+  const { ask, say, brain } = await startCompanion(t, [
+    passedOver, { text: "Two are due tomorrow." },
+    passedOver, { text: "The alarm at 6:30 and the trash at 7." },
+    passedOver, passedOver,
+    passedOver, passedOver,
+    passedOver, { calls: [{ tool: "set_brightness", args: { change: "brighter" } }], text: "A step brighter." },
+  ]);
+  // Typed in the controls.
+  const typed = (await ask("Which reminders are due tomorrow?")).body;
+  assert.deepEqual([typed.ignored, typed.reply], [false, "Two are due tomorrow."]);
+  assert.equal(brain.runs.length, 2);
+  assert.match(brain.runs[0].results[0].error, /meant for you/);
+  assert.match(brain.runs[1].prompt, /^Those words were addressed to you/);
+  assert.equal(brain.runs[1].fresh, false, "the same conversation, which holds the words");
+  // Heard by the mirror after its name, and transcribed with the name in front.
+  const named = (await say(speech("Mirror, which reminders are due tomorrow?"))).body;
+  assert.deepEqual([named.ignored, named.reply], [false, "The alarm at 6:30 and the trash at 7."]);
+  assert.equal(brain.runs.length, 4);
+  // Without the name in the transcript it may have been talk, as may what followed the name after a pause.
+  const unnamed = (await say(speech("Which reminders are due tomorrow?"))).body;
+  assert.deepEqual([unnamed.ignored, unnamed.reason, unnamed.reply], [true, "not-addressed", ""]);
+  const later = (await say(speech("Which reminders are due tomorrow?"), { addressed: "window" })).body;
+  assert.equal(later.ignored, true);
+  assert.equal(brain.runs.length, 8, "each was looked at twice before it was dropped");
+  // Passed over at first and taken up at the second look.
+  const rescued = (await say(speech("Make it a bit brighter."), { addressed: "window" })).body;
+  assert.deepEqual([rescued.ignored, rescued.reason, rescued.reply], [false, "", "A step brighter."]);
+  assert.deepEqual(rescued.acted, ["ignore", "set_brightness"]);
 });
 
 test("a third request while two are in the house is answered 429", async (t) => {

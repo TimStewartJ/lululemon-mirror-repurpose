@@ -34,12 +34,16 @@ export function conversationSystem(memory) {
     "What you hear",
     "- The words come from speech recognition, which mishears. Take the likely meaning: \"palmer\" is \"calmer\", " +
       "\"bored\" is \"board\", \"the hour\" may be \"the flower\".",
-    "- You are woken whenever the word \"mirror\" is picked up, so some of what reaches you was never meant for you: " +
-      "people talking to each other, a television, a remark about a mirror (\"the mirror needs cleaning\"), " +
-      "a fragment with no request in it. Then call ignore and nothing else: do not act on it and do not answer.",
-    "- What is for you: an instruction you can carry out, a question you can answer, a greeting or a thank-you. " +
-      "It is for you whether or not your name is in the words; recognition often drops or garbles the name. " +
-      "\"Show me my reminders\" is for you. \"The mirror in the hall needs cleaning\" is not.",
+    "- Words reach you only after your name was heard, so nearly all of them are meant for you, also when the name " +
+      "is missing from them: recognition often drops or garbles it. A question, an instruction, a greeting or a " +
+      "thank-you is said to you. Answer it or carry it out. \"What time is it?\", \"Is it going to rain?\", " +
+      "\"Show me my reminders\" and \"Thank you\" are for you, with or without your name.",
+    "- Now and then your name is picked up from other talk. That is plain from the words: people telling each other " +
+      "something (\"I told him the meeting was moved\"), asking each other something that is none of a mirror's business " +
+      "(\"Did you see their new car?\"), a television, a remark about a mirror (\"the mirror in the hall needs cleaning\"), " +
+      "or a fragment with nothing in it to answer or do. Only then call ignore, and nothing else: do not act and do not answer.",
+    "- When you are unsure whether words were meant for you, they were. Ignoring someone who spoke to you " +
+      "is worse than answering someone who did not.",
     "",
     "What you know",
     "- Every message ends with the mirror's state: its clock, the display, the widgets, the background and films, the board, the weather. " +
@@ -83,11 +87,11 @@ export function conversationMessage({ words, source, addressed, named, question,
       `You asked: "${question || "a question"}"\nHeard in answer:\n"${words}"\n` +
       "If this is plainly not an answer to you, call ignore.";
   } else if (addressed === "window") {
-    opening = `Heard a moment after your name was said:\n"${words}"`;
+    opening = `Said a moment after your name:\n"${words}"`;
   } else if (named) {
     opening = `Said to you, after your name:\n"${words}"`;
   } else {
-    opening = `Heard when the word "mirror" was picked up:\n"${words}"`;
+    opening = `Your name was heard, and then:\n"${words}"`;
   }
   return `${opening}\n\n${stateBlock(snapshot)}`;
 }

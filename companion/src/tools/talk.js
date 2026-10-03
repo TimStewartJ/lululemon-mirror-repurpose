@@ -6,9 +6,7 @@ export function talkTools({ mirror, memory, clock }) {
   return [
     {
       name: "say",
-      description:
-        "Shows one line on the glass now, for something worth telling while work goes on. Rarely needed: " +
-        "your final message is shown by itself, so never use this for the answer.",
+      description: "Shows one line on the glass now, for a greeting or a notice that nobody asked for.",
       schema: z.object({
         text: z.string().min(1).max(200),
         seconds: z.number().int().min(2).max(30).optional(),
@@ -50,6 +48,9 @@ export function talkTools({ mirror, memory, clock }) {
       schema: z.object({ reason: z.string().max(200).describe("A few words on why this was not for the mirror.") }),
       endsTurn: true,
       async handler({ reason }, turn) {
+        if (turn.certain) {
+          return { error: "These words were addressed to you by name or typed to you, so they are meant for you. Answer them or act on them." };
+        }
         turn.ignored = reason || "not addressed";
         return { ignored: true };
       },

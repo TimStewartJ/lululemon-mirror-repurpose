@@ -41,6 +41,7 @@ test("overheard talk does not keep a conversation open", async (t) => {
   const { ask, say, brain, clock } = await startCompanion(t, [
     { text: "The clock is showing." },
     { calls: [{ tool: "ignore", args: { reason: "talk" } }] },
+    { calls: [{ tool: "ignore", args: { reason: "talk, also at a second look" } }] },
     { text: "Bigger than what?" },
   ]);
   await ask("show the clock");
@@ -50,7 +51,7 @@ test("overheard talk does not keep a conversation open", async (t) => {
   await clock.advance(20_000);
   assert.equal(brain.ended, 1, "but the 120 seconds still count from the last real turn");
   await ask("make it bigger");
-  assert.equal(brain.runs[2].fresh, true);
+  assert.equal(brain.runs[3].fresh, true);
 });
 
 test("an answer to a question arrives in the conversation that asked", async (t) => {

@@ -159,6 +159,7 @@ test("activity lists exchanges newest first, as many as asked for", async (t) =>
   const { call, ask, say } = await startCompanion(t, [
     { text: "It is 7:12." },
     { calls: [{ tool: "ignore", args: { reason: "talk" } }] },
+    { calls: [{ tool: "ignore", args: { reason: "talk" } }] },
     { calls: [{ tool: "set_power", args: { state: "asleep" } }], text: "Good night." },
   ]);
   await ask("what time is it?");
@@ -170,7 +171,7 @@ test("activity lists exchanges newest first, as many as asked for", async (t) =>
     body.entries.map((entry) => [entry.source, entry.heard, entry.reply, entry.acted, entry.ignored, entry.reason]),
     [
       ["test", "go to sleep", "Good night.", ["set_power"], false, ""],
-      ["voice", "so I told her we should go", "", ["ignore"], true, "not-addressed"],
+      ["voice", "so I told her we should go", "", ["ignore", "ignore"], true, "not-addressed"],
       ["controls", "what time is it?", "It is 7:12.", [], false, ""],
     ],
   );

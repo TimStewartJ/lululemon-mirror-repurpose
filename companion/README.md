@@ -134,12 +134,19 @@ access.
 | `set_background` | Chooses a film, or a black or photo background. |
 | `arrange_widgets` | Shows, hides, moves and resizes widgets. |
 | `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. |
-| `say` | Shows a caption now. |
+| `say` | Shows a line when it greets. In a conversation its answer is the line, and it has no other. |
 | `remember`, `forget` | Keeps or drops a line about the household. |
 | `ignore` | Decides that the words were not meant for the mirror. |
 
 A request within two minutes of the last one continues the same
 conversation, so "make it bigger" works after "show the clock".
+
+The mirror sends whatever follows its name, and now and then it takes other
+talk for its name. Words that begin with the name, and words typed in the
+controls, are always answered. Others, which followed the name after a pause
+or lost it in transcription, are left to the model, which may drop them as
+talk between people; before it does, it is asked to weigh them a second
+time, because asked once it dropped about one real request in four.
 
 ## What leaves the house, and what is stored
 
