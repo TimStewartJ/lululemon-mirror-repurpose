@@ -13,7 +13,9 @@ test("a config with only a secret gets every default", () => {
   assert.equal(config.reasoningEffort, "low");
   assert.equal(config.stt.model, "small.en");
   assert.equal(config.stt.device, "auto");
-  assert.deepEqual(config.proactive, { greet: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] });
+  assert.deepEqual(config.proactive, {
+    greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"],
+  });
   assert.equal(config.keepUtterances, 20);
 });
 
@@ -41,7 +43,9 @@ test("what is given is kept", () => {
   assert.equal(config.stt.device, "cpu");
   assert.equal(config.proactive.tend, false);
   assert.equal(config.proactive.greet, true);
+  assert.equal(config.proactive.morningBriefing, true);
   assert.equal(config.proactive.quietHours, null);
+  assert.equal(parseConfig({ secret: "test-secret-0123456789", proactive: { morningBriefing: false } }).proactive.morningBriefing, false);
   assert.equal(config.keepUtterances, 0);
 });
 
@@ -51,6 +55,9 @@ test("the example config in the folder is a usable one", () => {
   assert.equal(config.listen.port, 8790);
   assert.equal(config.reasoningEffort, "low");
   assert.equal(config.stt.python, expandHome("~/.local/state/mirror-companion/venv/bin/python"));
+  // It names every setting there is, the same ones init writes.
+  assert.deepEqual(Object.keys(example.proactive), Object.keys(freshConfig().proactive));
+  assert.deepEqual(Object.keys(config.proactive), Object.keys(example.proactive));
 });
 
 test("a mistake is named with where it is", () => {

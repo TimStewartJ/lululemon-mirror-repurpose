@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import http from "node:http";
+import { SHORTCUTS } from "./briefing.js";
 import { describeError } from "./log.js";
 import { readWav } from "./wav.js";
 
@@ -73,10 +74,17 @@ export function createServer({ secret, assistant, proactive, activity, queue, he
       if (body.source !== undefined && typeof body.source !== "string") {
         throw new Refusal(400, "source must be text, such as \"controls\".");
       }
+      counter += 1;
+      const id = `ask-${clock.now().toString(36)}-${counter}`;
+      // A greeting the mirror recognised itself only reads the mirror, so it
+      // does not wait behind a request that is being served and is never
+      // turned away as one too many. A shortcut this companion does not
+      // know is taken as the words it came with.
+      if (body.source === "shortcut" && SHORTCUTS.includes(body.shortcut)) {
+        return [200, await assistant.shortcut({ id, text, shortcut: body.shortcut })];
+      }
       const leave = enter();
       try {
-        counter += 1;
-        const id = `ask-${clock.now().toString(36)}-${counter}`;
         return [200, await assistant.ask({ id, text, source: body.source === "test" ? "test" : "controls" })];
       } finally {
         leave();

@@ -27,6 +27,32 @@ export function oneLine(text, limit = 200) {
 }
 
 /**
+ * The limits of a card, as Mirror Home has them: a headline with up to five
+ * rows under it, each a short label beside one line of text.
+ */
+export const CARD = { rows: 5, label: 14, text: 90, headline: 60, leastSeconds: 3, mostSeconds: 30 };
+
+/**
+ * Makes rows fit a card: each on one line and cut to its limit, rows without
+ * text dropped, and no more of them than the glass has room for. The mirror
+ * refuses rows that are longer, so none leave the companion uncut.
+ *
+ * @param {unknown} rows
+ * @returns {{ label: string, text: string }[]}
+ */
+export function fitRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => ({ label: oneLine(row?.label ?? "", CARD.label), text: oneLine(row?.text ?? "", CARD.text) }))
+    .filter((row) => row.text.length > 0)
+    .slice(0, CARD.rows);
+}
+
+/** The line above the rows: a headline when there are rows, the whole answer when there are none. */
+export function headline(text, rows) {
+  return oneLine(text, rows.length > 0 ? CARD.headline : 200);
+}
+
+/**
  * A model now and then gives its whole answer twice in one message. Shown on
  * the glass that looks broken, so the second copy is dropped.
  */

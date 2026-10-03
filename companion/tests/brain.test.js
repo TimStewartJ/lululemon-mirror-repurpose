@@ -387,3 +387,34 @@ test("stopping closes the conversation and the client", async (t) => {
 test("only the Copilot harness exists so far", () => {
   assert.throws(() => createBrain({ harness: "other", model: "x", workingDirectory: "." }), /no agent harness called "other"/);
 });
+
+test("a tool that ends the turn but refused is reported to the runtime as a failure, so the turn goes on", async (t) => {
+  const refusing = {
+    name: "present",
+    description: "Shows the answer as a card.",
+    schema: z.object({ headline: z.string() }),
+    endsTurn: true,
+    handler: async ({ headline }) => (headline.length > 60 ? { error: "The headline is too long." } : { shown: true }),
+  };
+  const { brain } = await startBrain(t, {
+    turns: [
+      async (session) => {
+        const refused = await session.use("present", { headline: "x".repeat(61) });
+        const wrong = await session.use("present", {});
+        const shown = await session.use("present", { headline: "Three things" });
+        const other = await session.use("set_power", { state: "sideways" });
+        return JSON.stringify({ refused, wrong, shown, other });
+      },
+    ],
+  });
+  const { text } = await brain.run({
+    session: "conversation", system: "You are the mirror.", prompt: "what's on my list?", tools: [...tools, refusing], turn: newTurn("conversation"), timeoutMs: 30_000,
+  });
+  const seen = JSON.parse(text);
+  assert.deepEqual(seen.refused, { textResultForLlm: JSON.stringify({ error: "The headline is too long." }), resultType: "failure" });
+  assert.equal(seen.wrong.resultType, "failure");
+  assert.match(seen.wrong.textResultForLlm, /The arguments are not right/);
+  assert.deepEqual(seen.shown, { shown: true });
+  // A refusal from a tool that does not end the turn goes back as it always did.
+  assert.match(seen.other.error, /The arguments are not right/);
+});

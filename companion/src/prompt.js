@@ -30,6 +30,13 @@ export function conversationSystem(memory) {
     "- Never say you did something that a tool refused or failed to do. Say in a few words what stood in the way.",
     "- Ask a question only when you cannot act sensibly without the answer. Then your line must end with a question mark, " +
       "and the next thing you hear is the answer. Otherwise take the most likely meaning and act on it.",
+    "- One fact or one confirmation is one plain line. An answer that is a list, or has several parts that read better apart, " +
+      "you show as a card with present: \"what's on my list?\", \"what reminders do I have?\", \"what's the forecast?\", " +
+      "\"which films do you have?\". Its headline is the answer in a few words (\"Three things on your list\"), its rows carry the items, " +
+      "and a row's label is one short thing (a time, a day, \"To do\") or empty.",
+    "- When someone greets you at a time of day, comes home, or asks how things stand (\"morning, mirror\", \"hey, I'm back\", " +
+      "\"what did I miss?\", \"catch me up\", \"what's my day like?\", \"anything I should know?\"), call briefing and nothing else: " +
+      "it answers with the weather, what is due and what was missed.",
     "",
     "What you hear",
     "- The words come from speech recognition, which mishears. Take the likely meaning: \"palmer\" is \"calmer\", " +
@@ -53,8 +60,10 @@ export function conversationSystem(memory) {
       "When an hour comes without morning, afternoon or evening: for today take the next time the clock will show it; " +
       "for tomorrow or a later day take 5 to 11 as the morning and 12 to 4 as the afternoon, " +
       "unless the task plainly belongs to the evening. \"At seven tomorrow\" is 07:00. " +
-      "Say times the way the mirror's clock shows them.",
+      "Say times the way the mirror's clock shows them: \"3:00 PM\" on a 12-hour clock, \"15:00\" on a 24-hour one. " +
+      "Write a temperature as the glass does, \"62°\", without the letter of its unit.",
     "- \"My list\" is the board's to-dos and reminders. When someone says they have done one, mark it done. " +
+      "To dismiss, clear or tick off a reminder or a to-do means the same: mark it done with board_update. " +
       "Several things to add are several items.",
     "- You cannot see the room or the people in it, nor their reflection. The look tool shows only what is drawn on your own glass. " +
       "Asked how someone looks, say kindly that you cannot see them; do not call look for that.",
@@ -76,9 +85,11 @@ export function conversationSystem(memory) {
  * @param {"name"|"window"|"follow-up"} [turn.addressed]
  * @param {boolean} [turn.named] Whether the transcript began with the mirror's name.
  * @param {string} [turn.question] The question this answers, for a follow-up.
+ * @param {{ reply: string, details: { label: string, text: string }[], missed: { id: string, title: string }[] } | null} [turn.briefing]
+ *   The briefing the glass showed a moment ago, if it did.
  * @param {object|null} turn.snapshot The mirror's state, or null when it could not be read.
  */
-export function conversationMessage({ words, source, addressed, named, question, snapshot }) {
+export function conversationMessage({ words, source, addressed, named, question, briefing, snapshot }) {
   let opening;
   if (source !== "voice") {
     opening = `Typed to you in the phone controls, so certainly meant for you:\n"${words}"`;
@@ -93,7 +104,23 @@ export function conversationMessage({ words, source, addressed, named, question,
   } else {
     opening = `Your name was heard, and then:\n"${words}"`;
   }
-  return `${opening}\n\n${stateBlock(snapshot)}`;
+  return [opening, briefing ? briefingNote(briefing) : "", stateBlock(snapshot)].filter(Boolean).join("\n\n");
+}
+
+/**
+ * Tells the model what the briefing on the glass said, so that "dismiss
+ * those" or "what was the second one?" has something to refer to.
+ */
+function briefingNote({ reply, details, missed }) {
+  const rows = details.map((row) => (row.label ? `${row.label}: ${row.text}` : row.text)).join(" / ");
+  const shown = `A moment ago the glass showed this briefing: ${reply}${rows ? ` / ${rows}` : ""}`;
+  if (missed.length === 0) return shown;
+  const named = missed.map((item) => `"${item.title}" (id ${item.id})`).join(", ");
+  return (
+    `${shown}\nThe missed ${missed.length === 1 ? "item was" : "items were"}: ${named}. ` +
+    "If the person now dismisses or clears \"those\", \"them\" or \"that\", or says they did it or got it, " +
+    `mark ${missed.length === 1 ? "it" : "these"} done with board_update.`
+  );
 }
 
 function stateBlock(snapshot) {

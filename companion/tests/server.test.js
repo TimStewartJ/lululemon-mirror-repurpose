@@ -95,7 +95,7 @@ test("ask answers like an utterance, with no hearing time and no caption of what
   assert.equal(status, 200);
   assert.match(body.id, /^ask-/);
   assert.deepEqual({ ...body, id: "", ms: null }, {
-    id: "", heard: "go to sleep", reply: "Good night.", ignored: false, reason: "", listen: false, acted: ["set_power"], ms: null,
+    id: "", heard: "go to sleep", reply: "Good night.", details: [], ignored: false, reason: "", listen: false, acted: ["set_power"], ms: null,
   });
   assert.equal(body.ms.stt, 0);
   assert.equal(mirror.state.said.length, 0);

@@ -36,6 +36,7 @@ const schema = z.object({
   proactive: z
     .object({
       greet: z.boolean().default(true),
+      morningBriefing: z.boolean().default(true),
       reminders: z.boolean().default(true),
       tend: z.boolean().default(true),
       tendMinutes: z.number().min(5).max(24 * 60).default(60),
@@ -118,7 +119,7 @@ export function freshConfig() {
     model: "gpt-6-luna",
     reasoningEffort: "low",
     stt: { model: "small.en", device: "auto", python: "" },
-    proactive: { greet: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] },
+    proactive: { greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] },
     keepUtterances: 20,
     stateDir: "~/.local/state/mirror-companion",
   };

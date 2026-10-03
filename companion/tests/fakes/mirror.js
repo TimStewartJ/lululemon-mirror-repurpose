@@ -59,7 +59,7 @@ export async function startFakeMirror({
     },
     brightness: 180,
     weather: true,
-    /** Captions shown or asked for, oldest first: { text, kind, seconds, shown }. */
+    /** Captions shown or asked for, oldest first: { text, kind, seconds, shown }, and details when rows came along. */
     said: [],
     /** Every request received: { method, path, body }. */
     requests: [],
@@ -195,6 +195,17 @@ export async function startFakeMirror({
     throw new BoardRefusal(405, null, `${method} is not available here. This path takes GET, PUT, PATCH or DELETE`);
   }
 
+  /** Whether the rows of a card keep the limits the real mirror sets: up to five, a short label, one line of text. */
+  function rowsFit(details) {
+    const line = (value, least, most) =>
+      typeof value === "string" && value.length >= least && value.length <= most && !/[\r\n]/.test(value);
+    return (
+      Array.isArray(details) &&
+      details.length <= 5 &&
+      details.every((row) => row !== null && typeof row === "object" && line(row.label ?? "", 0, 14) && line(row.text, 1, 90))
+    );
+  }
+
   function say(body) {
     const kind = body.kind ?? "reply";
     const bad =
@@ -202,8 +213,14 @@ export async function startFakeMirror({
       !["heard", "reply", "notice"].includes(kind) ||
       (body.seconds !== undefined && (!Number.isInteger(body.seconds) || body.seconds < 2 || body.seconds > 30));
     if (bad) return [400, { error: "A caption needs text of 1 to 200 characters on one line, a kind of heard, reply or notice, and 2 to 30 seconds." }];
+    if (body.details !== undefined && !rowsFit(body.details)) {
+      return [400, { error: "details takes up to 5 rows, each with a label of at most 14 characters and text of 1 to 90 characters on one line." }];
+    }
     const shown = !state.automation.sleeping;
-    state.said.push({ text: body.text, kind, seconds: body.seconds ?? null, shown });
+    const caption = { text: body.text, kind, seconds: body.seconds ?? null, shown };
+    // Rows are recorded only for a caption that came with them, so that one without reads as before.
+    if (body.details !== undefined) caption.details = body.details;
+    state.said.push(caption);
     return [200, shown ? { shown: true } : { shown: false, reason: "sleeping" }];
   }
 

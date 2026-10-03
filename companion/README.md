@@ -4,13 +4,20 @@ The companion is a small server for a home network. It makes a MIRROR that
 runs Mirror Home into something you can talk to. Mirror Home has five fixed
 voice commands of its own. Anything else that is said after "Mirror" is sent
 to the companion, which works out the words, lets a language model act on
-the mirror through the mirror's own control API, and sends back one short
-line for the glass to show. The mirror never speaks.
+the mirror through the mirror's own control API, and sends back what the
+glass is to show: one short line, or a card, which is a headline with up to
+five rows under it. The mirror never speaks.
+
+A greeting such as "good morning" or "good night" is answered with a
+briefing: a card with the weather, what is due, what was missed and what is
+still to do. The companion builds it from the mirror's state without asking
+the model, so it is there at once.
 
 The companion also does three things by itself. It greets someone who walks
-up after the display was dark for a while. It shows a caption when a reminder
-on the board falls due. And once an hour it looks over the display and may
-tidy one small thing.
+up after the display was dark for a while: in the morning with the briefing,
+after a reminder went unseen with what was missed, and otherwise with a line
+from the model. It shows a card when a reminder on the board falls due. And
+once an hour it looks over the display and may tidy one small thing.
 
 ## What it needs
 
@@ -82,7 +89,8 @@ switch reads **Connected** once the mirror has reached the companion.
 | `reasoningEffort` | How hard the model thinks: `low` by default, which was measured to answer in about 2 seconds where the model's own default took 3.3. `default` leaves the choice to the model. |
 | `stt.model`, `stt.device` | The Whisper model, and `auto`, `cuda` or `cpu`. With `auto` the GPU is used if it works. |
 | `stt.python` | The Python that has the speech packages. Leave it empty for the one `install.sh` made. |
-| `proactive.greet`, `.reminders`, `.tend` | Switch each of the three things it does by itself. |
+| `proactive.greet`, `.reminders`, `.tend` | Switch each of the three things it does by itself. `greet` is the model's greeting; with `reminders` off there is no card for what was missed either. |
+| `proactive.morningBriefing` | Whether the first person of the morning gets the briefing. Switched off, the model greets in the morning as at any other hour, if `greet` is on. |
 | `proactive.tendMinutes` | How often it looks over the display. |
 | `proactive.quietHours` | From when to when, on the mirror's clock, it shows nothing by itself and changes nothing. `null` for never. |
 | `keepUtterances` | How many recordings to keep. 0 keeps none. |
@@ -114,11 +122,15 @@ To see how it is doing, and to try it without the mirror:
 ```bash
 node src/cli.js health
 node src/cli.js ask "what is on my list?"
+node src/cli.js ask "good morning" --shortcut good-morning
 node src/cli.js say-wav recording.wav
 ```
 
-`health` names what is not ready and what to do about it. A recording for
-`say-wav` is a WAV file at 16 kHz, mono, 16-bit.
+`health` names what is not ready and what to do about it. `ask` prints the
+reply and, under it, the rows of a card, one to a line. With `--shortcut`
+the words are sent as a greeting the mirror recognised itself:
+`good-morning`, `good-afternoon`, `good-evening`, `good-night` or `home`. A
+recording for `say-wav` is a WAV file at 16 kHz, mono, 16-bit.
 
 ## What it can do
 
@@ -133,13 +145,74 @@ access.
 | `set_brightness` | Sets how bright the display is when awake. |
 | `set_background` | Chooses a film, or a black or photo background. |
 | `arrange_widgets` | Shows, hides, moves and resizes widgets. |
-| `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. |
-| `say` | Shows a line when it greets. In a conversation its answer is the line, and it has no other. |
+| `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. A hidden board is shown for a new item, at a free place if another widget has taken its own. |
+| `present` | Answers with a card when the answer is a list or has several parts: "what's on my list?", "what's the forecast?". |
+| `briefing` | Answers a greeting or "what did I miss?" with the briefing. |
+| `say` | Shows a line when it greets. In a conversation its answer is the line or the card, and it has no other. |
 | `remember`, `forget` | Keeps or drops a line about the household. |
 | `ignore` | Decides that the words were not meant for the mirror. |
 
 A request within two minutes of the last one continues the same
 conversation, so "make it bigger" works after "show the clock".
+
+### Cards
+
+An answer is one line, or a card: a headline of at most 60 characters with up
+to five rows, each a label of at most 14 characters beside one line of at
+most 90. One fact or one confirmation stays a line. The model answers with a
+card, through `present`, when the answer is a list or has several parts. A
+card that breaks those limits is handed back to the model once to be written
+again; whatever leaves the companion is cut to fit, between words. A Mirror
+Home that does not know cards yet shows the headline alone.
+
+### Greetings and the briefing
+
+Mirror Home recognises "good morning", "good afternoon", "good evening",
+"good night" and a homecoming by itself and sends them as shortcuts, without
+a recording. The companion answers a shortcut with the briefing, which it
+builds from the mirror's status and board. No model and no speech-to-text
+are involved, and a shortcut does not wait behind a request that is being
+served. If the mirror cannot be read, the answer is the greeting alone.
+
+| Greeting | Headline | Rows |
+|---|---|---|
+| Morning | Good morning | Weather now and today, what is due today, what was missed, the open to-dos. |
+| Afternoon | Good afternoon | Weather now and for the rest of the day, what is due later, what was missed, the open to-dos. |
+| Evening | Good evening | Weather now, tonight and tomorrow, what is due tonight, what was missed, what is due tomorrow. |
+| Night | Good night | Tomorrow's weather, what is due first tomorrow, what is still open. |
+| Home | Welcome home | Weather now, what is due later, what was missed, the open to-dos. |
+
+A row with nothing to say is left out, and so is weather that the mirror
+could not refresh. A list names three items and counts the rest. Times are
+written as the mirror's clock shows them. An item is missed when its time has
+passed and it is not done, and it is named in every briefing until it is
+marked done or leaves the board.
+
+A greeting in other words, such as "morning, mirror", "hey, I'm back",
+"catch me up" or "what did I miss?", goes to the model, which answers with
+the same briefing through its `briefing` tool. For three minutes after a
+briefing the model is told what it said, so that "dismiss those" or "got it"
+marks the missed items done.
+
+### What it does by itself
+
+When a reminder falls due and the display is on, the glass shows a small
+card for 20 seconds: the reminder's title, and under it the time it was due.
+
+When someone comes before a mirror that was dark, the companion shows at most
+one thing, and nothing in the quiet hours:
+
+1. The morning briefing, to the first person between 5 and 11 in the morning
+   after the display was dark for ten minutes or more. Once a day, and no
+   model is involved.
+2. Otherwise, if reminders fell due while the display was dark, in a quiet
+   hour, or while the mirror could not be reached: a card "While you were
+   away" with what was missed and what is due in the next three hours. The
+   display must have been dark for a minute or more.
+3. Otherwise, the model's greeting: after ten dark minutes, at most every 45
+   minutes, and only if the model finds something worth reading.
+
+### What it listens to
 
 The mirror sends whatever follows its name, and now and then it takes other
 talk for its name. Words that begin with the name, and words typed in the
@@ -157,16 +230,18 @@ Copilot's model: the mirror's local time and zone, whether the display is on,
 the layout, the names of the films, the items on the board, and the weather
 as the mirror has it, which includes the name of the place. So do the lines
 it was asked to remember, and a picture of the glass when the model uses
-`look`. The greeting and the hourly look send the same summary without any
-words of yours.
+`look`. The model's greeting and the hourly look send the same summary
+without any words of yours. The briefing, the morning card, the card for
+someone who was away and the reminder cards are made on this machine and
+send nothing to the model.
 
 In the state folder, `~/.local/state/mirror-companion` unless you chose
 another, the companion keeps:
 
 - `utterances/`: the last 20 recordings, so that a mishearing can be listened
   to. Set `keepUtterances` to 0 to keep none.
-- `activity.jsonl`: the last 200 exchanges, with what was heard and answered.
-  `GET /v1/activity` shows them.
+- `activity.jsonl`: the last 200 exchanges, with what was heard and answered,
+  the rows of a card included. `GET /v1/activity` shows them.
 - `memory.txt`: what it was asked to remember, one line each. You can read
   and edit it.
 - `venv/` and `models/`: the Python environment and the speech model.
@@ -193,7 +268,7 @@ node scripts/fake-mirror.mjs
 ```
 
 `try-brain` says a set of requests to the real model against a fake mirror
-and checks what came of each. It needs the Copilot login. `try-stt` runs the
+and checks what came of each, cards and briefings among them. It needs the Copilot login. `try-stt` runs the
 real speech-to-text worker on recordings and prints the transcripts and
 times. `fake-mirror` runs the fake mirror by itself, so that `pair`, `serve`
 and `say-wav` can be tried from end to end without a mirror.
@@ -206,11 +281,12 @@ and `say-wav` can be tried from end to end without a mirror.
 | `src/serve.js` | Puts the parts together and starts them. |
 | `src/server.js` | The HTTP routes the mirror calls, with their checks and limits. |
 | `src/assistant.js` | One exchange: recording or typed words in, answer out. |
-| `src/proactive.js` | The greeting, the reminders and the hourly look. |
+| `src/proactive.js` | The greeting, the morning card, the reminders and the hourly look. |
+| `src/briefing.js` | The briefing and the other cards that code builds, without the model. |
 | `src/brain.js` | The model: sessions, retries and time limits on the Copilot SDK. |
 | `src/prompt.js` | Every word the model is told. |
 | `src/tools.js`, `src/tools/` | The tools, independent of the SDK. |
-| `src/layout.js` | The rules of the mirror's layout. |
+| `src/layout.js` | The rules of the mirror's layout, and where a widget can go without covering another. |
 | `src/state.js` | The summary of the mirror that the model reads. |
 | `src/mirror.js` | The client for the mirror's API. |
 | `src/stt.js`, `src/stt_worker.py` | Speech-to-text: the Python worker and what keeps it running. |
@@ -220,4 +296,7 @@ and `say-wav` can be tried from end to end without a mirror.
 The wire formats between the mirror and the companion are in
 [The assistant](../docs/assistant.md#protocol). The routes are
 `POST /v1/utterance`, `POST /v1/ask`, `POST /v1/event`, `GET /v1/health` and
-`GET /v1/activity`, which lists the latest exchanges.
+`GET /v1/activity`, which lists the latest exchanges. An answer always has
+`details`, the rows of a card, empty for one line, and may have `seconds`,
+how long the glass should show it. A shortcut is `POST /v1/ask` with
+`"source": "shortcut"` and `"shortcut"` set to its name.

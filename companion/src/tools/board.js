@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { z } from "zod";
-import { describeWidget } from "../layout.js";
+import { describeWidget, freePlace, placeOf } from "../layout.js";
 import { describeItem } from "../state.js";
 import { formatOffset, localIso, parseIsoWithOffset } from "../time.js";
 import { saveLayout } from "./layout.js";
@@ -59,18 +59,29 @@ export function boardTools({ mirror, clock }) {
 
   /**
    * Makes sure a Board widget is on the glass and lists items of this kind:
-   * an item nobody can see is no use.
+   * an item nobody can see is no use. A board that was hidden is not put on
+   * top of what took its place meanwhile: it is given a free place.
    *
-   * @returns {Promise<object | null>} the layout as it is now, when it had to be changed
+   * @returns {Promise<{ layout: object, moved: string } | null>} the layout as it is now, when it had to be
+   *   changed, and a sentence on where the board went if that is not where it was kept
    */
   async function putOnGlass(kind) {
     const layout = await mirror.get("/api/v1/dashboard/layout");
     const boards = (layout.widgets ?? []).filter((widget) => widget.type === "board");
     if (boards.length === 0 || boards.some((widget) => widget.visible && lists(widget, kind))) return null;
     const board = boards.find((widget) => lists(widget, kind)) ?? boards.find((widget) => widget.visible) ?? boards[0];
+    let moved = "";
+    // A board its owner locked in the layout editor stays where it was put.
+    const place = board.visible || board.locked ? null : freePlace(board, layout.widgets);
     board.visible = true;
+    if (place) {
+      const shrunk = place.h < board.h;
+      Object.assign(board, place);
+      const where = placeOf(board, layout.widgets) || `"${board.id}" is now at x ${board.x}, y ${board.y}.`;
+      moved = `Its usual place was taken, so ${where}${shrunk ? " It is less tall than before." : ""}`;
+    }
     if (!lists(board, kind)) board.show = "all";
-    return saveLayout(mirror, layout);
+    return { layout: await saveLayout(mirror, layout), moved };
   }
 
   return [
@@ -114,10 +125,11 @@ export function boardTools({ mirror, clock }) {
         const answer = { added: describeItem(saved.item, offsetOf(turn)) };
         if (turn.kind === "conversation" && (saved.notice || !seenListed(turn, args.kind))) {
           try {
-            const layout = await putOnGlass(args.kind);
-            if (layout) {
+            const shown = await putOnGlass(args.kind);
+            if (shown) {
               answer.boardNowShown = true;
-              if (turn.state) turn.state.snapshot.widgets = layout.widgets.map(describeWidget);
+              if (shown.moved) answer.boardMoved = shown.moved;
+              if (turn.state) turn.state.snapshot.widgets = shown.layout.widgets.map(describeWidget);
             } else if (saved.notice) {
               answer.note = saved.notice;
             }

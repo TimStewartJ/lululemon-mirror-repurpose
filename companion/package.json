@@ -1,7 +1,7 @@
 {
   "name": "mirror-companion",
   "version": "0.1.0",
-  "description": "The agent behind a MIRROR that runs Mirror Home: it hears what was said to the mirror, acts through the mirror's API, and answers in one line.",
+  "description": "The agent behind a MIRROR that runs Mirror Home: it hears what was said to the mirror, acts through the mirror's API, and answers in a line or a card.",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",

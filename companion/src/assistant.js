@@ -1,7 +1,8 @@
 import { BrainError } from "./brain.js";
+import { briefingHeadline, buildBriefing, createBriefingMemory } from "./briefing.js";
 import { describeError } from "./log.js";
 import { conversationMessage, conversationSystem } from "./prompt.js";
-import { asksSomething, oneLine, withoutRepeat } from "./reply.js";
+import { asksSomething, fitRows, headline, oneLine, withoutRepeat } from "./reply.js";
 import { fetchState } from "./state.js";
 import { newTurn, toolsFor } from "./tools.js";
 
@@ -32,7 +33,9 @@ function letters(text) {
  * @typedef {Object} Answer
  * @property {string} id
  * @property {string} heard
- * @property {string} reply
+ * @property {string} reply The line to show, or the headline of a card.
+ * @property {{ label: string, text: string }[]} details The rows of a card; empty when the answer is one line.
+ * @property {number} [seconds] How long the glass should show it, when that is not left to the mirror.
  * @property {boolean} ignored
  * @property {string} reason
  * @property {boolean} listen
@@ -53,6 +56,8 @@ function letters(text) {
  * @param {ReturnType<import("./activity.js").createActivity>} parts.activity
  * @param {ReturnType<import("./recordings.js").createRecordings>} parts.recordings
  * @param {ReturnType<import("./queue.js").createQueue>} parts.queue
+ * @param {ReturnType<import("./briefing.js").createBriefingMemory>} [parts.briefings] The last briefing shown, shared
+ *   with the part that shows one by itself.
  * @param {(event: string, fields?: object) => void} parts.log
  * @param {import("./clock.js").Clock} parts.clock
  * @param {number} [parts.followUpMs] How long a conversation stays open after its last turn.
@@ -70,6 +75,7 @@ export function createAssistant({
   queue,
   log,
   clock,
+  briefings = createBriefingMemory(clock),
   followUpMs = 120_000,
   agentTimeoutMs = 30_000,
   answerWithinMs = 38_000,
@@ -140,13 +146,14 @@ export function createAssistant({
   }
 
   /** Completes an answer, records it, and returns it. */
-  function finish({ id, source, started, ms, heard = "", reply = "", ignored = false, reason = "", acted = [], error }) {
+  function finish({ id, source, started, ms, heard = "", reply = "", details = [], seconds, ignored = false, reason = "", acted = [], error }) {
     ms.total = clock.now() - started;
     /** @type {Answer} */
-    const answer = { id, heard, reply, ignored, reason, listen: !ignored && asksSomething(reply), acted, ms };
+    const answer = { id, heard, reply, details, ignored, reason, listen: !ignored && asksSomething(reply), acted, ms };
+    if (seconds !== undefined) answer.seconds = seconds;
     if (error) answer.error = error;
-    activity.add({ at: started, source, heard, reply, acted, ignored, reason, ms: ms.total, error });
-    log("exchange", { id, source, heard, reply, ignored, reason, acted, ms, error });
+    activity.add({ at: started, source, heard, reply, details, acted, ignored, reason, ms: ms.total, error });
+    log("exchange", { id, source, heard, reply, details: details.length > 0 ? details : undefined, ignored, reason, acted, ms, error });
     return answer;
   }
 
@@ -163,6 +170,9 @@ export function createAssistant({
         return finish({ ...common, reply: "I was busy with something else. Please say it again.", error: "No time was left after waiting." });
       }
       const fresh = isFresh();
+      // A briefing the glass showed a moment ago is told to the model, so
+      // that "dismiss those" has something to refer to.
+      const shown = briefings.recall();
       const turn = newTurn("conversation", seen.state, seen.at);
       // Typed words cannot have been overheard, and a sentence that both the
       // mirror and the transcript have beginning with its name was said to it.
@@ -184,6 +194,7 @@ export function createAssistant({
               addressed,
               named,
               question: asksSomething(lastReply) ? lastReply : "",
+              briefing: shown,
               snapshot: seen.state?.snapshot ?? null,
             }),
             fresh,
@@ -193,7 +204,7 @@ export function createAssistant({
         // A model that passed such words over all the same, and so said
         // nothing, is asked once more.
         const left = started + answerWithinMs - clock.now() - 1500;
-        if (turn.certain && !oneLine(text) && turn.changes === 0 && left >= 3000) {
+        if (turn.certain && !oneLine(text) && !turn.card && turn.changes === 0 && left >= 3000) {
           log("request.passed_over", { id });
           text = (
             await run(
@@ -237,6 +248,16 @@ export function createAssistant({
         // Overheard talk does not open a conversation, and does not prolong one.
         if (fresh) closeNow();
         return finish({ ...common, ignored: true, reason: "not-addressed", acted });
+      }
+      if (turn.briefing) briefings.note(turn.briefing.briefing, turn.briefing.state);
+      // Once the items of a briefing were dealt with, what it said of them is out of date.
+      else if (shown && acted.some((name) => name === "board_update" || name === "board_remove")) briefings.forget();
+      if (turn.card) {
+        // The card a tool made is the answer; whatever the model wrote beside it is not shown.
+        const details = fitRows(turn.card.details);
+        lastReply = headline(turn.card.reply, details);
+        keepOpen();
+        return finish({ ...common, reply: lastReply, details, seconds: turn.card.seconds, acted });
       }
       const reply = oneLine(withoutRepeat(text)) || (turn.changes > 0 ? "Done." : "I have no answer to that.");
       lastReply = reply;
@@ -305,6 +326,31 @@ export function createAssistant({
       const started = clock.now();
       const ms = { stt: 0, agent: 0, total: 0 };
       return converse({ id, source, words: text, started, ms, stateAhead: readState() });
+    },
+
+    /**
+     * A greeting the mirror recognised by itself. It is answered with the
+     * briefing, built from the mirror's state by code: no recording, no
+     * model, and no place in the queue, since it only reads. An open
+     * conversation is left as it is.
+     *
+     * @param {{ id: string, text: string, shortcut: "good-morning"|"good-afternoon"|"good-evening"|"good-night"|"home" }} request
+     * @returns {Promise<Answer>}
+     */
+    async shortcut({ id, text, shortcut }) {
+      const started = clock.now();
+      const common = { id, source: "shortcut", started, ms: { stt: 0, agent: 0, total: 0 }, heard: text };
+      let state;
+      try {
+        state = await fetchState(mirror, clock, { brief: true });
+      } catch (error) {
+        log("state.unread", { detail: describeError(error) });
+        // The greeting alone is still an answer to a greeting.
+        return finish({ ...common, reply: briefingHeadline(shortcut), error: describeError(error) });
+      }
+      const briefing = buildBriefing(state, shortcut);
+      briefings.note(briefing, state);
+      return finish({ ...common, reply: briefing.reply, details: briefing.details, seconds: briefing.seconds });
     },
 
     /** Ends an open conversation; used when the companion shuts down. */

@@ -4,6 +4,8 @@
  */
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAY_MS = 24 * 60 * 60 * 1000;
 const ISO = /^(\d{4})-(\d{2})-(\d{2})[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:[.,]\d{1,9})?)?\s?([Zz]|[+-]\d{2}(?::?\d{2})?)?$/;
 
 /** -420 becomes "-07:00". */
@@ -31,6 +33,35 @@ export function weekday(ms, offsetMinutes) {
 export function minuteOfDay(ms, offsetMinutes) {
   const shifted = new Date(ms + offsetMinutes * 60_000);
   return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+}
+
+/**
+ * The number of the calendar day on the mirror's wall, counted from 1970, so
+ * that two instants can be compared by date: the same number is the same day,
+ * one more is the day after.
+ */
+export function localDay(ms, offsetMinutes) {
+  return Math.floor((ms + offsetMinutes * 60_000) / DAY_MS);
+}
+
+/** The time of day the way the mirror's clock shows it: "3:00 PM", or "15:00" on a 24-hour clock. */
+export function clockTime(ms, offsetMinutes, clock24Hour) {
+  const minutes = minuteOfDay(ms, offsetMinutes);
+  const hour = Math.floor(minutes / 60);
+  if (clock24Hour) return `${pad(hour)}:${pad(minutes % 60)}`;
+  return `${hour % 12 || 12}:${pad(minutes % 60)} ${hour < 12 ? "AM" : "PM"}`;
+}
+
+/** A full hour said briefly, for a forecast: "3 PM", or "15:00" on a 24-hour clock. */
+export function clockHour(ms, offsetMinutes, clock24Hour) {
+  const time = clockTime(ms, offsetMinutes, clock24Hour);
+  return clock24Hour ? time : time.replace(":00 ", " ");
+}
+
+/** The day and month as a few letters, for a date further off than a weekday can name: "Oct 3". */
+export function shortDate(ms, offsetMinutes) {
+  const shifted = new Date(ms + offsetMinutes * 60_000);
+  return `${MONTHS[shifted.getUTCMonth()]} ${shifted.getUTCDate()}`;
 }
 
 /** "22:30" becomes 1350; anything else becomes null. */

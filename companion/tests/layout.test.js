@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyChanges, describeWidget } from "../src/layout.js";
+import { applyChanges, describeWidget, freePlace } from "../src/layout.js";
 import { defaultLayout, normalizeLayout } from "./fakes/mirror-layout.js";
 
 const widget = (layout, id) => layout.widgets.find((candidate) => candidate.id === id);
@@ -181,4 +181,69 @@ test("a widget is described with its place, and no more than is needed", () => {
     id: "clock-2", type: "clock", visible: true, x: 50, y: 52, w: 560, h: 150, align: "start", locked: true,
   });
   assert.equal(describeWidget(widget(layout, "board")).size, "medium");
+});
+
+/** A bare widget for the placing tests: only what freePlace looks at. */
+const box = (id, x, y, w, h, visible = true) => ({ id, type: id, x, y, w, h, visible });
+const BOARD = box("board", 50, 440, 520, 230, false);
+
+test("a board whose place was taken by a bigger note goes below the note", () => {
+  // What happened on 3 October: the note was enlarged, and the hidden board came back on top of it.
+  const layout = defaultLayout();
+  Object.assign(widget(layout, "note"), { visible: true, x: 40, y: 320, w: 715, h: 320 });
+  // The same size fits nowhere above the strip where captions appear, so it reaches 10 units into it.
+  assert.deepEqual(freePlace(widget(layout, "board"), layout.widgets), { x: 50, y: 660, w: 520, h: 230 });
+});
+
+test("a widget that covers nothing where it is stays there", () => {
+  const layout = defaultLayout();
+  assert.equal(freePlace(widget(layout, "board"), layout.widgets), null);
+  // What is hidden is not in the way, and touching edges are not an overlap.
+  Object.assign(widget(layout, "note"), { visible: false, x: 40, y: 320, w: 715, h: 320 });
+  assert.equal(freePlace(widget(layout, "board"), layout.widgets), null);
+  assert.equal(freePlace(BOARD, [BOARD, box("above", 50, 300, 520, 140), box("beside", 570, 440, 300, 230)]), null);
+});
+
+test("a photo is in the way of a list as well", () => {
+  const layout = defaultLayout();
+  Object.assign(widget(layout, "photo"), { visible: true, x: 50, y: 500, w: 440, h: 190 });
+  assert.deepEqual(freePlace(widget(layout, "board"), layout.widgets), { x: 50, y: 710, w: 520, h: 230 });
+});
+
+test("with no room below its own column, the first free place from the top left is taken", () => {
+  const column = box("tall", 0, 300, 600, 700);
+  assert.deepEqual(freePlace(BOARD, [BOARD, column]), { x: 20, y: 20, w: 520, h: 230 });
+  // The scan goes on past what stands at the top: 20 units clear of it and of the right edge.
+  const top = box("clock", 0, 0, 400, 200);
+  assert.deepEqual(freePlace(BOARD, [BOARD, column, top]), { x: 420, y: 20, w: 520, h: 230 });
+});
+
+test("the strip where captions appear is used only when there is no room above it", () => {
+  const taken = box("note", 50, 400, 520, 300);
+  // Below the note the board would reach into the strip, and the top of the glass is free.
+  assert.deepEqual(freePlace(BOARD, [BOARD, taken]), { x: 20, y: 20, w: 520, h: 230 });
+  assert.deepEqual(freePlace(BOARD, [BOARD, taken, box("top", 0, 0, 1000, 380)]), { x: 50, y: 720, w: 520, h: 230 });
+});
+
+test("a size that fits nowhere is made less tall, but not below 120, and then left where it is", () => {
+  assert.deepEqual(freePlace(BOARD, [BOARD, box("full", 0, 0, 1000, 800)]), { x: 50, y: 820, w: 520, h: 160 });
+  assert.deepEqual(freePlace(BOARD, [BOARD, box("full", 0, 0, 1000, 840)]), { x: 50, y: 860, w: 520, h: 120 });
+  assert.equal(freePlace(BOARD, [BOARD, box("full", 0, 0, 1000, 850)]), null);
+  // A widget that is shorter than that already is not stretched or squeezed.
+  const low = box("board", 50, 440, 520, 90, false);
+  assert.equal(freePlace(low, [low, box("full", 0, 0, 1000, 900)]), null);
+  assert.deepEqual(freePlace(low, [low, box("full", 0, 0, 1000, 800)]), { x: 50, y: 820, w: 520, h: 90 });
+});
+
+test("a place that was found keeps 20 units from every other widget and from the edges", () => {
+  const others = [box("a", 0, 0, 480, 400), box("b", 520, 0, 480, 300), box("c", 0, 400, 300, 600), box("d", 700, 600, 300, 400)];
+  const board = box("board", 100, 100, 360, 200, false);
+  const place = freePlace(board, [board, ...others]);
+  assert.deepEqual(place, { x: 500, y: 320, w: 360, h: 200 });
+  for (const other of others) {
+    const apart =
+      place.x >= other.x + other.w + 20 || other.x >= place.x + place.w + 20 || place.y >= other.y + other.h + 20 || other.y >= place.y + place.h + 20;
+    assert.ok(apart, `20 units clear of ${other.id}`);
+  }
+  normalizeLayout({ ...defaultLayout(), widgets: defaultLayout().widgets.map((entry) => (entry.id === "board" ? { ...entry, ...place } : entry)) });
 });

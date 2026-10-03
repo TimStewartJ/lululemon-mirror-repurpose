@@ -28,6 +28,10 @@ const mirror = await startFakeMirror({
     const stamp = localIso(Date.now(), offset).slice(11, 19);
     if (request.path === "/api/v1/assistant/say") {
       console.log(`${stamp} caption (${request.body.kind ?? "reply"}): ${request.body.text}`);
+      // The rows of a card, under its headline.
+      for (const row of Array.isArray(request.body.details) ? request.body.details : []) {
+        console.log(`${" ".repeat(stamp.length)}   ${String(row?.label ?? "").toUpperCase()}  ${row?.text ?? ""}`);
+      }
     } else if (request.path === "/api/v1/dashboard/layout") {
       const now = (id) => request.body.widgets.find((widget) => widget.id === id);
       const before = (id) => mirror.widget(id);

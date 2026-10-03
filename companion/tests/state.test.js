@@ -96,3 +96,32 @@ test("a part that cannot be read is left out, but no status means no state", asy
   fake.state.failing.set("/api/v1/status", 500);
   await assert.rejects(fetchState(mirror, clock), MirrorUnreachable);
 });
+
+test("the state carries what a briefing is built from: the clock's form, the weather as it is, and whether the board was read", async (t) => {
+  const { mirror, clock, fake, use } = await startTools(t);
+  await use("board_add", { kind: "todo", title: "Buy milk" });
+  const state = await fetchState(mirror, clock);
+  assert.equal(state.clock24Hour, false);
+  assert.equal(state.boardRead, true);
+  assert.deepEqual([state.weather.state, state.weather.stale, state.weather.data.units.temperature], ["ready", false, "\u00B0C"]);
+  assert.equal(state.weather.data.hourly.length, 8);
+  assert.equal(state.weather.data.daily[0].precipitationProbability, 70);
+  fake.state.failing.set("/api/v1/board/items", 500);
+  const partial = await fetchState(mirror, clock);
+  assert.deepEqual([partial.boardRead, partial.items], [false, []]);
+  const bare = buildState({ status: { utcOffsetMinutes: 60, clock24Hour: true, automation: {} }, layout: null, board: { items: [] }, films: null, now: 0 });
+  assert.deepEqual([bare.clock24Hour, bare.weather, bare.boardRead], [true, null, true]);
+});
+
+test("a brief read asks only for the status and the board", async (t) => {
+  const { mirror, clock, fake, use } = await startTools(t);
+  await use("board_add", { kind: "todo", title: "Buy milk" });
+  const before = fake.requests().length;
+  const state = await fetchState(mirror, clock, { brief: true });
+  assert.deepEqual(fake.requests().slice(before).map((request) => request.path).sort(), ["/api/v1/board/items?limit=100", "/api/v1/status"]);
+  assert.equal(state.items[0].title, "Buy milk");
+  assert.equal(state.weather.data.locationName, "Seattle");
+  assert.equal(state.snapshot.now.local, "2026-10-03T07:12:00-07:00");
+  fake.state.failing.set("/api/v1/status", 500);
+  await assert.rejects(fetchState(mirror, clock, { brief: true }), MirrorUnreachable);
+});

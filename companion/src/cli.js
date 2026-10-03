@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import { parseArgs } from "node:util";
+import { SHORTCUTS } from "./briefing.js";
 import { defaultConfigPath, freshConfig, loadConfig, updateConfigFile, writeConfig } from "./config.js";
 import { describeError } from "./log.js";
 import { pairWithMirror } from "./mirror.js";
@@ -13,7 +14,8 @@ Usage: node src/cli.js <command>
   pair --host H --code 123456   Pair with the mirror and store its token. Optional: --name, --port.
   serve                         Run the companion.
   health                        Ask a running companion how it is.
-  ask "text"                    Send typed words to a running companion.
+  ask "text"                    Send typed words to a running companion. With --shortcut NAME they are sent as a
+                                greeting the mirror recognised itself: ${SHORTCUTS.join(", ")}.
   say-wav FILE                  Send a recording to a running companion. Optional: --addressed name|window|follow-up.
   secret                        Print the secret, to give it to the mirror.
 
@@ -87,9 +89,19 @@ const commands = {
   },
 
   async ask(argv) {
-    const text = argv.join(" ").trim();
+    // The words are taken as they come, so that a dash among them is not read as an option.
+    const words = [...argv];
+    let shortcut;
+    const at = words.findIndex((word) => word === "--shortcut" || word.startsWith("--shortcut="));
+    if (at >= 0) {
+      const [option, name] = words.splice(at, words[at].includes("=") ? 1 : 2);
+      shortcut = option.includes("=") ? option.slice(option.indexOf("=") + 1) : name;
+      if (!SHORTCUTS.includes(shortcut)) throw new Error(`--shortcut must be one of: ${SHORTCUTS.join(", ")}.`);
+    }
+    const text = words.join(" ").trim();
     if (!text) throw new Error("Give the words to send: ask \"what is on my list?\"");
-    printAnswer(await request("POST", "/v1/ask", { json: { text, source: "test" } }));
+    const json = shortcut ? { text, source: "shortcut", shortcut } : { text, source: "test" };
+    printAnswer(await request("POST", "/v1/ask", { json }));
   },
 
   async "say-wav"(argv) {
@@ -150,6 +162,10 @@ function printAnswer(answer) {
   if (answer.heard) print(`Heard: ${answer.heard}`);
   if (answer.ignored) print(`Ignored (${answer.reason}).`);
   else print(`Reply: ${answer.reply || "(nothing to show)"}`);
+  // The rows of a card as the glass sets them: the label in capitals beside its text.
+  const rows = answer.details ?? [];
+  const width = Math.max(0, ...rows.map((row) => row.label.length));
+  for (const row of rows) print(`  ${row.label.toUpperCase().padEnd(width)}  ${row.text}`);
   if (answer.listen) print("The mirror would now listen for an answer.");
   if (answer.acted.length > 0) print(`Tools: ${answer.acted.join(", ")}`);
   print(`Time: ${answer.ms.total} ms in all, ${answer.ms.stt} ms hearing, ${answer.ms.agent} ms thinking.`);

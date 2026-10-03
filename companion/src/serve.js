@@ -3,6 +3,7 @@ import path from "node:path";
 import { createActivity } from "./activity.js";
 import { createAssistant } from "./assistant.js";
 import { createBrain } from "./brain.js";
+import { createBriefingMemory } from "./briefing.js";
 import { systemClock } from "./clock.js";
 import { readableByOthers } from "./config.js";
 import { createHealth } from "./health.js";
@@ -51,8 +52,10 @@ export async function serve(config, parts = {}) {
   const recordings = createRecordings(config.stateDir, config.keepUtterances, log);
   const queue = createQueue();
   const tools = createTools({ mirror, memory, clock, log });
-  const assistant = createAssistant({ brain, stt, mirror, tools, memory, activity, recordings, queue, log, clock });
-  const proactive = createProactive({ settings: config.proactive, brain, mirror, tools, memory, activity, queue, log, clock });
+  // One memory of the last briefing for both: a card shown unasked can be answered with "dismiss those" as well.
+  const briefings = createBriefingMemory(clock);
+  const assistant = createAssistant({ brain, stt, mirror, tools, memory, activity, recordings, queue, briefings, log, clock });
+  const proactive = createProactive({ settings: config.proactive, brain, mirror, tools, memory, activity, queue, briefings, log, clock });
   const health = createHealth({ version, model: config.model, brain, stt, mirror, queue, activity, clock });
   const server = createServer({ secret: config.secret, assistant, proactive, activity, queue, health, log, clock });
 

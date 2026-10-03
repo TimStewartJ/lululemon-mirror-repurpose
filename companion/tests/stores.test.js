@@ -54,6 +54,21 @@ test("activity lists the newest first and survives a new start", (t) => {
   assert.equal(again.recent()[0].error, "none really");
 });
 
+test("an entry keeps the rows of a card, and one without a card has no such field", (t) => {
+  const folder = temporaryDirectory(t);
+  const activity = createActivity(folder);
+  const details = [{ label: "Weather", text: "Clear, 62\u00B0 now." }, { label: "", text: "Buy milk \u00B7 Call the plumber" }];
+  activity.add({ at: 1000, source: "shortcut", heard: "good morning", reply: "Good morning", details });
+  activity.add({ at: 2000, source: "controls", heard: "what time is it?", reply: "It is 7:12.", details: [] });
+  const [plain, card] = createActivity(folder).recent();
+  assert.deepEqual(card, { at: 1000, source: "shortcut", heard: "good morning", reply: "Good morning", acted: [], ignored: false, reason: "", ms: 0, details });
+  assert.ok(!("details" in plain));
+  // A greeting answered by code is not what the health report calls the last thing asked of the model.
+  assert.equal(activity.lastExchange().at, 2000);
+  activity.add({ at: 3000, source: "shortcut", heard: "good night", reply: "Good night" });
+  assert.equal(activity.lastExchange().at, 2000);
+});
+
 test("activity keeps the last 200 and its file does not grow without end", (t) => {
   const folder = temporaryDirectory(t);
   const activity = createActivity(folder);

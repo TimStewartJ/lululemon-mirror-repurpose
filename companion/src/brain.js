@@ -195,6 +195,12 @@ function createCopilotBrain({
         resultType: "success",
       };
     }
+    // A tool that ends the turn ends it only when it did what it was asked.
+    // The runtime goes by the result's type, so a refusal is marked as a
+    // failure: the model then reads why and can call again or answer.
+    if (result.error && tool.endsTurn) {
+      return { textResultForLlm: JSON.stringify(result), resultType: "failure" };
+    }
     return result;
   }
 

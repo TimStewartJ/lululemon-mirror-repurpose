@@ -23,6 +23,7 @@ test("an utterance is heard, shown as heard, acted on and answered", async (t) =
     id: "utt-42",
     heard: "go to sleep.",
     reply: "Good night.",
+    details: [],
     ignored: false,
     reason: "",
     listen: false,
@@ -56,7 +57,7 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   assert.match(system, /Never say you did something that a tool refused/);
   assert.match(system, /What you remember about this household\n- Nothing yet\./);
   assert.match(system, /When you are unsure whether words were meant for you, they were/);
-  assert.equal(tools.length, 12);
+  assert.equal(tools.length, 14);
   assert.ok(!tools.includes("say"), "the answer is the line; there is no second way to show one");
 });
 
@@ -132,6 +133,7 @@ test("words not meant for the mirror are ignored by the model's decision", async
     id: "utt-1",
     heard: "The mirror in the hall needs cleaning before the guests arrive.",
     reply: "",
+    details: [],
     ignored: true,
     reason: "not-addressed",
     listen: false,

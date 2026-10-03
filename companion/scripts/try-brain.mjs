@@ -76,10 +76,33 @@ async function say(words, addressed = "name") {
   return response.json();
 }
 
+/** Sends a greeting as Mirror Home does when it recognised one by itself: no recording, and no model behind it. */
+async function shortcut(name, words) {
+  const response = await fetch(`${base}/v1/ask`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: words, source: "shortcut", shortcut: name }),
+  });
+  return response.json();
+}
+
 const widget = (id) => mirror.widget(id);
 const film = () => mirror.state.films.find((candidate) => candidate.id === mirror.state.activeFilm).name;
 const item = (pattern) => mirror.state.board.items.find((candidate) => pattern.test(candidate.title));
 const local = (ms) => localIso(ms, offset);
+/** Everything an answer puts on the glass: its line or headline, and the rows of a card. */
+const shown = (answer) => [answer.reply, ...answer.details.map((row) => `${row.label} ${row.text}`)].join(" | ");
+const isCard = (answer) => answer.details.length > 0;
+/** Prints the rows of a card under its headline, the labels in capitals as the glass sets them. */
+function printRows(answer) {
+  const width = Math.max(0, ...answer.details.map((row) => row.label.length));
+  for (const row of answer.details) console.log(`          ${row.label.toUpperCase().padEnd(width)}  ${row.text}`);
+}
+const openItems = () => mirror.state.board.items.filter((candidate) => !candidate.done && candidate.kind !== "note");
+/** Whether what the glass shows speaks of the item: one of the longer words of its title is there. */
+const names = (answer, entry) => entry.title.toLowerCase().split(/\W+/).some((word) => word.length >= 4 && shown(answer).toLowerCase().includes(word));
+/** Puts an item on the fake mirror's board directly, as another program would. */
+const post = (id, entry) => mirror.state.board.put(id, entry, "try-brain").item;
 const dayAfter = (days, time) => `${local(Date.now() + days * 86_400_000).slice(0, 10)}T${time}`;
 
 /**
@@ -114,7 +137,7 @@ const steps = [
   },
   {
     words: "Mirror, what's on my list?",
-    check: (answer) => (/trash/i.test(answer.reply) ? "" : "the reply does not mention the trash"),
+    check: (answer) => (/trash/i.test(shown(answer)) ? "" : "the answer does not mention the trash"),
   },
   {
     words: "The mirror in the hall needs cleaning before the guests arrive.",
@@ -163,7 +186,9 @@ const steps = [
   },
   {
     words: "Mirror, what is the weather like today?",
-    check: (answer) => (answer.acted.length === 0 && /rain|16|12|overcast/i.test(answer.reply) ? "" : "the reply does not give the weather from the state"),
+    // One line or a card, as the model sees fit, but from the state and with no other tool.
+    check: (answer) =>
+      answer.acted.every((name) => name === "present") && /rain|16|12|overcast/i.test(shown(answer)) ? "" : "the answer does not give the weather from the state",
   },
   {
     words: "Mirror, remind me to call the dentist at three this afternoon.",
@@ -220,6 +245,51 @@ const steps = [
     words: "Mirror, go to sleep.",
     check: (answer) => (answer.acted.includes("set_power") && mirror.state.automation.sleeping ? "" : "the display is not asleep"),
   },
+  // The steps for cards and briefings.
+  {
+    words: "Mirror, what is on my list?",
+    // A list of three or more reads badly as one line; run by itself, the board is filled first.
+    before: () => {
+      for (const title of ["Buy stamps", "Call the plumber", "Water the plants"].slice(openItems().length)) mirror.state.board.create({ kind: "todo", title }, "try-brain");
+      return { open: openItems() };
+    },
+    check: (answer, before) => {
+      if (!isCard(answer) || !answer.acted.includes("present")) return "the list did not come as a card";
+      const named = before.open.filter((entry) => names(answer, entry)).length;
+      return named >= Math.min(3, before.open.length) ? "" : `the card names ${named} of the ${before.open.length} open items`;
+    },
+  },
+  {
+    words: "Mirror, add bread to my list.",
+    check: (answer) => {
+      if (!item(/bread/i)) return "bread is not on the board";
+      return isCard(answer) || answer.acted.includes("present") ? "a confirmation came as a card" : "";
+    },
+  },
+  {
+    words: "Mirror, which films do you have?",
+    check: (answer) => (["flowers", "seasons", "water"].every((word) => shown(answer).toLowerCase().includes(word)) ? "" : "not all three films are named"),
+  },
+  {
+    words: "Mirror, what did I miss?",
+    before: () => post("stretch01", { kind: "reminder", title: "Stretch", due: Date.now() - 2 * 3_600_000 }),
+    check: (answer) => {
+      if (!answer.acted.includes("briefing")) return "briefing did not run";
+      const missed = answer.details.find((row) => row.label === "Missed");
+      return missed && /Stretch, 2 hours ago/.test(missed.text) ? "" : "the card has no row for the missed reminder";
+    },
+  },
+  {
+    words: "Mirror, dismiss those.",
+    check: (answer) => (answer.acted.includes("board_update") && mirror.state.board.find("stretch01")?.done ? "" : "the missed reminder is not marked done"),
+    note: () => `Stretch is ${mirror.state.board.find("stretch01")?.done ? "done" : "not done"}`,
+  },
+  {
+    // A greeting in words the mirror's own shortcuts do not catch, so that it reaches the model.
+    words: "Good morning, mirror.",
+    check: (answer) =>
+      answer.acted.includes("briefing") && answer.reply === "Good morning" && isCard(answer) ? "" : "it was not answered with the morning briefing",
+  },
 ];
 
 console.log(`Model ${options.model}, reasoning effort ${options.effort}. The fake mirror's zone is ${options.zone} (UTC offset ${offset} minutes); its clock reads ${local(Date.now())}.`);
@@ -248,6 +318,7 @@ for (const step of steps) {
   console.log(`  heard:  ${answer.heard}`);
   console.log(`  tools:  ${answer.acted.join(", ") || "none"}`);
   console.log(`  reply:  ${answer.ignored ? `(ignored: ${answer.reason})` : answer.reply}${answer.listen ? "  [listens for an answer]" : ""}`);
+  printRows(answer);
   console.log(`  time:   agent ${answer.ms.agent} ms, total ${answer.ms.total} ms; reply ${answer.reply.length} characters`);
   if (options.calls) {
     for (const call of logLines.splice(0).map((line) => JSON.parse(line)).filter((entry) => entry.event === "brain.model_call" || entry.event === "tool")) {
@@ -262,6 +333,17 @@ for (const step of steps) {
   if (answer.error) console.log(`  error:  ${answer.error}`);
   console.log(`  check:  ${problem ? `NOT AS EXPECTED: ${problem}` : "as expected"}\n`);
   if (problem) failures.push(step.words);
+}
+
+// What is answered without the model: the greetings the mirror recognises by itself.
+if (!options.only) {
+  for (const [name, words] of [["good-morning", "good morning"], ["good-night", "good night"]]) {
+    const answer = await shortcut(name, words);
+    console.log(`> (the shortcut ${name})`);
+    console.log(`  reply:  ${answer.reply}`);
+    printRows(answer);
+    console.log(`  time:   total ${answer.ms.total} ms, shown for ${answer.seconds} seconds\n`);
+  }
 }
 
 // The two runs the companion makes by itself, against the real model.

@@ -164,3 +164,45 @@ test("board_remove refuses what is unclear or not there", async (t) => {
   assert.match((await use("board_remove", { id: "nothere1" })).error, /The board has no item "nothere1"/);
   assert.match((await use("board_remove", { all: "some" })).error, /arguments are not right/);
 });
+
+test("board_add puts a hidden board where it covers nothing, and says where it went", async (t) => {
+  const { use, fake } = await startTools(t);
+  // The note was made bigger while the board was hidden, over the place the board is kept.
+  Object.assign(fake.widget("note"), { visible: true, x: 40, y: 320, w: 715, h: 320 });
+  const turn = await turnWithState(use);
+  const answer = await use("board_add", { kind: "todo", title: "Buy milk" }, turn);
+  assert.equal(answer.boardNowShown, true);
+  assert.equal(answer.boardMoved, 'Its usual place was taken, so "board" is now below "note".');
+  const board = fake.widget("board");
+  assert.deepEqual([board.visible, board.x, board.y, board.w, board.h], [true, 50, 660, 520, 230]);
+  assert.deepEqual(turn.state.snapshot.widgets.find((widget) => widget.id === "board"), {
+    id: "board", visible: true, x: 50, y: 660, w: 520, h: 230, align: "start", size: "medium",
+  });
+  // Nothing else moved, and a second item leaves the board where it now is.
+  const note = fake.widget("note");
+  assert.deepEqual([note.x, note.y, note.w, note.h], [40, 320, 715, 320]);
+  const second = await use("board_add", { kind: "todo", title: "Buy eggs" }, turn);
+  assert.deepEqual([second.boardNowShown, second.boardMoved], [undefined, undefined]);
+  assert.equal(fake.widget("board").y, 660);
+});
+
+test("board_add says nothing of the board's place when it could stay, and leaves a locked board where it is", async (t) => {
+  const { use, fake } = await startTools(t);
+  const first = await use("board_add", { kind: "todo", title: "Buy milk" });
+  assert.deepEqual([first.boardNowShown, first.boardMoved], [true, undefined]);
+  fake.widget("board").visible = false;
+  fake.widget("board").locked = true;
+  Object.assign(fake.widget("note"), { visible: true, x: 40, y: 320, w: 715, h: 320 });
+  const locked = await use("board_add", { kind: "todo", title: "Buy eggs" });
+  assert.deepEqual([locked.boardNowShown, locked.boardMoved], [true, undefined]);
+  assert.deepEqual([fake.widget("board").x, fake.widget("board").y], [50, 440]);
+});
+
+test("board_add makes the board less tall where its height fits nowhere", async (t) => {
+  const { use, fake } = await startTools(t);
+  for (const id of ["clock", "date", "weather", "forecast"]) fake.widget(id).visible = false;
+  Object.assign(fake.widget("photo"), { visible: true, x: 0, y: 0, w: 1000, h: 800 });
+  const answer = await use("board_add", { kind: "todo", title: "Buy milk" });
+  assert.equal(answer.boardMoved, 'Its usual place was taken, so "board" is now at x 50, y 820. It is less tall than before.');
+  assert.deepEqual([fake.widget("board").y, fake.widget("board").h], [820, 160]);
+});

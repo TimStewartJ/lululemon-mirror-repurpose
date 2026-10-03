@@ -1,6 +1,7 @@
 import { describeError } from "./log.js";
 import { MirrorRefused, MirrorUnreachable } from "./mirror.js";
 import { boardTools } from "./tools/board.js";
+import { cardTools } from "./tools/card.js";
 import { displayTools } from "./tools/display.js";
 import { layoutTools } from "./tools/layout.js";
 import { talkTools } from "./tools/talk.js";
@@ -31,6 +32,11 @@ import { talkTools } from "./tools/talk.js";
  * @property {number} changes How many tools altered the mirror in this run.
  * @property {number} [deadline] After this moment a greeting may no longer speak.
  * @property {string} [said] The line the say tool put on the glass, if it did.
+ * @property {{ reply: string, details: { label: string, text: string }[], seconds?: number }} [card]
+ *   The card that is the answer of this turn, when the briefing or the present tool made one.
+ * @property {{ briefing: import("./briefing.js").Briefing, state: import("./state.js").MirrorState }} [briefing]
+ *   The briefing the briefing tool gave, with the state it was built from.
+ * @property {boolean} [cardRefused] Set when a card that broke the limits was handed back to be written again.
  * @property {import("./state.js").MirrorState|null} state The mirror's state as last fetched.
  * @property {number} stateAt When that state was fetched, on the companion's clock.
  */
@@ -60,7 +66,7 @@ const FOR_KIND = {
  * @returns {Tool[]}
  */
 export function createTools(context) {
-  return [...displayTools(context), ...layoutTools(context), ...boardTools(context), ...talkTools(context)];
+  return [...displayTools(context), ...layoutTools(context), ...boardTools(context), ...cardTools(context), ...talkTools(context)];
 }
 
 /** The tools a kind of run may use: a greeting may only speak, a tending run may only tidy. */

@@ -156,3 +156,36 @@ test("pairing exchanges a code for a token and passes on a refusal", async (t) =
   assert.equal(await pairWithMirror({ host: "127.0.0.1", port, code: "123456", name: "Mirror companion" }), "test-token-from-pairing");
   await assert.rejects(pairWithMirror({ host: "127.0.0.1", port, code: "000000", name: "Mirror companion" }), /That code is not right/);
 });
+
+test("the fake mirror takes rows with a caption, as Mirror Home does, and refuses rows that break its limits", async (t) => {
+  const { fake, mirror } = await withFake(t);
+  const say = (body) => mirror.request("POST", "/api/v1/assistant/say", { body });
+  const details = [{ label: "Reminder", text: "Now, 9:00 PM" }, { label: "", text: "x".repeat(90) }];
+  assert.deepEqual((await say({ text: "Start the dishwasher", kind: "notice", seconds: 20, details })).body, { shown: true });
+  assert.deepEqual((await say({ text: "No rows", details: [] })).body, { shown: true });
+  assert.deepEqual((await say({ text: "As before" })).body, { shown: true });
+  assert.deepEqual(fake.state.said, [
+    { text: "Start the dishwasher", kind: "notice", seconds: 20, shown: true, details },
+    { text: "No rows", kind: "reply", seconds: null, shown: true, details: [] },
+    { text: "As before", kind: "reply", seconds: null, shown: true },
+  ]);
+  const row = { label: "To do", text: "Buy milk" };
+  const refused = [
+    [row, row, row, row, row, row],
+    [{ label: "x".repeat(15), text: "Buy milk" }],
+    [{ label: "To do", text: "x".repeat(91) }],
+    [{ label: "To do", text: "" }],
+    [{ label: "To do" }],
+    [{ label: "To do", text: "two\nlines" }],
+    [{ label: 5, text: "Buy milk" }],
+    ["Buy milk"],
+    { label: "To do", text: "Buy milk" },
+  ];
+  for (const rows of refused) {
+    const answer = await say({ text: "A card", details: rows });
+    assert.equal(answer.status, 400, JSON.stringify(rows));
+    assert.match(answer.body.error, /details takes up to 5 rows/);
+  }
+  assert.equal(fake.state.said.length, 3);
+  await assert.rejects(mirror.call("POST", "/api/v1/assistant/say", { body: { text: "A card", details: refused[0] } }), MirrorRefused);
+});

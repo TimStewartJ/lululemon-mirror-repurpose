@@ -16,6 +16,9 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * @property {boolean} sleeping
  * @property {number} boardVersion
  * @property {object[]} items Every item on the board, as the mirror lists them.
+ * @property {boolean} boardRead False when the board could not be read, so that `items` says nothing.
+ * @property {boolean} clock24Hour Whether the mirror's clock shows 15:00 and not 3:00 PM.
+ * @property {object|null} weather The weather as the mirror's status has it: its state, whether it is stale, and its data.
  */
 
 /**
@@ -23,16 +26,19 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  *
  * @param {import("./mirror.js").Mirror} mirror
  * @param {{ now: () => number }} clock
+ * @param {{ brief?: boolean }} [options] With `brief`, only the status and the board are read: all that a
+ *   briefing is built from, and two requests fewer for an answer that has to be fast. The snapshot then
+ *   lacks the layout and the films.
  * @returns {Promise<MirrorState>}
  * @throws {MirrorUnreachable} when the mirror's status cannot be read
  */
-export async function fetchState(mirror, clock) {
+export async function fetchState(mirror, clock, { brief = false } = {}) {
   const asked = clock.now();
   const [status, layout, board, films] = await Promise.allSettled([
     mirror.get("/api/v1/status"),
-    mirror.get("/api/v1/dashboard/layout"),
+    brief ? null : mirror.get("/api/v1/dashboard/layout"),
     mirror.get("/api/v1/board/items?limit=100"),
-    mirror.get("/api/v1/background-videos"),
+    brief ? null : mirror.get("/api/v1/background-videos"),
   ]);
   if (status.status === "rejected") {
     if (status.reason instanceof MirrorUnreachable) throw status.reason;
@@ -74,6 +80,9 @@ export function buildState({ status, layout, board, films, now }) {
     sleeping: Boolean(automation.sleeping),
     boardVersion: Number(board?.version ?? status.boardVersion ?? 0),
     items,
+    boardRead: board !== null,
+    clock24Hour: Boolean(status.clock24Hour),
+    weather: status.weather ?? null,
   };
 }
 

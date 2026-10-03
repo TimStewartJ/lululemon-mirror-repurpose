@@ -84,7 +84,7 @@ export function applyChanges(layout, changes, { overlapOk = false } = {}) {
  * Says in words where a widget has ended up among the others, so that the
  * model can check its arithmetic against what was asked: "below the clock".
  */
-function placeOf(widget, widgets) {
+export function placeOf(widget, widgets) {
   if (!widget.visible) return "";
   const others = widgets.filter((other) => other.id !== widget.id && other.visible && other.type !== "photo");
   const nearest = (gap) =>
@@ -239,4 +239,61 @@ function covers(a, b) {
 
 function list(names) {
   return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+// Kept between a widget that is placed here and the others, and the edges.
+const MARGIN = 20;
+// Captions and cards appear at the bottom of the glass.
+const CAPTION_ROOM = 120;
+const SCAN_STEP = 20;
+const LEAST_HEIGHT = 120;
+const SHRINK_STEP = 10;
+
+/**
+ * Finds a place for a widget that is about to be shown where its stored box
+ * would lie over another visible one; a photo counts here too, since a list
+ * over a picture cannot be read. The same size is tried first: directly
+ * below the lowest widget in its own column, then the first free box met
+ * from the top down and from left to right. The strip at the bottom where
+ * captions appear is used only when there is no room above it. If the size
+ * fits nowhere, it is made less tall, down to 120 units.
+ *
+ * @param {{ id: string, x: number, y: number, w: number, h: number }} widget
+ * @param {object[]} widgets Every widget of the layout.
+ * @returns {{ x: number, y: number, w: number, h: number } | null} the box to give it, or null when it
+ *   covers nothing where it is, or when there is no room anywhere and it has to stay
+ */
+export function freePlace(widget, widgets) {
+  const others = widgets.filter((other) => other.id !== widget.id && other.visible);
+  if (!others.some((other) => shares(widget, other, 0))) return null;
+  const inColumn = others.filter((other) => other.x < widget.x + widget.w + MARGIN && other.x + other.w > widget.x - MARGIN);
+  const below = {
+    x: Math.max(MARGIN, Math.min(widget.x, GRID - MARGIN - widget.w)),
+    y: Math.max(...inColumn.map((other) => other.y + other.h)) + MARGIN,
+  };
+  const free = (box, floor) =>
+    box.x >= MARGIN &&
+    box.y >= MARGIN &&
+    box.x + box.w <= GRID - MARGIN &&
+    box.y + box.h <= floor &&
+    !others.some((other) => shares(box, other, MARGIN));
+
+  for (let h = widget.h; ; h = Math.max(LEAST_HEIGHT, h - SHRINK_STEP)) {
+    for (const floor of [GRID - CAPTION_ROOM, GRID - MARGIN]) {
+      const preferred = { ...below, w: widget.w, h };
+      if (free(preferred, floor)) return preferred;
+      for (let y = MARGIN; y + h <= floor; y += SCAN_STEP) {
+        for (let x = MARGIN; x + widget.w <= GRID - MARGIN; x += SCAN_STEP) {
+          const box = { x, y, w: widget.w, h };
+          if (free(box, floor)) return box;
+        }
+      }
+    }
+    if (h <= LEAST_HEIGHT) return null;
+  }
+}
+
+/** True when two boxes come closer to each other than the gap, or share any area when the gap is 0. */
+function shares(a, b, gap) {
+  return a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
 }

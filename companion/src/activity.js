@@ -11,9 +11,10 @@ const KEPT = 200;
  *
  * @typedef {Object} ActivityEntry
  * @property {number} at
- * @property {"voice"|"controls"|"presence"|"reminder"|"tend"|"test"} source
+ * @property {"voice"|"controls"|"shortcut"|"presence"|"reminder"|"tend"|"test"} source
  * @property {string} heard
  * @property {string} reply
+ * @property {{ label: string, text: string }[]} [details] The rows of a card, when the reply was the headline of one.
  * @property {string[]} acted
  * @property {boolean} ignored
  * @property {string} reason
@@ -72,6 +73,7 @@ export function createActivity(stateDir, log = () => {}) {
         reason: entry.reason ?? "",
         ms: entry.ms ?? 0,
       };
+      if (entry.details?.length > 0) full.details = entry.details;
       if (entry.error) full.error = entry.error;
       entries.push(full);
       if (entries.length > KEPT) entries = entries.slice(-KEPT);

@@ -121,3 +121,34 @@ test("with no companion running the commands say how to start one", async (t) =>
   assert.equal(health.code, 1);
   assert.match(health.stderr, /No companion answers at http:\/\/127\.0\.0\.1:9\/v1\/health .*Start it with: node src\/cli\.js serve/);
 });
+
+test("ask sends a shortcut with --shortcut, and the rows of a card are printed under the reply", async (t) => {
+  const { running, config, brain } = await startCompanion(t, [
+    { calls: [{ tool: "present", args: { headline: "Two things on your list", rows: [{ label: "7:00 AM", text: "Take out the trash" }, { text: "Buy milk" }] } }] },
+    { text: "The answer is -5." },
+  ]);
+  const file = path.join(temporaryDirectory(t), "config.json");
+  fs.writeFileSync(file, JSON.stringify({ secret: SECRET, listen: { host: "127.0.0.1", port: running.port }, stateDir: config.stateDir }));
+
+  const morning = await cli(file, "ask", "good", "morning", "--shortcut", "good-morning");
+  assert.equal(morning.code, 0, morning.stderr);
+  assert.match(
+    morning.stdout,
+    /^Heard: good morning\nReply: Good morning\n  WEATHER  Overcast, 12\u00B0 now\. High 16\u00B0, rain likely by 11 AM\.\n  TODAY    Nothing on your list\.\nTime: \d+ ms in all, 0 ms hearing, 0 ms thinking\.\n$/,
+  );
+  const home = await cli(file, "ask", "--shortcut=home", "I'm home");
+  assert.match(home.stdout, /^Heard: I'm home\nReply: Welcome home\n  WEATHER  Overcast, 12\u00B0 now\.\n/);
+  assert.equal(brain.runs.length, 0, "a shortcut does not reach the model");
+
+  const list = await cli(file, "ask", "what is on my list?");
+  assert.match(list.stdout, /Reply: Two things on your list\n  7:00 AM  Take out the trash\n           Buy milk\nTools: present\n/);
+  // Words are sent as they are, also when one of them begins with a dash.
+  const sum = await cli(file, "ask", "what", "is", "-2", "-3?");
+  assert.match(sum.stdout, /^Heard: what is -2 -3\?\nReply: The answer is -5\.\nTime: /);
+
+  const wrong = await cli(file, "ask", "good day", "--shortcut", "good-day");
+  assert.equal(wrong.code, 1);
+  assert.equal(wrong.stderr, "--shortcut must be one of: good-morning, good-afternoon, good-evening, good-night, home.\n");
+  assert.match((await cli(file, "ask", "--shortcut", "home")).stderr, /Give the words to send/);
+  assert.match((await cli(file, "help")).stdout, /ask "text" +Send typed words to a running companion\. With --shortcut NAME/);
+});

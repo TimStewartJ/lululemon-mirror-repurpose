@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatOffset, inQuietHours, localIso, localTime, parseIsoWithOffset, weekday } from "../src/time.js";
+import { clockHour, clockTime, formatOffset, inQuietHours, localDay, localIso, localTime, parseIsoWithOffset, shortDate, weekday } from "../src/time.js";
 
 const SATURDAY_0712_PDT = Date.UTC(2026, 9, 3, 14, 12, 5);
 
@@ -46,4 +46,29 @@ test("quiet hours run past midnight in the mirror's zone", () => {
   assert.equal(inQuietHours(at(6, 30), -420, quiet), false);
   assert.equal(inQuietHours(at(12, 0), -420, ["09:00", "17:00"]), true);
   assert.equal(inQuietHours(at(3, 0), -420, null), false);
+});
+
+test("a time of day is written as the mirror's clock shows it", () => {
+  const at = (hour, minute = 0) => Date.UTC(2026, 9, 3, hour + 7, minute);
+  assert.equal(clockTime(at(15), -420, false), "3:00 PM");
+  assert.equal(clockTime(at(15), -420, true), "15:00");
+  assert.equal(clockTime(at(0, 5), -420, false), "12:05 AM");
+  assert.equal(clockTime(at(0, 5), -420, true), "00:05");
+  assert.equal(clockTime(at(12), -420, false), "12:00 PM");
+  assert.equal(clockTime(at(9, 30), -420, false), "9:30 AM");
+  assert.equal(clockTime(at(9, 30), -420, true), "09:30");
+  assert.equal(clockTime(SATURDAY_0712_PDT, 330, false), "7:42 PM");
+  assert.equal(clockHour(at(15), -420, false), "3 PM");
+  assert.equal(clockHour(at(0), -420, false), "12 AM");
+  assert.equal(clockHour(at(15), -420, true), "15:00");
+  assert.equal(shortDate(at(15), -420), "Oct 3");
+});
+
+test("two instants are on the same day when the mirror's calendar says so", () => {
+  const lateSaturday = Date.UTC(2026, 9, 4, 6, 59);
+  const earlySunday = Date.UTC(2026, 9, 4, 7, 0);
+  assert.equal(localDay(lateSaturday, -420), localDay(SATURDAY_0712_PDT, -420));
+  assert.equal(localDay(earlySunday, -420), localDay(SATURDAY_0712_PDT, -420) + 1);
+  // In UTC both are Sunday.
+  assert.equal(localDay(lateSaturday, 0), localDay(earlySunday, 0));
 });
