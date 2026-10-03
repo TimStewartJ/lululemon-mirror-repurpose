@@ -27,6 +27,11 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      # The companion's tests.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Run repository checks
         run: python tools/check.py
 

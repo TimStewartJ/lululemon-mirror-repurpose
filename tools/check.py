@@ -6,17 +6,29 @@ from __future__ import annotations
 import argparse
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+COMPANION = REPO / "companion"
 DUMMY_CERTIFICATE = "a" * 64
 
 
-def run(arguments: list[str]) -> None:
+def run(arguments: list[str], cwd: pathlib.Path = REPO) -> None:
     print("+", subprocess.list2cmdline(arguments), flush=True)
-    subprocess.run(arguments, cwd=REPO, check=True)
+    subprocess.run(arguments, cwd=cwd, check=True)
+
+
+def check_companion() -> None:
+    """The companion's own tests, which need Node.js and nothing else running."""
+    node, npm = shutil.which("node"), shutil.which("npm")
+    if not node or not npm:
+        raise SystemExit("Node.js 24 is needed for the companion's tests (companion/README.md)")
+    if not (COMPANION / "node_modules" / ".package-lock.json").is_file():
+        run([npm, "ci", "--no-audit", "--no-fund"], COMPANION)
+    run([node, "--test"], COMPANION)
 
 
 def main() -> None:
@@ -40,6 +52,7 @@ def main() -> None:
             "-v",
         ]
     )
+    check_companion()
     run(
         [
             str(gradle),

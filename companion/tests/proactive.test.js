@@ -1,0 +1,342 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createActivity } from "../src/activity.js";
+import { createMemory } from "../src/memory.js";
+import { createMirror } from "../src/mirror.js";
+import { createProactive } from "../src/proactive.js";
+import { createQueue } from "../src/queue.js";
+import { createTools } from "../src/tools.js";
+import { scriptedBrain } from "./fakes/brain.js";
+import { fakeClock, until } from "./fakes/clock.js";
+import { startFakeMirror } from "./fakes/mirror.js";
+import { startCompanion, temporaryDirectory } from "./helpers.js";
+
+const MINUTE = 60_000;
+const greetingLine = { calls: [{ tool: "say", args: { text: "Good morning. Rain from eleven." } }], text: "done" };
+
+/** The proactive part by itself, with a fake mirror and a scripted brain. */
+async function startProactive(t, script = [], settings = {}) {
+  const clock = fakeClock();
+  const fake = await startFakeMirror({ now: clock.now });
+  const mirror = createMirror({ host: fake.host, port: fake.port, token: fake.token });
+  const folder = temporaryDirectory(t);
+  const memory = createMemory(folder);
+  const activity = createActivity(folder);
+  const queue = createQueue();
+  const events = [];
+  const log = (event, fields) => events.push({ event, ...fields });
+  const brain = scriptedBrain(clock, script);
+  const proactive = createProactive({
+    settings: { greet: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"], ...settings },
+    brain,
+    mirror,
+    tools: createTools({ mirror, memory, clock, log }),
+    memory,
+    activity,
+    queue,
+    log,
+    clock,
+  });
+  t.after(async () => {
+    proactive.stop();
+    mirror.close();
+    await fake.close();
+  });
+  /** Puts an item on the fake mirror's board directly, as another program would. */
+  const post = (item) => fake.state.board.create(item, "Kitchen agent");
+  return { clock, fake, brain, proactive, activity, queue, memory, events, post };
+}
+
+test("someone walking up after a long dark is greeted with one notice", async (t) => {
+  const { proactive, fake, brain, activity } = await startProactive(t, [greetingLine]);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "greeted");
+  assert.deepEqual(fake.state.said, [{ text: "Good morning. Rain from eleven.", kind: "notice", seconds: null, shown: true }]);
+  const run = brain.runs[0];
+  assert.equal(run.session, "proactive");
+  assert.deepEqual(run.tools, ["say"], "a greeting can speak and change nothing");
+  assert.match(run.prompt, /^Someone just walked up\. The display had been dark for 60 minutes\.\n\nThe mirror now:\n\{/);
+  assert.match(run.system, /stay silent/);
+  assert.ok(run.timeoutMs <= 15_000);
+  assert.deepEqual(
+    activity.recent().map((entry) => [entry.source, entry.reply, entry.acted]),
+    [["presence", "Good morning. Rain from eleven.", ["say"]]],
+  );
+});
+
+test("a greeting may stay silent, and that is recorded too", async (t) => {
+  const { proactive, fake, activity } = await startProactive(t, [{ text: "done" }]);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "silent");
+  assert.equal(fake.state.said.length, 0);
+  assert.deepEqual(activity.recent().map((entry) => [entry.source, entry.reply, entry.acted]), [["presence", "", []]]);
+});
+
+test("there is at most one greeting in 45 minutes", async (t) => {
+  const { proactive, clock, brain } = await startProactive(t, [greetingLine, greetingLine, greetingLine]);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "greeted");
+  await clock.advance(44 * MINUTE);
+  assert.equal(await proactive.greet({ asleepSeconds: 1200 }), "greeted-recently");
+  await clock.advance(1 * MINUTE);
+  assert.equal(await proactive.greet({ asleepSeconds: 1200 }), "greeted");
+  assert.equal(brain.runs.length, 2);
+});
+
+test("a short absence gets no greeting", async (t) => {
+  const { proactive, brain } = await startProactive(t, [greetingLine]);
+  assert.equal(await proactive.greet({ asleepSeconds: 599 }), "asleep-too-short");
+  assert.equal(await proactive.greet({}), "asleep-too-short");
+  assert.equal(await proactive.greet({ asleepSeconds: 600 }), "greeted");
+  assert.equal(brain.runs.length, 1);
+});
+
+test("there is no greeting in quiet hours, by the mirror's clock", async (t) => {
+  const { proactive, clock, brain, fake } = await startProactive(t, [greetingLine]);
+  // 07:12 on the mirror; quiet hours begin at 22:30.
+  await clock.advance((15 * 60 + 17) * MINUTE);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "greeted");
+  await clock.advance(60 * MINUTE);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "quiet-hours");
+  await clock.advance(7 * 60 * MINUTE);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "quiet-hours", "06:29 is still quiet");
+  assert.equal(brain.runs.length, 1);
+  assert.equal(fake.state.said.length, 1);
+});
+
+test("quiet hours can be switched off, and so can greeting", async (t) => {
+  const always = await startProactive(t, [greetingLine], { quietHours: null });
+  await always.clock.advance(17 * 60 * MINUTE);
+  assert.equal(await always.proactive.greet({ asleepSeconds: 3600 }), "greeted");
+  const never = await startProactive(t, [greetingLine], { greet: false });
+  assert.equal(await never.proactive.greet({ asleepSeconds: 3600 }), "off");
+  assert.equal(never.brain.runs.length, 0);
+});
+
+test("a greeting that would come later than 15 seconds is dropped", async (t) => {
+  const { proactive, clock, fake, brain, activity } = await startProactive(t, [
+    { before: () => clock.advance(16_000), ...greetingLine },
+    { hangs: true },
+  ]);
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "silent");
+  assert.match(brain.runs[0].results[0].error, /Too late/);
+  assert.equal(fake.state.said.length, 0);
+
+  await clock.advance(46 * MINUTE);
+  const slow = proactive.greet({ asleepSeconds: 3600 });
+  await until(() => brain.runs.length === 2);
+  await clock.advance(15_000);
+  assert.match(await slow, /^failed: timeout/);
+  assert.match(activity.recent(1)[0].error, /^timeout/);
+});
+
+test("a greeting steps aside for a person", async (t) => {
+  const { proactive, queue, brain } = await startProactive(t, [{ hangs: true }, greetingLine]);
+  const leave = queue.enter();
+  assert.equal(await proactive.greet({ asleepSeconds: 3600 }), "busy");
+  leave();
+  assert.equal(brain.runs.length, 0);
+  // One that is under way is stopped when a person arrives, and counts as the greeting of that hour.
+  const greeting = proactive.greet({ asleepSeconds: 3600 });
+  await until(() => brain.runs.length === 1);
+  const person = queue.enter();
+  assert.match(await greeting, /^failed: aborted/);
+  person();
+});
+
+test("a reminder that falls due is announced once, as a notice for 15 seconds", async (t) => {
+  const { proactive, clock, fake, post, activity, brain } = await startProactive(t);
+  post({ kind: "reminder", title: "Take out the trash", due: clock.now() + 10 * MINUTE });
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0, "not yet due");
+  await clock.advance(10 * MINUTE);
+  await proactive.checkReminders();
+  assert.deepEqual(fake.state.said, [{ text: "Reminder: Take out the trash", kind: "notice", seconds: 15, shown: true }]);
+  for (let round = 0; round < 3; round++) {
+    await clock.advance(30_000);
+    await proactive.checkReminders();
+  }
+  assert.equal(fake.state.said.length, 1, "once per item");
+  assert.deepEqual(activity.recent().map((entry) => [entry.source, entry.reply, entry.acted]), [["reminder", "Reminder: Take out the trash", ["say"]]]);
+  assert.equal(brain.runs.length, 0, "no model is involved");
+});
+
+test("the board is read only when it has changed", async (t) => {
+  const { proactive, clock, fake, post } = await startProactive(t);
+  const reads = () => fake.requests().filter((request) => request.path.startsWith("/api/v1/board/items")).length;
+  post({ kind: "todo", title: "Call the plumber", due: clock.now() + 2 * MINUTE });
+  await proactive.checkReminders();
+  await clock.advance(MINUTE);
+  await proactive.checkReminders();
+  assert.equal(reads(), 1);
+  await clock.advance(MINUTE);
+  await proactive.checkReminders();
+  assert.equal(reads(), 1, "a known due time needs no new read");
+  assert.equal(fake.state.said[0].text, "Reminder: Call the plumber", "a to-do with a due time is announced as well");
+  post({ kind: "note", title: "Welcome home" });
+  await proactive.checkReminders();
+  assert.equal(reads(), 2);
+});
+
+test("a reminder that was done, removed or moved is not announced at its old time", async (t) => {
+  const { proactive, clock, fake, post } = await startProactive(t);
+  const done = post({ kind: "reminder", title: "Done already", due: clock.now() + 5 * MINUTE });
+  const gone = post({ kind: "reminder", title: "Removed", due: clock.now() + 5 * MINUTE });
+  const moved = post({ kind: "reminder", title: "Moved", due: clock.now() + 5 * MINUTE });
+  await proactive.checkReminders();
+  fake.state.board.patch(done.id, { done: true });
+  fake.state.board.delete(gone.id);
+  fake.state.board.patch(moved.id, { due: clock.now() + 20 * MINUTE });
+  await clock.advance(5 * MINUTE);
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0);
+  await clock.advance(15 * MINUTE);
+  await proactive.checkReminders();
+  assert.deepEqual(fake.state.said.map((caption) => caption.text), ["Reminder: Moved"]);
+});
+
+test("what was overdue before the companion looked is not announced late", async (t) => {
+  const { proactive, clock, fake, post } = await startProactive(t);
+  post({ kind: "reminder", title: "Long ago", due: clock.now() + MINUTE });
+  await clock.advance(30 * MINUTE);
+  await proactive.checkReminders();
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0);
+});
+
+test("a reminder in quiet hours shows no caption, then or later", async (t) => {
+  const { proactive, clock, fake, post, events } = await startProactive(t);
+  await clock.advance(15 * 60 * MINUTE);
+  post({ kind: "reminder", title: "Lock the door", due: clock.now() + 30 * MINUTE });
+  await proactive.checkReminders();
+  await clock.advance(30 * MINUTE);
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0, "22:42 is in quiet hours");
+  assert.ok(events.some((entry) => entry.event === "reminder.quiet" && entry.title === "Lock the door"));
+  await clock.advance(9 * 60 * MINUTE);
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0);
+});
+
+test("a reminder on a dark display is recorded as not shown, and not repeated", async (t) => {
+  const { proactive, clock, fake, post, activity } = await startProactive(t);
+  post({ kind: "reminder", title: "Water the plants", due: clock.now() + MINUTE });
+  await proactive.checkReminders();
+  fake.state.automation.sleeping = true;
+  await clock.advance(MINUTE);
+  await proactive.checkReminders();
+  assert.deepEqual(fake.state.said.map((caption) => caption.shown), [false]);
+  assert.equal(activity.recent(1)[0].reason, "sleeping");
+  fake.state.automation.sleeping = false;
+  await clock.advance(MINUTE);
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 1);
+});
+
+test("reminders can be switched off", async (t) => {
+  const { proactive, clock, fake, post } = await startProactive(t, [], { reminders: false });
+  post({ kind: "reminder", title: "Take out the trash", due: clock.now() + MINUTE });
+  await proactive.checkReminders();
+  await clock.advance(MINUTE);
+  await proactive.checkReminders();
+  assert.equal(fake.state.said.length, 0);
+  assert.equal(fake.requests().filter((request) => request.path.startsWith("/api/v1/board")).length, 0);
+});
+
+test("tending is told what people asked for in the last 12 hours, and to leave it alone", async (t) => {
+  const { proactive, clock, brain, activity } = await startProactive(t, [{ text: "Nothing to do." }]);
+  const hour = 60 * MINUTE;
+  activity.add({ at: clock.now() - 13 * hour, source: "voice", heard: "change the background to the flowers one", acted: ["set_background"] });
+  activity.add({ at: clock.now() - 3 * hour, source: "voice", heard: "move the clock to the bottom", acted: ["arrange_widgets"] });
+  activity.add({ at: clock.now() - 2 * hour, source: "voice", heard: "and so she left", ignored: true, reason: "not-addressed", acted: ["ignore"] });
+  activity.add({ at: clock.now() - 1 * hour, source: "controls", heard: "what is on my list?", acted: [] });
+  activity.add({ at: clock.now() - 30 * MINUTE, source: "reminder", reply: "Reminder: trash", acted: ["say"] });
+  assert.equal(await proactive.tend(), "nothing");
+  const { prompt, system, tools, session } = brain.runs[0];
+  assert.equal(session, "proactive");
+  assert.match(
+    prompt,
+    /^What people asked for in the last 12 hours:\n- 04:12 "move the clock to the bottom" \(arrange_widgets\)\n- 06:12 "what is on my list\?" \(no tool\)\n\nThe mirror now:\n\{/,
+  );
+  assert.ok(!prompt.includes("flowers one"), "what was asked 13 hours ago is no longer protected");
+  assert.ok(!prompt.includes("she left"), "overheard talk is not a request");
+  assert.match(system, /Leave alone whatever a person asked for in the last 12 hours/);
+  assert.match(system, /Change one thing at most/);
+  assert.deepEqual(tools, ["get_state", "set_background", "board_remove"], "the layout was a person's wish, so its tool is withheld");
+  assert.equal(activity.recent(1)[0].source, "reminder", "a run that changed nothing is not listed");
+});
+
+test("tending is not handed the tools for what people asked for, and does not run when that is all of them", async (t) => {
+  const { proactive, clock, brain, activity } = await startProactive(t, [{ text: "Nothing to do." }, { text: "Nothing to do." }]);
+  activity.add({ at: clock.now() - 13 * 60 * MINUTE, source: "voice", heard: "hide the weather", acted: ["arrange_widgets"] });
+  assert.equal(await proactive.tend(), "nothing");
+  assert.deepEqual(brain.runs[0].tools, ["get_state", "set_background", "arrange_widgets", "board_remove"], "after 12 hours everything may be tended again");
+  activity.add({ at: clock.now() - 60 * MINUTE, source: "voice", heard: "the calm film please", acted: ["set_background"] });
+  activity.add({ at: clock.now() - 50 * MINUTE, source: "controls", heard: "add milk to my list", acted: ["board_add"] });
+  assert.equal(await proactive.tend(), "nothing");
+  assert.deepEqual(brain.runs[1].tools, ["get_state", "arrange_widgets"]);
+  activity.add({ at: clock.now() - 40 * MINUTE, source: "voice", heard: "clock to the bottom", acted: ["arrange_widgets"] });
+  assert.equal(await proactive.tend(), "all-recently-asked-for");
+  assert.equal(brain.runs.length, 2, "the model is not asked when there is nothing it may change");
+});
+
+test("tending may change one thing, and what it did is listed", async (t) => {
+  const { proactive, fake, activity, post } = await startProactive(t, [
+    {
+      calls: [
+        { tool: "board_remove", args: { all: "done" } },
+        { tool: "set_background", args: { video: "next" } },
+      ],
+      text: "I cleared the finished items.",
+    },
+  ]);
+  const item = post({ kind: "todo", title: "Old chore" });
+  fake.state.board.patch(item.id, { done: true });
+  assert.equal(await proactive.tend(), "changed");
+  assert.equal(fake.state.board.items.length, 0);
+  assert.equal(fake.state.activeFilm.slice(0, 8), "546e5d02", "the second change was refused");
+  assert.deepEqual(
+    activity.recent().map((entry) => [entry.source, entry.reply, entry.acted]),
+    [["tend", "I cleared the finished items.", ["board_remove", "set_background"]]],
+  );
+});
+
+test("tending does not run on a dark display, in quiet hours, when switched off, or beside a person", async (t) => {
+  const { proactive, clock, fake, brain, queue } = await startProactive(t);
+  fake.state.automation.sleeping = true;
+  assert.equal(await proactive.tend(), "asleep");
+  fake.state.automation.sleeping = false;
+  const leave = queue.enter();
+  assert.equal(await proactive.tend(), "busy");
+  leave();
+  await clock.advance(16 * 60 * MINUTE);
+  assert.equal(await proactive.tend(), "quiet-hours");
+  assert.equal(brain.runs.length, 0);
+  const off = await startProactive(t, [], { tend: false });
+  assert.equal(await off.proactive.tend(), "off");
+});
+
+test("once started, it looks every 30 seconds and tends every hour", async (t) => {
+  const { proactive, clock, fake, brain, post } = await startProactive(t, [{ text: "Nothing to do." }]);
+  post({ kind: "reminder", title: "Tea is ready", due: clock.now() + 4 * MINUTE });
+  proactive.start();
+  await until(() => fake.requests().some((request) => request.path === "/api/v1/status"), "the first look");
+  for (let step = 0; step < 9; step++) {
+    await clock.advance(30_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.deepEqual(fake.state.said.map((caption) => caption.text), ["Reminder: Tea is ready"]);
+  assert.equal(brain.runs.length, 0);
+  await clock.advance(56 * MINUTE);
+  await until(() => brain.runs.length === 1, "the hourly tending run");
+  proactive.stop();
+});
+
+test("a presence event sent to the companion leads to a greeting", async (t) => {
+  const { call, brain, mirror, events } = await startCompanion(t, [greetingLine], { greet: true });
+  const answer = await call("POST", "/v1/event", { body: JSON.stringify({ type: "presence", at: 1790990000000, asleepSeconds: 1800 }) });
+  assert.equal(answer.status, 202);
+  await until(() => events().some((entry) => entry.event === "greeting"), "the greeting to finish");
+  assert.equal(events().find((entry) => entry.event === "greeting").outcome, "greeted");
+  assert.equal(mirror.state.said[0].kind, "notice");
+  assert.equal(brain.runs[0].session, "proactive");
+  const listed = (await call("GET", "/v1/activity")).body.entries[0];
+  assert.deepEqual([listed.source, listed.reply], ["presence", "Good morning. Rain from eleven."]);
+});

@@ -82,8 +82,10 @@ With it switched on:
   the Mirror.
 - **What the companion does with it** is the companion's business, and the
   one in this repository says so in its [README](../companion/README.md):
-  the sound is transcribed on your computer and then deleted; the words,
-  and what the Mirror shows, go to the model service that you gave it.
+  the sound is transcribed on your computer, which keeps the last twenty
+  recordings so that a mishearing can be listened to, or none if you say so;
+  the words, and what the Mirror shows, go to the model service that you
+  gave it.
 - **A picture of the glass** can be fetched by any paired device, which the
   companion is one of. It shows what the dashboard shows, such as notes.
 - **The Mirror keeps** the last twelve requests in memory until it

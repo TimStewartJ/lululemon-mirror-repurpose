@@ -1,0 +1,11 @@
+{
+  "listen": { "host": "0.0.0.0", "port": 8790 },
+  "secret": "a-long-random-string-shared-with-the-mirror",
+  "mirror": { "host": "MIRROR_ADDRESS", "port": 8787, "token": "written-here-by-the-pair-command" },
+  "model": "gpt-6-luna",
+  "reasoningEffort": "low",
+  "stt": { "model": "small.en", "device": "auto", "python": "~/.local/state/mirror-companion/venv/bin/python" },
+  "proactive": { "greet": true, "reminders": true, "tend": true, "tendMinutes": 60, "quietHours": ["22:30", "06:30"] },
+  "keepUtterances": 20,
+  "stateDir": "~/.local/state/mirror-companion"
+}

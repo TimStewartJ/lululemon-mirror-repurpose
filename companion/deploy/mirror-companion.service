@@ -1,0 +1,25 @@
+# A systemd user unit for the Mirror companion. This is a template: replace
+# @COMPANION_DIR@ with the full path of the companion folder, and the Node
+# version in the two paths if yours differs. The README shows the commands.
+
+[Unit]
+Description=Mirror companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=@COMPANION_DIR@
+ExecStart=%h/.nvm/versions/node/v24.14.0/bin/node @COMPANION_DIR@/src/cli.js serve
+Environment=PATH=%h/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=3
+# Loading the speech model can take a while on a busy machine.
+TimeoutStartSec=120
+# Enough for a request in flight to be answered before the process ends.
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mirror-companion
+
+[Install]
+WantedBy=default.target

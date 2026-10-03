@@ -26,6 +26,13 @@
   typed request and what was asked lately. The assistant is off unless an
   owner turns it on; with it on, the sound of each such request leaves the
   Mirror for that computer. See [The assistant](docs/assistant.md).
+- Add the companion, in `companion/`: a Node.js server for the assistant that
+  transcribes with faster-whisper on the computer it runs on, asks a model
+  through the GitHub Copilot SDK, and gives it tools for the Mirror alone:
+  to read its state and look at the glass, to sleep, wake and dim it, to
+  choose the background, to arrange the dashboard, and to keep the board. It
+  also greets whoever walks up and shows reminders when they fall due. See
+  [its README](companion/README.md).
 - The emulator suite checks the assistant against a stand-in companion on the
   computer: three new checks cover its settings, a typed request and its
   answer on the glass, lines and pictures for the companion, a companion that

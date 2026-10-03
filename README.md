@@ -171,6 +171,9 @@ Run every build, test, and lint lane with:
 python .\tools\check.py
 ```
 
+That includes the [companion](companion/README.md)'s tests, which need
+Node.js 24.
+
 `.\tools\validate.ps1 emulator` then runs the built app on an Android 6
 emulator with the Mirror's WebView generation and checks pairing, the
 dashboard, the clock, sleep and wake, and restarts end to end.
