@@ -27,7 +27,8 @@ public final class DashboardLayoutConfig {
             "forecast",
             "pairing",
             "note",
-            "photo"
+            "photo",
+            "board"
     };
     private static final String DEFAULT_PHOTO_FIT = "cover";
     private static final String DEFAULT_BACKGROUND_FIT = "cover";
@@ -39,6 +40,12 @@ public final class DashboardLayoutConfig {
     private static final String[] NOTE_WEIGHTS = {"thin", "light", "regular", "medium"};
     private static final String DEFAULT_NOTE_SIZE = "auto";
     private static final String DEFAULT_NOTE_WEIGHT = "light";
+    /* A board widget lists what programs posted (see BoardItems). Its text is
+       an optional heading; the items themselves are never part of the layout. */
+    private static final String[] BOARD_SIZES = {"small", "medium", "large"};
+    private static final String[] BOARD_SHOWS = {"all", "note", "todo", "reminder"};
+    private static final String DEFAULT_BOARD_SIZE = "medium";
+    private static final String DEFAULT_BOARD_SHOW = "all";
     /* Widget types from removed features; dropped from saved layouts instead of
        invalidating the whole layout and resetting it to defaults. */
     private static final String[] RETIRED_WIDGET_TYPES = {
@@ -100,6 +107,9 @@ public final class DashboardLayoutConfig {
             widgets.put(widget("photo", "photo", 50, 680, 440, 190, false, 82, "center", "", 16)
                     .put("photo", "")
                     .put("fit", DEFAULT_PHOTO_FIT));
+            widgets.put(widget("board", "board", 50, 440, 520, 230, false, 90, "start", "", 17)
+                    .put("size", DEFAULT_BOARD_SIZE)
+                    .put("show", DEFAULT_BOARD_SHOW));
             root.put("widgets", widgets);
             return new DashboardLayoutConfig(root);
         } catch (JSONException impossible) {
@@ -313,7 +323,9 @@ public final class DashboardLayoutConfig {
         for (int index = 0; index < defaultWidgets.length(); index++) {
             JSONObject fallback = defaultWidgets.getJSONObject(index);
             String id = fallback.getString("id");
-            if (!ids.containsKey(id)) {
+            /* A layout that is already full keeps what it has: a widget type
+               added by an update must not make a saved layout unreadable. */
+            if (!ids.containsKey(id) && normalized.length() < MAX_WIDGETS) {
                 JSONObject restored = normalizeWidget(
                         null,
                         fallback,
@@ -322,9 +334,6 @@ public final class DashboardLayoutConfig {
                 restored.put("visible", false);
                 normalized.put(restored);
             }
-        }
-        if (normalized.length() > MAX_WIDGETS) {
-            throw new JSONException("Dashboard has too many widgets after restoring defaults");
         }
         return normalized;
     }
@@ -418,6 +427,21 @@ public final class DashboardLayoutConfig {
             normalized.put("note", noteId);
             normalized.put("size", size);
             normalized.put("weight", weight);
+        }
+        if ("board".equals(type)) {
+            String size = value.optString("size", fallback.optString("size", DEFAULT_BOARD_SIZE));
+            String show = value.optString("show", fallback.optString("show", DEFAULT_BOARD_SHOW));
+            if (!isOneOf(size, BOARD_SIZES)) {
+                throw new JSONException("Dashboard board size must be small, medium, or large");
+            }
+            if (!isOneOf(show, BOARD_SHOWS)) {
+                throw new JSONException("Dashboard board show must be all, note, todo, or reminder");
+            }
+            if (text.indexOf('\n') >= 0) {
+                throw new JSONException("Dashboard board heading must be one line");
+            }
+            normalized.put("size", size);
+            normalized.put("show", show);
         }
         return normalized;
     }

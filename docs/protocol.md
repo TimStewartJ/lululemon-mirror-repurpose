@@ -43,6 +43,15 @@ GET  /api/v1/notes
 POST /api/v1/notes
 PUT  /api/v1/notes/{id}
 DELETE /api/v1/notes/{id}
+GET  /api/v1/board/guide
+GET  /api/v1/board
+GET  /api/v1/board/items
+POST /api/v1/board/items
+GET  /api/v1/board/items/{id}
+PUT  /api/v1/board/items/{id}
+PATCH /api/v1/board/items/{id}
+DELETE /api/v1/board/items/{id}
+DELETE /api/v1/board/items?...
 GET  /api/v1/preferences
 PUT  /api/v1/preferences
 GET  /api/v1/weather
@@ -89,8 +98,8 @@ POST /api/v1/system/prepare-kiosk
 POST /api/v1/system/home
 ```
 
-Only bootstrap, pairing, static controls, and loopback-only dashboard resources
-are public. Full status, health, and all state changes require authentication
+Only bootstrap, pairing, the board's guide, static controls, and loopback-only
+dashboard resources are public. Full status, health, and all state changes require authentication
 for LAN clients. ADB-forwarded and on-device loopback status and health remain
 available for recovery and local templates.
 
@@ -116,6 +125,24 @@ newest first and is readable from loopback so the glass can fetch it; the
 mutating routes require authentication and take `{text}`. `status` and
 `dashboard/runtime` carry `notesVersion`, a counter that changes with every
 mutation, so clients re-fetch notes only when something changed.
+
+### Board
+
+The board holds what programs post for people to see: notes, to-dos and
+reminders, each with a kind, a title, and optionally a body, a due time, a
+priority and an expiry. [The board](board.md) is its guide; the Mirror serves
+the same as JSON at `GET /api/v1/board/guide`, the one board route that needs
+no credential. `GET /api/v1/board` answers what the glass lists now and is
+readable from loopback so the glass can fetch it. Every other route requires
+authentication.
+
+An item without an expiry is removed 24 hours after it was last written, or
+after it is due if that is later. Times are epoch milliseconds in answers; a
+request may also give ISO 8601 with a UTC offset. A refused request answers
+`{error, field, guide}`. `status` and `dashboard/runtime` carry
+`boardVersion`, which changes with every mutation and when an item expires.
+`PATCH` is used here and nowhere else in the API. The board reads a request
+body as UTF-8 JSON whatever its `Content-Type`.
 
 Wi-Fi passphrases are accepted only through authenticated local channels and
 are passed directly to Android's Wi-Fi configuration API.

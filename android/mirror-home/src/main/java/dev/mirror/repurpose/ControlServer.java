@@ -37,6 +37,7 @@ public final class ControlServer extends NanoHTTPD {
     private final BackgroundVideoProvisioner backgroundVideoProvisioner;
     private final ConfigStore configStore;
     private final AutomationManager automation;
+    private final BoardStore board;
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
     private final NoteStore notes;
@@ -54,6 +55,7 @@ public final class ControlServer extends NanoHTTPD {
         backgroundVideos = BackgroundVideoLibrary.getInstance(context);
         configStore = new ConfigStore(context);
         automation = AutomationManager.getInstance(context);
+        board = BoardStore.getInstance(context);
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
         notes = NoteStore.getInstance(context);
@@ -114,6 +116,10 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/notes".equals(uri)
                     && isLoopback(session)) {
                 return response(Response.Status.OK, notesDocument());
+            }
+            if (BoardApi.handles(uri)) {
+                // The board answers for itself, refusals included; see BoardApi.
+                return boardReply(session, uri);
             }
             if (Method.GET.equals(session.getMethod())
                     && "/api/v1/dashboard/ambient-video".equals(uri)) {
@@ -507,6 +513,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("voice", voice.summary());
         result.put("weather", weather.snapshot(false));
         result.put("notesVersion", notes.version());
+        result.put("boardVersion", board.version());
         return result;
     }
 
@@ -729,6 +736,121 @@ public final class ControlServer extends NanoHTTPD {
 
     private static String noteText(JSONObject body) {
         return body.isNull("text") ? null : body.optString("text");
+    }
+
+    private Response boardReply(final IHTTPSession session, String uri) {
+        Map<String, String> query = new HashMap<>();
+        for (Map.Entry<String, java.util.List<String>> parameter
+                : session.getParameters().entrySet()) {
+            if (!parameter.getValue().isEmpty()) {
+                query.put(parameter.getKey(), parameter.getValue().get(0));
+            }
+        }
+        String clientName = pairing.clientName(bearerToken(session));
+        /* A paired device's body is read here, before the board is locked for
+           the request, so that a slow sender cannot hold up the glass. */
+        JSONObject parsed = null;
+        Exception unreadable = null;
+        Method method = session.getMethod();
+        if (clientName != null
+                && (Method.POST.equals(method) || Method.PUT.equals(method)
+                        || Method.PATCH.equals(method))) {
+            try {
+                parsed = readBoardJson(session);
+            } catch (IOException | JSONException error) {
+                unreadable = error;
+            }
+        }
+        final JSONObject body = parsed;
+        final Exception failure = unreadable;
+        BoardApi.Reply reply = board.handle(
+                method.name(),
+                uri,
+                query,
+                new BoardApi.BodyReader() {
+                    @Override
+                    public JSONObject read() throws IOException, JSONException {
+                        if (failure instanceof JSONException) {
+                            throw (JSONException) failure;
+                        }
+                        if (failure != null || body == null) {
+                            throw new IOException(
+                                    failure == null ? "No body was read" : failure.getMessage());
+                        }
+                        return body;
+                    }
+                },
+                new BoardApi.Caller(clientName != null, isLoopback(session), clientName),
+                boardNotice());
+        Response response = newFixedLengthResponse(
+                boardStatus(reply.status),
+                "application/json; charset=utf-8",
+                reply.body.toString());
+        response.addHeader("Cache-Control", "no-store");
+        return response;
+    }
+
+    /* Why a posted item would not be seen, in words for whoever posted it. */
+    private String boardNotice() {
+        if (!configStore.getDashboardUrl().isEmpty()) {
+            return "The Mirror is showing a web page instead of its own dashboard, so the board "
+                    + "is not on the glass. The items are kept.";
+        }
+        if (!configStore.getDashboardLayout().showsWidget("board")) {
+            return "No Board widget is visible on the Mirror, so the board is not on the glass. "
+                    + "Someone can turn it on in the controls under Display. The items are kept.";
+        }
+        return null;
+    }
+
+    /* The board reads a body itself, as UTF-8 whatever the Content-Type says.
+       NanoHTTPD 2.3.1 keeps no body for PATCH, decodes a POST body as ASCII
+       unless the header names a charset, and takes one sent as a form (what
+       curl -d does unasked) for parameters; a program's accents would arrive
+       as question marks, or its item as empty. */
+    private static JSONObject readBoardJson(IHTTPSession session)
+            throws IOException, JSONException {
+        int length;
+        try {
+            length = Integer.parseInt(session.getHeaders().get("content-length"));
+        } catch (NumberFormatException missing) {
+            throw new IOException("Content-Length is required");
+        }
+        if (length < 0 || length > MAX_BODY_BYTES) {
+            throw new IOException("Request body is too large");
+        }
+        byte[] bytes = new byte[length];
+        InputStream input = session.getInputStream();
+        int read = 0;
+        while (read < length) {
+            int count = input.read(bytes, read, length - read);
+            if (count < 0) {
+                throw new IOException("Request body ended early");
+            }
+            read += count;
+        }
+        return length == 0
+                ? new JSONObject()
+                : new JSONObject(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static Response.IStatus boardStatus(int status) {
+        switch (status) {
+            case 200:
+                return Response.Status.OK;
+            case 201:
+                return Response.Status.CREATED;
+            case BoardError.UNAUTHORIZED:
+                return Response.Status.UNAUTHORIZED;
+            case BoardError.NOT_FOUND:
+                return Response.Status.NOT_FOUND;
+            case BoardError.METHOD_NOT_ALLOWED:
+                return Response.Status.METHOD_NOT_ALLOWED;
+            case BoardError.CONFLICT:
+                return Response.Status.CONFLICT;
+            default:
+                return Response.Status.BAD_REQUEST;
+        }
     }
 
     private String controlUrl() {

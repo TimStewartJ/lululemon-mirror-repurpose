@@ -35,6 +35,9 @@
   var notesVersion = null;
   var noteLimit = 1000;
   var editingNoteId = '';
+  var boardSummary = null;
+  var boardEverything = [];
+  var boardVersion = null;
   var pendingBackgroundVideoId = '';
   var videoScheduleDraft = null;
   var videoScheduleDirty = false;
@@ -66,7 +69,8 @@
     forecast: 'Hourly forecast',
     pairing: 'Pairing code',
     note: 'Note',
-    photo: 'Photo'
+    photo: 'Photo',
+    board: 'Board'
   };
   var noteSourceLabels = [
     ['latest', 'Newest note'],
@@ -224,12 +228,14 @@
   function previewRuntime() {
     var runtime = status || {};
     runtime.notes = noteList;
+    runtime.board = boardSummary;
     return runtime;
   }
 
   function renderHomePreview() {
     var note = byId('home-preview-note');
     var url = status && status.dashboardUrl;
+    renderBoardNotice();
     if (url) {
       note.classList.remove('hidden');
       note.textContent = 'A web page is showing on the mirror';
@@ -459,6 +465,16 @@
     Array.from(document.querySelectorAll('.photo-only')).forEach(function (row) {
       row.classList.toggle('hidden', widget.type !== 'photo');
     });
+    Array.from(document.querySelectorAll('.board-only')).forEach(function (row) {
+      row.classList.toggle('hidden', widget.type !== 'board');
+    });
+    if (widget.type === 'board') {
+      if (document.activeElement !== byId('layout-board-heading')) {
+        byId('layout-board-heading').value = widget.text || '';
+      }
+      byId('layout-board-show').value = widget.show || 'all';
+      setRadio('board-size', widget.size || 'medium');
+    }
     if (widget.type === 'photo') {
       byId('layout-widget-photo').value = widget.photo || '';
       setRadio('widget-fit', widget.fit || 'cover');
@@ -602,6 +618,9 @@
         showPairedState(true);
         if (typeof next.notesVersion === 'number' && notesVersion !== null && next.notesVersion !== notesVersion) {
           refreshNotes().catch(function () {});
+        }
+        if (typeof next.boardVersion === 'number' && boardVersion !== null && next.boardVersion !== boardVersion) {
+          refreshBoard().catch(function () {});
         }
         return next;
       })
@@ -1418,6 +1437,140 @@
       .catch(function (error) { setMessage('note-message', error.message, true); });
   });
 
+  /* ---------- Board ---------- */
+
+  /* The board is what programs on the network posted (docs/board.md). The
+     controls show it so that the people in the house can see what is there,
+     tick things off, and clear what they do not want. */
+  var boardKindLabels = { note: 'Note', todo: 'To-do', reminder: 'Reminder' };
+
+  function refreshBoard() {
+    if (!token) return Promise.resolve();
+    return Promise.all([
+      request('/api/v1/board'),
+      request('/api/v1/board/items?limit=100')
+    ]).then(function (results) {
+      boardSummary = results[0];
+      boardEverything = results[1].items || [];
+      boardVersion = typeof results[0].version === 'number' ? results[0].version : boardVersion;
+      renderBoardList();
+      if (dashboardLayout && !layoutGestureActive) editor.update(dashboardLayout, previewRuntime());
+      renderHomePreview();
+    });
+  }
+
+  function boardItemDetail(item) {
+    var parts = [boardKindLabels[item.kind] || item.kind];
+    if (item.done) parts.push('done');
+    else if (typeof item.due === 'number') parts.push((item.state === 'overdue' ? 'was due ' : 'due ') + formatDate(item.due));
+    if (item.source) parts.push('from ' + item.source);
+    return parts.join(' \u00b7 ');
+  }
+
+  function changeBoard(path, options, done) {
+    return request(path, options)
+      .then(function () {
+        if (done) toast(done);
+        setMessage('board-message', '');
+        return refreshBoard();
+      })
+      .catch(function (error) { setMessage('board-message', error.message, true); });
+  }
+
+  /* Say so when nothing on the glass shows the board, and offer to fix it. */
+  function renderBoardNotice() {
+    var shows = Boolean(savedLayout) && savedLayout.widgets.some(function (widget) {
+      return widget.type === 'board' && widget.visible;
+    });
+    var webPage = Boolean(status && status.dashboardUrl);
+    byId('board-notice').classList.toggle('hidden', shows || webPage || boardEverything.length === 0);
+  }
+
+  function renderBoardList() {
+    var list = byId('board-list');
+    list.textContent = '';
+    byId('board-group').classList.toggle('hidden', boardEverything.length === 0);
+    renderBoardNotice();
+    boardEverything.forEach(function (entry) {
+      var item = document.createElement('li');
+      if (entry.done) item.className = 'board-done';
+      var body = document.createElement('div');
+      body.className = 'note-body';
+      var title = document.createElement('p');
+      title.className = 'note-text';
+      title.textContent = entry.title;
+      body.appendChild(title);
+      if (entry.body) {
+        var detail = document.createElement('p');
+        detail.className = 'note-text board-detail';
+        detail.textContent = entry.body;
+        body.appendChild(detail);
+      }
+      var facts = document.createElement('small');
+      facts.textContent = boardItemDetail(entry);
+      body.appendChild(facts);
+      var actions = document.createElement('div');
+      actions.className = 'icon-row';
+      var path = '/api/v1/board/items/' + encodeURIComponent(entry.id);
+      if (entry.kind !== 'note') {
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'btn small';
+        toggle.textContent = entry.done ? 'Undo' : 'Done';
+        toggle.addEventListener('click', function () {
+          changeBoard(path, json('PATCH', { done: !entry.done }));
+        });
+        actions.appendChild(toggle);
+      }
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'icon-btn';
+      remove.setAttribute('aria-label', 'Remove from the board');
+      remove.innerHTML = '<svg><use href="#i-close"/></svg>';
+      remove.addEventListener('click', function () {
+        changeBoard(path, { method: 'DELETE' }, 'Removed from the board');
+      });
+      actions.appendChild(remove);
+      item.appendChild(body);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+  }
+
+  byId('board-clear').addEventListener('click', function () {
+    if (!window.confirm('Remove everything from the board?')) return;
+    changeBoard('/api/v1/board/items?all=true', { method: 'DELETE' }, 'Board cleared');
+  });
+
+  /* Turns the canonical Board widget on where it was last placed. */
+  byId('board-show').addEventListener('click', function () {
+    if (!savedLayout) return;
+    var wasClean = layoutText() === layoutBaseline;
+    var next = cloneValue(savedLayout);
+    var widget = next.widgets.find(function (candidate) { return candidate.id === 'board'; });
+    if (!widget) {
+      setMessage('board-message', 'This layout has no Board widget. Reset the layout in Display to get one.', true);
+      return;
+    }
+    widget.visible = true;
+    var working = dashboardLayout && dashboardLayout.widgets.find(function (candidate) { return candidate.id === 'board'; });
+    if (working) working.visible = true;
+    request('/api/v1/dashboard/layout', json('PUT', next))
+      .then(function (saved) {
+        savedLayout = cloneValue(saved);
+        if (wasClean) {
+          dashboardLayout = saved;
+          resetLayoutHistory();
+        } else {
+          commitLayoutChange();
+        }
+        renderLayoutEditor();
+        toast('The board is on the mirror');
+        return refreshBoard();
+      })
+      .catch(function (error) { setMessage('board-message', error.message, true); });
+  });
+
   /* ---------- Health ---------- */
 
   var START_REASONS = {
@@ -1624,6 +1777,7 @@
           refreshOnboarding(),
           refreshBackgroundVideos(),
           refreshPhotos(),
+          refreshBoard(),
           refreshNotes(),
           refreshVoice(),
           refreshHealth()
@@ -1884,6 +2038,32 @@
       var widget = selectedWidget();
       if (!widget || widget.type !== 'note') return;
       widget.weight = input.value;
+      renderLayoutEditor();
+      commitLayoutChange();
+    });
+  });
+
+  byId('layout-board-heading').addEventListener('input', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.type !== 'board') return;
+    widget.text = byId('layout-board-heading').value;
+    editor.update(dashboardLayout, previewRuntime());
+  });
+  byId('layout-board-heading').addEventListener('change', commitLayoutChange);
+
+  byId('layout-board-show').addEventListener('change', function () {
+    var widget = selectedWidget();
+    if (!widget || widget.type !== 'board') return;
+    widget.show = byId('layout-board-show').value;
+    renderLayoutEditor();
+    commitLayoutChange();
+  });
+
+  Array.from(document.querySelectorAll('input[name="board-size"]')).forEach(function (input) {
+    input.addEventListener('change', function () {
+      var widget = selectedWidget();
+      if (!widget || widget.type !== 'board') return;
+      widget.size = input.value;
       renderLayoutEditor();
       commitLayoutChange();
     });

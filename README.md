@@ -105,8 +105,9 @@ fallback, timezone-aware sleep/wake schedules, private on-device motion presence
 sensing, voice commands recognised on the Mirror itself, cached local weather,
 precision dashboard editing, signed LAN OTA
 updates with automatic rollback, content-addressed background videos stored
-outside the APK, a health report that survives restarts, and watchdog
-recovery. Media3
+outside the APK, a health report that survives restarts, a
+[board](docs/board.md) that programs on the home network post notes, to-dos
+and reminders to, and watchdog recovery. Media3
 supports HTTP(S), HLS, DASH, and RTSP, while FCast v3 provides open LAN casting.
 Everything runs from the Mirror and a browser; USB setup and recovery use the
 Python CLI in `tools/`.
@@ -134,6 +135,7 @@ References: [User guide](docs/user-guide.md),
 [Provisioning](docs/provisioning.md) (including
 [no-touchscreen ADB authorization](docs/provisioning.md#initial-adb-authorization-without-a-touchscreen)),
 [Automation](docs/automation.md),
+[The board](docs/board.md),
 [Background videos](docs/background-videos.md),
 [Voice commands](docs/voice.md),
 [LAN OTA updates](docs/ota-updates.md), [Validation](docs/validation.md),

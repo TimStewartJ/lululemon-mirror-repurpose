@@ -83,6 +83,20 @@
   background video, and understood all 16 complete commands its owner spoke
   to it, some of them from across the room. See
   [Voice lab](docs/voice-lab.md).
+- Add the board: notes, to-dos and reminders that programs on the home
+  network post to the Mirror over its control API, for scripts, home hubs
+  and AI agents. An item says what it is, when it is due, who sent it and
+  when it should go; the Mirror decides how to draw it. Everything leaves
+  by itself, a day after it was last written unless its sender says
+  otherwise, so a program that posts and forgets leaves nothing stale on
+  the glass. The Mirror serves a guide to the board without a credential at
+  `GET /api/v1/board/guide`, and every refusal names the field at fault and
+  points there. The new Board widget lists the items, overdue and soon-due
+  first with a countdown, and turns pages when they do not fit. The controls
+  list what was posted, with who posted it, and can mark items done, remove
+  them or clear the board. See [The board](docs/board.md).
+- A saved layout that already holds 40 widgets stays readable when an update
+  adds a widget type, instead of falling back to the default layout.
 
 ## 2.2.0 - 2026-10-01
 

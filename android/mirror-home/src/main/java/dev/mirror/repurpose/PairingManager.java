@@ -197,8 +197,18 @@ public final class PairingManager {
     }
 
     public synchronized boolean authenticate(String token) {
+        return authenticatedClient(token) != null;
+    }
+
+    /** The paired device this token belongs to, by the name it gave; null when there is none. */
+    public synchronized String clientName(String token) {
+        JSONObject client = authenticatedClient(token);
+        return client == null ? null : client.optString("name", "");
+    }
+
+    private JSONObject authenticatedClient(String token) {
         if (token == null) {
-            return false;
+            return null;
         }
         String candidateHash = sha256(token);
         JSONArray clients = readClients();
@@ -217,9 +227,9 @@ public final class PairingManager {
                     // Existing client records contain only JSON-safe values.
                 }
             }
-            return true;
+            return client;
         }
-        return false;
+        return null;
     }
 
     public synchronized JSONArray clients() {

@@ -9,6 +9,13 @@
   var notes = [];
   var notesVersion = null;
   var notesPending = false;
+  var board = null;
+  var boardVersion = null;
+  var boardFetchedAt = 0;
+  var boardPending = false;
+  /* The Mirror orders the board by the clock, so ask again now and then
+     even when nothing was posted. */
+  var BOARD_REFRESH_MS = 60000;
   var lastLayoutText = '';
   var revealed = false;
 
@@ -40,11 +47,27 @@
     });
   }
 
-  /* Notes ride along inside the runtime the renderer already receives; the
-     runtime's notesVersion tells us when the NoteBook actually changed. */
+  /* Notes and the board ride along inside the runtime the renderer already
+     receives; the runtime's notesVersion and boardVersion tell us when
+     either actually changed. */
   function withNotes(value) {
-    if (value) value.notes = notes;
+    if (value) {
+      value.notes = notes;
+      value.board = board;
+    }
     return value;
+  }
+
+  function refreshBoard(version) {
+    if (boardPending) return Promise.resolve();
+    boardPending = true;
+    return fetchJson('/api/v1/board').then(function (result) {
+      boardPending = false;
+      board = result;
+      boardVersion = typeof result.version === 'number' ? result.version : version;
+      boardFetchedAt = Date.now();
+      renderer.update(layout, withNotes(runtime));
+    }).then(null, function () { boardPending = false; });
   }
 
   function refreshNotes(version) {
@@ -62,11 +85,14 @@
     return fetchJson('/api/v1/dashboard/runtime').then(function (next) {
       runtime = next;
       renderer.update(layout, withNotes(runtime));
-      /* Hold the first reveal until the notes are in so nothing pops in late. */
-      var pending = next.notesVersion !== notesVersion
-        ? refreshNotes(next.notesVersion)
-        : Promise.resolve();
-      return pending.then(reveal);
+      /* Hold the first reveal until the notes and the board are in so
+         nothing pops in late. */
+      var pending = [];
+      if (next.notesVersion !== notesVersion) pending.push(refreshNotes(next.notesVersion));
+      if (next.boardVersion !== boardVersion || Date.now() - boardFetchedAt >= BOARD_REFRESH_MS) {
+        pending.push(refreshBoard(next.boardVersion));
+      }
+      return Promise.all(pending).then(reveal);
     });
   }
 

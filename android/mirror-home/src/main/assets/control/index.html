@@ -130,6 +130,19 @@
               <p id="note-empty" class="hint inset">Notes appear on the mirror the moment you post them. Use Display to choose how the Note widget shows them.</p>
             </div>
 
+            <div id="board-group" class="group notes hidden">
+              <div class="group-head">
+                <span class="row-kicker">On the board</span>
+                <button id="board-clear" type="button" class="btn small">Clear</button>
+              </div>
+              <ul id="board-list" class="note-list" aria-label="Items programs posted to the mirror"></ul>
+              <div id="board-notice" class="row hidden">
+                <div class="row-main"><span class="row-sub">The Board widget is hidden, so these are not on the mirror.</span></div>
+                <button id="board-show" type="button" class="btn small">Show</button>
+              </div>
+              <p id="board-message" class="status inset" role="status"></p>
+            </div>
+
             <details class="group disclosure">
               <summary><span class="row-label">Play a link on the mirror</span><span class="chevron" aria-hidden="true"></span></summary>
               <form id="media-form" class="form">
@@ -271,6 +284,27 @@
                 <div class="seg" role="radiogroup" aria-label="Photo fit">
                   <label class="seg-opt"><input type="radio" name="widget-fit" value="cover"><span>Fill</span></label>
                   <label class="seg-opt"><input type="radio" name="widget-fit" value="contain"><span>Whole</span></label>
+                </div>
+              </div>
+              <label class="row board-only hidden">
+                <span class="row-label">Heading</span>
+                <input id="layout-board-heading" class="row-input" maxlength="40" placeholder="None">
+              </label>
+              <label class="row board-only hidden">
+                <span class="row-label">Shows</span>
+                <select id="layout-board-show" class="select">
+                  <option value="all">Everything</option>
+                  <option value="todo">To-dos</option>
+                  <option value="reminder">Reminders</option>
+                  <option value="note">Notes</option>
+                </select>
+              </label>
+              <div class="row board-only hidden">
+                <span class="row-label">Size</span>
+                <div class="seg" role="radiogroup" aria-label="Board size">
+                  <label class="seg-opt"><input type="radio" name="board-size" value="small"><span>S</span></label>
+                  <label class="seg-opt"><input type="radio" name="board-size" value="medium"><span>M</span></label>
+                  <label class="seg-opt"><input type="radio" name="board-size" value="large"><span>L</span></label>
                 </div>
               </div>
             </div>

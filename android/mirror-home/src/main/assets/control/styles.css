@@ -313,6 +313,8 @@ textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-heig
 .note-body small { display: block; margin-top: 4px; color: var(--text-3); font-size: 12.5px; }
 .notes .hint.inset { padding-top: 0; }
 .notes .hint.inset:not(.hidden) { border-top: 1px solid var(--line); padding-top: 12px; }
+.note-list li.board-done .note-text { color: var(--text-3); text-decoration: line-through; }
+.note-text.board-detail { margin-top: 2px; color: var(--text-2); font-size: 13.5px; -webkit-line-clamp: 2; }
 
 @media (min-width: 900px) {
   .home-grid { grid-template-columns: 300px 1fr; align-items: start; }

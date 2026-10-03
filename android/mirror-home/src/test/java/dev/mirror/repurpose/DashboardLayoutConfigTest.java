@@ -16,9 +16,9 @@ public final class DashboardLayoutConfigTest {
         assertEquals("solid", value.getJSONObject("background").getString("mode"));
         assertEquals("#000000", value.getJSONObject("background").getString("primary"));
         assertEquals("cover", value.getJSONObject("background").getString("fit"));
-        assertEquals(15, value.getJSONArray("widgets").length());
+        assertEquals(16, value.getJSONArray("widgets").length());
         assertEquals(0, value.getJSONObject("background").getInt("dim"));
-        assertEquals(15, DashboardLayoutConfig.parse(value).toJson()
+        assertEquals(16, DashboardLayoutConfig.parse(value).toJson()
                 .getJSONArray("widgets").length());
         assertTrue(value.getJSONArray("widgets").getJSONObject(3).getBoolean("visible"));
     }
@@ -61,7 +61,7 @@ public final class DashboardLayoutConfigTest {
         JSONObject migrated = DashboardLayoutConfig.parse(value).toJson();
 
         assertEquals(2, migrated.getInt("version"));
-        assertEquals(15, migrated.getJSONArray("widgets").length());
+        assertEquals(16, migrated.getJSONArray("widgets").length());
         assertTrue(!find(migrated, "weather").getBoolean("visible"));
         assertTrue(!find(migrated, "forecast").getBoolean("visible"));
     }
@@ -78,7 +78,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(16, parsed.getJSONArray("widgets").length());
+        assertEquals(17, parsed.getJSONArray("widgets").length());
         assertTrue(find(parsed, "clock-2").getBoolean("locked"));
         assertEquals(42, find(parsed, "clock-2").getInt("layer"));
     }
@@ -100,7 +100,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject normalized = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(15, normalized.getJSONArray("widgets").length());
+        assertEquals(16, normalized.getJSONArray("widgets").length());
         assertTrue(!find(normalized, "weather").getBoolean("visible"));
         assertTrue(!find(normalized, "date").getBoolean("visible"));
     }
@@ -125,7 +125,7 @@ public final class DashboardLayoutConfigTest {
 
         JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
 
-        assertEquals(15, parsed.getJSONArray("widgets").length());
+        assertEquals(16, parsed.getJSONArray("widgets").length());
         assertEquals(120, find(parsed, "clock").getInt("x"));
         assertFalse(contains(parsed, "ble"));
     }
@@ -145,7 +145,7 @@ public final class DashboardLayoutConfigTest {
         JSONObject migrated = DashboardLayoutConfig.parse(value).toJson();
 
         assertEquals(2, migrated.getInt("version"));
-        assertEquals(15, migrated.getJSONArray("widgets").length());
+        assertEquals(16, migrated.getJSONArray("widgets").length());
         assertFalse(contains(migrated, "ble"));
     }
 
@@ -324,6 +324,92 @@ public final class DashboardLayoutConfigTest {
     public void rejectsUnknownNoteWeight() throws JSONException {
         JSONObject value = DashboardLayoutConfig.defaults().toJson();
         find(value, "note").put("weight", "bold");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test
+    public void defaultBoardIsHiddenAndListsEverything() throws JSONException {
+        DashboardLayoutConfig defaults = DashboardLayoutConfig.defaults();
+        JSONObject board = find(defaults.toJson(), "board");
+        assertFalse(defaults.showsWidget("board"));
+        assertEquals("board", board.getString("type"));
+        assertEquals("medium", board.getString("size"));
+        assertEquals("all", board.getString("show"));
+        assertEquals("", board.getString("text"));
+    }
+
+    @Test
+    public void layoutsSavedBeforeTheBoardGainItHidden() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        org.json.JSONArray widgets = value.getJSONArray("widgets");
+        for (int index = widgets.length() - 1; index >= 0; index--) {
+            if ("board".equals(widgets.getJSONObject(index).getString("type"))) {
+                widgets.remove(index);
+            }
+        }
+
+        DashboardLayoutConfig restored = DashboardLayoutConfig.parse(value);
+
+        assertFalse(restored.showsWidget("board"));
+        assertEquals("medium", find(restored.toJson(), "board").getString("size"));
+    }
+
+    @Test
+    public void aFullLayoutSavedBeforeTheBoardStaysReadable() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        org.json.JSONArray widgets = value.getJSONArray("widgets");
+        for (int index = widgets.length() - 1; index >= 0; index--) {
+            if ("board".equals(widgets.getJSONObject(index).getString("type"))) {
+                widgets.remove(index);
+            }
+        }
+        for (int copy = 0; widgets.length() < 40; copy++) {
+            widgets.put(new JSONObject(widgets.getJSONObject(0).toString())
+                    .put("id", "clock-" + (copy + 2)));
+        }
+
+        JSONObject parsed = DashboardLayoutConfig.parse(value).toJson();
+
+        assertEquals(40, parsed.getJSONArray("widgets").length());
+        assertFalse(contains(parsed, "board"));
+    }
+
+    @Test
+    public void boardWidgetsKeepValidatedHeadingSizeAndFilter() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "board")
+                .put("visible", true)
+                .put("text", "To do")
+                .put("size", "large")
+                .put("show", "todo");
+
+        DashboardLayoutConfig parsed = DashboardLayoutConfig.parse(value);
+        JSONObject board = find(parsed.toJson(), "board");
+
+        assertTrue(parsed.showsWidget("board"));
+        assertEquals("To do", board.getString("text"));
+        assertEquals("large", board.getString("size"));
+        assertEquals("todo", board.getString("show"));
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownBoardSize() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "board").put("size", "auto");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsUnknownBoardFilter() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "board").put("show", "done");
+        DashboardLayoutConfig.parse(value);
+    }
+
+    @Test(expected = JSONException.class)
+    public void rejectsABoardHeadingOfSeveralLines() throws JSONException {
+        JSONObject value = DashboardLayoutConfig.defaults().toJson();
+        find(value, "board").put("text", "To do\ntoday");
         DashboardLayoutConfig.parse(value);
     }
 

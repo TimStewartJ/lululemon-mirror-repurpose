@@ -5,11 +5,29 @@
 (function (global) {
   'use strict';
 
-  var TEXT_TYPES = { clock: true, date: true, name: true, note: true };
+  var TEXT_TYPES = { clock: true, date: true, name: true, note: true, board: true };
   var NOTE_WEIGHTS = { thin: true, light: true, regular: true, medium: true };
   /* Fixed note sizes scale with the shorter stage edge so they read the same
      on the glass, the editor canvas, and the Home preview. */
   var NOTE_SIZES = { small: 0.022, medium: 0.032, large: 0.046 };
+  /* The board lists what programs posted (see BoardItems.java). Its type is a
+     fixed size, like a note's, and what does not fit waits on a later page. */
+  var BOARD_SIZES = { small: 0.022, medium: 0.028, large: 0.036 };
+  var BOARD_PAGE_MS = 10000;
+  var BOARD_MARKS = {
+    note: '<circle class="mr-fill" cx="12" cy="12" r="2.6"/>',
+    todo: '<circle cx="12" cy="12" r="7.5"/>',
+    reminder: '<circle cx="12" cy="12" r="7.5"/><path d="M12 7.8V12l2.8 1.8"/>',
+    done: '<circle cx="12" cy="12" r="7.5"/><path d="M8.4 12.3l2.5 2.5 4.8-5.2"/>'
+  };
+  /* Shown in the layout editor while the board is empty, so the widget can
+     be placed and sized against something. dueIn is minutes from now. */
+  var SAMPLE_BOARD = [
+    { id: 'sample-1', kind: 'reminder', title: 'Leave for the dentist', dueIn: 25, priority: 'high' },
+    { id: 'sample-2', kind: 'todo', title: 'Water the plants', body: 'Not the cactus' },
+    { id: 'sample-3', kind: 'note', title: 'Dinner is in the oven' },
+    { id: 'sample-4', kind: 'todo', title: 'Take out the bins', done: true }
+  ];
   var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
     'August', 'September', 'October', 'November', 'December'];
@@ -203,6 +221,7 @@
         case 'date': return box.height * 0.66;
         case 'name': return box.height * 0.62;
         case 'note': return noteFontSize(widget, box);
+        case 'board': return boardFontSize(widget);
         case 'weather': return box.height / 1.55;
         case 'forecast': return forecastFontSize(box);
         default: return box.height / 1.72;
@@ -216,8 +235,10 @@
       return Math.min(stage.width, stage.height) * scale;
     }
 
-    /* Fixed-size notes keep their size and clip; everything else shrinks to fit. */
+    /* Fixed-size notes and the board keep their size and clip; everything
+       else shrinks to fit. */
     function shrinksToFit(widget) {
+      if (widget.type === 'board') return false;
       return widget.type !== 'note' || !NOTE_SIZES[widget.size];
     }
 
@@ -457,8 +478,206 @@
         node.pendingHtml = null;
         node.inner.innerHTML = html;
         fitContent(node, widget, null);
+        /* Markup that arrived faded out has to be laid out once in that
+           state, or it would appear at full strength instead of fading in. */
+        void node.inner.offsetHeight;
         node.inner.className = 'mr-inner';
       }, 450);
+    }
+
+    /* ---- Board ---- */
+
+    function boardFontSize(widget) {
+      var stage = stageSize();
+      return Math.min(stage.width, stage.height) * (BOARD_SIZES[widget.size] || BOARD_SIZES.medium);
+    }
+
+    /* The items a board widget lists right now, in the order the Mirror
+       gave them. The host hands the board over as runtime.board (the answer
+       to GET /api/v1/board); items that have expired or finished lingering
+       since it was fetched are dropped here, so the glass never waits for
+       the next fetch to let something go. */
+    function boardItems(widget) {
+      var board = runtime && runtime.board ? runtime.board : null;
+      var source = board && board.items ? board.items : [];
+      var time = now.getTime();
+      var linger = Number(board && board.doneLingerSeconds || 600) * 1000;
+      var items = [];
+      var index;
+      for (index = 0; index < source.length; index++) {
+        var item = source[index];
+        if (typeof item.expiresAt === 'number' && item.expiresAt <= time) continue;
+        if (item.done && typeof item.doneAt === 'number' && time - item.doneAt >= linger) continue;
+        items.push(item);
+      }
+      if (!items.length && editing) {
+        for (index = 0; index < SAMPLE_BOARD.length; index++) {
+          var sample = SAMPLE_BOARD[index];
+          items.push({
+            id: sample.id, kind: sample.kind, title: sample.title, body: sample.body || '',
+            done: Boolean(sample.done), priority: sample.priority || 'normal',
+            due: sample.dueIn ? time - (time % 60000) + sample.dueIn * 60000 : null
+          });
+        }
+      }
+      var show = widget.show || 'all';
+      return show === 'all' ? items : items.filter(function (candidate) {
+        return candidate.kind === show;
+      });
+    }
+
+    function boardDay(time) {
+      return Math.floor((time + offsetAt(time, runtime) * 60000) / 86400000);
+    }
+
+    /* "3:30 PM" today, then "Tomorrow 3:30 PM", "Sat 3:30 PM", "Oct 12". */
+    function boardMoment(due) {
+      var local = new Date(due + offsetAt(due, runtime) * 60000);
+      var parts = timeParts(local, runtime && runtime.clock24Hour);
+      var time = parts.digits + (parts.meridiem ? ' ' + parts.meridiem : '');
+      var days = boardDay(due) - boardDay(now.getTime());
+      if (days === 0) return time;
+      if (days === 1) return 'Tomorrow ' + time;
+      if (days === -1) return 'Yesterday ' + time;
+      if (days > 1 && days < 7) return WEEKDAYS[local.getUTCDay()].slice(0, 3) + ' ' + time;
+      return MONTHS[local.getUTCMonth()].slice(0, 3) + ' ' + local.getUTCDate();
+    }
+
+    /* How an item stands against the clock, and the words for it. Matches
+       the states the API reports (BoardItems.state), worked out here so a
+       countdown moves between fetches. */
+    function boardStanding(item) {
+      if (item.done) return { state: 'done', when: '' };
+      if (typeof item.due !== 'number') return { state: 'open', when: '' };
+      var board = runtime && runtime.board ? runtime.board : null;
+      var soon = Number(board && board.soonSeconds || 3600) * 1000;
+      var ahead = item.due - now.getTime();
+      if (ahead > soon) return { state: 'open', when: boardMoment(item.due) };
+      if (ahead > 0) return { state: 'soon', when: 'In ' + Math.ceil(ahead / 60000) + ' min' };
+      var minutes = Math.floor(-ahead / 60000);
+      if (minutes < 1) return { state: 'overdue', when: 'Now' };
+      if (minutes < 60) return { state: 'overdue', when: minutes + ' min ago' };
+      return {
+        state: 'overdue',
+        when: (item.kind === 'reminder' ? 'Was ' : 'Overdue \u00b7 ') + boardMoment(item.due)
+      };
+    }
+
+    function boardRowHtml(item) {
+      var standing = boardStanding(item);
+      var priority = item.priority === 'high' || item.priority === 'low' ? item.priority : 'normal';
+      var mark = BOARD_MARKS[item.done ? 'done' : item.kind] || BOARD_MARKS.note;
+      return '<span class="mr-board-row mr-board-' + standing.state + ' mr-board-' + priority + '">' +
+        '<span class="mr-board-mark"><svg class="mr-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' +
+        mark + '</svg></span><span class="mr-board-text">' +
+        '<span class="mr-board-title ' + (priority === 'high' ? 'mr-medium' : 'mr-regular') + '">' +
+        escapeHtml(item.title) + '</span>' +
+        (standing.when ? '<span class="mr-board-when mr-medium">' + escapeHtml(standing.when) + '</span>' : '') +
+        (item.body ? '<span class="mr-board-body">' + escapeHtml(item.body) + '</span>' : '') +
+        '</span></span>';
+    }
+
+    function boardDotsHtml(count, current) {
+      if (count < 2) return '';
+      var html = '<span class="mr-board-dots">';
+      if (count > 8) return html + (current + 1) + ' / ' + count + '</span>';
+      for (var index = 0; index < count; index++) {
+        html += '<span class="mr-board-dot' + (index === current ? ' mr-on' : '') + '"></span>';
+      }
+      return html + '</span>';
+    }
+
+    function boardPageHtml(view, pages, current) {
+      var rows = '';
+      var page = pages[current] || [];
+      for (var index = 0; index < page.length; index++) rows += view.rows[page[index]];
+      return view.heading + '<span class="mr-board-list">' + rows + '</span>' +
+        boardDotsHtml(pages.length, current);
+    }
+
+    /* Which rows share a page: lay every row out once, read their heights,
+       and fill pages top to bottom. Rows carry their spacing as padding, so
+       a height is all a row needs. Returns null while the stage is not laid
+       out (a hidden tab of the controls), to be measured again later. */
+    function boardPages(node, view, box) {
+      var all = [];
+      var index;
+      for (index = 0; index < view.rows.length; index++) all.push(index);
+      node.inner.className = 'mr-inner';
+      node.inner.innerHTML = boardPageHtml(view, [all, []], 0);
+      var heading = node.inner.querySelector('.mr-board-heading');
+      var dots = node.inner.querySelector('.mr-board-dots');
+      var rows = node.inner.querySelectorAll('.mr-board-row');
+      var heights = [];
+      var total = heading ? heading.offsetHeight : 0;
+      for (index = 0; index < rows.length; index++) {
+        heights.push(rows[index].offsetHeight);
+        total += heights[index];
+      }
+      if (rows.length && !total) return null;
+      if (total <= box.height + 1) return [all];
+      var room = box.height - (heading ? heading.offsetHeight : 0) - (dots ? dots.offsetHeight : 0);
+      var pages = [];
+      var page = [];
+      var used = 0;
+      for (index = 0; index < heights.length; index++) {
+        if (page.length && used + heights[index] > room + 1) {
+          pages.push(page);
+          page = [];
+          used = 0;
+        }
+        page.push(index);
+        used += heights[index];
+      }
+      pages.push(page);
+      return pages;
+    }
+
+    /* The board changes in three ways, and each is shown differently. New
+       items or a new size are measured afresh. A turned page, or a page whose
+       items changed, fades. A countdown that only ticked over is swapped in
+       place. node.shown is the markup on its way to, or already in, the DOM. */
+    function renderBoard(node, widget, geometryChanged) {
+      var items = boardItems(widget);
+      var stage = stageSize();
+      var view = {
+        heading: widget.text
+          ? '<span class="mr-board-heading mr-medium">' + escapeHtml(widget.text) + '</span>'
+          : '',
+        rows: items.map(boardRowHtml)
+      };
+      var signature = stage.width + 'x' + stage.height + '\n' + view.heading + '\n' + view.rows.join('\n');
+      var previous = node.shown;
+      var measured = geometryChanged || signature !== node.boardSignature;
+      node.element.style.fontSize = boardFontSize(widget) + 'px';
+      if (measured) {
+        node.boardSignature = signature;
+        node.pendingHtml = null;
+        node.boardPages = boardPages(node, view, boxSize(widget));
+      }
+      var all = [];
+      for (var index = 0; index < items.length; index++) all.push(index);
+      var pages = node.boardPages || [all];
+      var current = pages.length > 1 ? Math.floor(now.getTime() / BOARD_PAGE_MS) % pages.length : 0;
+      var html = boardPageHtml(view, pages, current);
+      var turn = current + '|' + pages[current].map(function (row) { return items[row].id; }).join(',');
+      var turned = turn !== node.boardTurn;
+      node.boardTurn = turn;
+      if (!measured && html === previous) return;
+      node.shown = html;
+      if (turned && previous != null && !editing) {
+        /* Measuring left its own markup behind; fade from what was showing. */
+        if (measured) {
+          node.inner.innerHTML = previous;
+          void node.inner.offsetHeight;
+        }
+        fadeSwap(node, widget, html);
+        return;
+      }
+      node.content = html;
+      node.pendingHtml = null;
+      node.inner.className = 'mr-inner';
+      node.inner.innerHTML = html;
     }
 
     /* ---- Photo frames ---- */
@@ -565,7 +784,7 @@
       return [widget.x, widget.y, widget.w, widget.h, widget.align, widget.opacity,
         widget.layer, widget.visible, widget.locked, widget.type, widget.photo || '',
         widget.fit || '', widget.source || '', widget.note || '', widget.size || '',
-        widget.weight || ''].join('|');
+        widget.weight || '', widget.show || ''].join('|');
     }
 
     function applyGeometry(node, widget) {
@@ -623,6 +842,10 @@
         if (editing) {
           node.element.setAttribute('aria-label', widget.type + ' widget');
         }
+      }
+      if (widget.type === 'board') {
+        renderBoard(node, widget, geometryChanged);
+        return;
       }
       var html = contentHtml(widget, local, node);
       var contentChanged = html !== node.content;
@@ -717,7 +940,8 @@
         }
         var showsPhoto = widget.type !== 'photo' || Boolean(widget.photo) || library.names.length > 0;
         var showsNote = widget.type !== 'note' || noteItems(widget, nodes[widget.id]).length > 0;
-        if (!editing && (!widget.visible || !showsWeather || !showsPhoto || !showsNote)) return;
+        var showsBoard = widget.type !== 'board' || boardItems(widget).length > 0;
+        if (!editing && (!widget.visible || !showsWeather || !showsPhoto || !showsNote || !showsBoard)) return;
         seen[widget.id] = true;
         var node = ensureNode(widget);
         if (widget.type === 'photo' && node.order == null) node.order = rotating - 1;
@@ -737,7 +961,9 @@
       if (!layout) return;
       var local = localDate(now, runtime);
       layout.widgets.forEach(function (widget) {
-        if ((widget.type === 'clock' || widget.type === 'date') && nodes[widget.id]) {
+        /* The board keeps time too: its pages turn and its countdowns run. */
+        if ((widget.type === 'clock' || widget.type === 'date' || widget.type === 'board')
+            && nodes[widget.id]) {
           renderWidget(widget, local, false);
         }
       });

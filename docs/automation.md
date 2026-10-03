@@ -46,6 +46,19 @@ curl -X POST http://MIRROR_IP:8787/api/v1/media/stop \
 
 Never place the Mirror bearer token in a URL.
 
+Put a reminder on the glass:
+
+```bash
+curl -X PUT http://MIRROR_IP:8787/api/v1/board/items/dentist \
+  -H "Authorization: Bearer MIRROR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"reminder","title":"Leave for the dentist","due":"2026-10-03T09:00:00-07:00"}'
+```
+
+Notes, to-dos and reminders posted this way are listed by the Board widget
+and clear themselves. [The board](board.md) covers the fields, the lifetime
+of an item and how to read back what people marked done.
+
 Configure a schedule:
 
 ```bash

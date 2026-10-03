@@ -126,6 +126,28 @@ nothing on the glass is showing notes when you post one, the Mirror turns on
 the canonical Note widget with **Newest note** so the note is seen; a visible
 fixed-text tagline is left alone.
 
+### The board
+
+Notes are what people type. The board is for programs: a script, a home hub
+or an AI agent on your network can post notes, to-dos and reminders to the
+Mirror, each with a due time and a moment at which it clears itself.
+[The board](board.md) describes how a program does that.
+
+The **Board** widget lists what was posted. It is hidden until you turn it
+on in **Display**. It shows overdue items first, then what is due within the
+hour with a countdown, then the rest, and strikes through what is done. When
+there is more than fits, it shows a page at a time and moves on every ten
+seconds. Its **Heading** is a title of your own, **Shows** narrows it to
+to-dos, reminders or notes, and **Size** picks small, medium or large type.
+An empty board takes no room on the glass.
+
+**Home > On the board** lists every item with who posted it. Mark a to-do or
+reminder **Done**, remove an item, or **Clear** the board. If the widget is
+hidden while there are items, **Show** turns it on. A program gets its access
+by pairing, like a phone: **Settings > Paired devices > Show code** gives it
+a code, and revoking it there ends its access. Its token can do everything
+the controls can, so pair only programs you trust.
+
 Remote dashboards automatically fall back to a local clock when their main
 page returns an error or becomes unreachable. Mirror Home retries every minute.
 
@@ -142,6 +164,7 @@ glass shows:
 - choose an uploaded H.264 video background, Fill/Whole fitting, and dimming,
 - adjust photo dimming and the text/detail colors,
 - choose what each Note widget shows and how large and heavy its type is,
+- give the Board widget a heading, a size, and the kind of item it lists,
 - select **Save & show on mirror** to apply the layout immediately.
 
 The **…** menu exports or imports a layout file and offers **Reset to
