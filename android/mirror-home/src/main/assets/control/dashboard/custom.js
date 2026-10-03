@@ -109,6 +109,18 @@
   window.setInterval(function () { refreshRuntime().then(null, swallow); }, 5000);
   window.setInterval(function () { refreshLayout().then(null, swallow); }, 7000);
 
+  /* Mirror Home calls this when something that the glass shows was changed,
+     so that it shows at once: whoever asked for it is standing there. */
+  var nudged = null;
+  window.mirrorRefresh = function () {
+    if (nudged) return;
+    nudged = window.setTimeout(function () {
+      nudged = null;
+      refreshLayout().then(null, swallow);
+      refreshRuntime().then(null, swallow);
+    }, 60);
+  };
+
   var resizeTimer = null;
   window.addEventListener('resize', function () {
     if (resizeTimer) window.clearTimeout(resizeTimer);

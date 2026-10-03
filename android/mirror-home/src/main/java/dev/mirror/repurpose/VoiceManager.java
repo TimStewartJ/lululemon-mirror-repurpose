@@ -660,7 +660,7 @@ public final class VoiceManager {
         String caption = null;
         switch (outcome.kind) {
             case COMMAND:
-                caption = carryOut(outcome.command);
+                caption = carryOut(outcome.command, wordingOf(sentence.text));
                 synchronized (this) {
                     commands++;
                     try {
@@ -678,12 +678,14 @@ public final class VoiceManager {
                 synchronized (this) {
                     wakeWords++;
                 }
+                assistant.cancelAfterShown();
                 show(KIND_LISTENING, "");
                 break;
             case NOT_UNDERSTOOD:
                 synchronized (this) {
                     notUnderstood++;
                 }
+                assistant.cancelAfterShown();
                 show(KIND_NOT_UNDERSTOOD, "");
                 break;
             case UNSURE:
@@ -695,6 +697,7 @@ public final class VoiceManager {
                 synchronized (this) {
                     asked++;
                 }
+                assistant.cancelAfterShown();
                 assistant.heardRequest(this, from, to, outcome.addressed, injected);
                 break;
             default:
@@ -729,10 +732,21 @@ public final class VoiceManager {
      *
      * @return what to show on the glass
      */
-    private String carryOut(VoiceCommands.Command command) {
+    private String carryOut(VoiceCommands.Command command, String wording) {
         AutomationManager automation = AutomationManager.getInstance(context);
+        AssistantManager assistant = AssistantManager.getInstance(context);
+        assistant.cancelAfterShown();
         if (command == VoiceCommands.Command.SLEEP) {
             automation.setManualSleeping(true);
+            return command.caption;
+        }
+        if (command == VoiceCommands.Command.GOOD_NIGHT) {
+            if (assistant.available() && !automation.isSleeping()) {
+                // Told what tomorrow holds first; then the Mirror goes dark.
+                assistant.shortcut(command.id, wording, () -> automation.setManualSleeping(true));
+            } else {
+                automation.setManualSleeping(true);
+            }
             return command.caption;
         }
         // Whoever speaks to the Mirror stands before it: anything but "sleep"
@@ -751,8 +765,20 @@ public final class VoiceManager {
             case NEXT_VIDEO:
                 return nextVideo(command.caption);
             default:
+                if (command.greets() && assistant.available()) {
+                    assistant.shortcut(command.id, wording, null);
+                }
                 return command.caption;
         }
+    }
+
+    /** A sentence without the Mirror's name before it: the words of the command themselves. */
+    private static String wordingOf(String sentence) {
+        String words = VoiceCommands.normalize(sentence);
+        while (words.equals(VoiceCommands.WAKE_WORD) || words.startsWith(VoiceCommands.WAKE_WORD + " ")) {
+            words = words.substring(VoiceCommands.WAKE_WORD.length()).trim();
+        }
+        return words;
     }
 
     private static String changeBrightness(

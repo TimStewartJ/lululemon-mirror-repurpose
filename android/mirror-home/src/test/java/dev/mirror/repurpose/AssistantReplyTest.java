@@ -72,6 +72,48 @@ public final class AssistantReplyTest {
     }
 
     @Test
+    public void anAnswerWithSeveralPartsBringsThemAsRows() throws Exception {
+        AssistantReply reply = AssistantReply.parse("{\"heard\":\"\",\"reply\":\"Good morning\",\"seconds\":18,"
+                + "\"details\":[{\"label\":\"Weather\",\"text\":\"72\u00b0 and clear\"},"
+                + "{\"label\":\"Missed\",\"text\":\"Start dishwasher\"}]}");
+        assertEquals("Good morning", reply.reply);
+        assertEquals(2, reply.details.size());
+        assertEquals("Weather", reply.details.get(0).label);
+        assertEquals("Start dishwasher", reply.details.get(1).text);
+        assertEquals(18_000L, reply.millis());
+    }
+
+    @Test
+    public void anAnswerWithoutRowsHasNone() throws Exception {
+        AssistantReply reply = AssistantReply.parse("{\"reply\":\"Done.\"}");
+        assertTrue(reply.details.isEmpty());
+        assertEquals(3_500L, reply.millis());
+        // Rows under nothing are rows of nothing.
+        assertTrue(AssistantReply.parse("{\"ignored\":true,\"details\":[{\"label\":\"a\",\"text\":\"b\"}]}")
+                .details.isEmpty());
+    }
+
+    @Test
+    public void aTimeToShowThatIsNoTimeIsLeftToTheLength() throws Exception {
+        for (String seconds : new String[]{"0", "1", "31", "-4", "\"long\""}) {
+            AssistantReply reply = AssistantReply.parse("{\"reply\":\"Done.\",\"seconds\":" + seconds + "}");
+            assertEquals(seconds, 3_500L, reply.millis());
+        }
+    }
+
+    @Test
+    public void rowsAreGivenTimeToBeReadToo() {
+        java.util.List<GlassCaption.Row> rows = new java.util.ArrayList<>();
+        assertEquals(3_500L, AssistantReply.showMillis("Done.", rows));
+        rows.add(new GlassCaption.Row("Weather", new String(new char[40]).replace('\0', 'a')));
+        assertEquals(3_500L + 1_200L + 55L * 40, AssistantReply.showMillis("Done.", rows));
+        for (int more = 0; more < 4; more++) {
+            rows.add(new GlassCaption.Row("To do", new String(new char[90]).replace('\0', 'a')));
+        }
+        assertEquals(24_000L, AssistantReply.showMillis("Done.", rows));
+    }
+
+    @Test
     public void aLineStaysLongEnoughToBeReadAndNoLonger() {
         assertEquals(3_500L, AssistantReply.showMillis("Done."));
         assertEquals(2_000L + 70L * 60, AssistantReply.showMillis(new String(new char[60]).replace('\0', 'a')));

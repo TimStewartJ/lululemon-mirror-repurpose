@@ -73,6 +73,29 @@ public final class ControlServer extends NanoHTTPD {
 
     @Override
     public Response serve(IHTTPSession session) {
+        Response response = route(session);
+        if (changesGlass(session.getMethod(), session.getUri(), response.getStatus().getRequestStatus())) {
+            GlassCaption.changed();
+        }
+        return response;
+    }
+
+    /** Whether a request that was answered this way changed something that the glass shows. */
+    static boolean changesGlass(Method method, String uri, int status) {
+        if (status < 200 || status >= 300 || uri == null
+                || Method.GET.equals(method) || Method.HEAD.equals(method) || Method.OPTIONS.equals(method)) {
+            return false;
+        }
+        // Not the parts of a film on their way in: there are hundreds, and none of them shows.
+        return (uri.startsWith("/api/v1/dashboard/")
+                || uri.startsWith("/api/v1/board")
+                || uri.startsWith("/api/v1/notes")
+                || uri.startsWith("/api/v1/weather")
+                || uri.startsWith("/api/v1/background-videos"))
+                && !uri.startsWith("/api/v1/background-videos/upload/");
+    }
+
+    private Response route(IHTTPSession session) {
         if (Method.OPTIONS.equals(session.getMethod())) {
             return error(Response.Status.METHOD_NOT_ALLOWED, "Cross-origin requests are disabled");
         }
@@ -1235,7 +1258,16 @@ public final class ControlServer extends NanoHTTPD {
         if (body.has("seconds") && !(seconds >= 2 && seconds <= 30)) {
             return error(Response.Status.BAD_REQUEST, "seconds must be between 2 and 30");
         }
-        boolean shown = assistant.say(((String) text).trim(), kind, Math.round(seconds * 1000));
+        java.util.List<GlassCaption.Row> details;
+        try {
+            if (body.has("details") && !(body.opt("details") instanceof JSONArray)) {
+                throw new IllegalArgumentException("details must be a list of rows");
+            }
+            details = GlassCaption.rows(body.optJSONArray("details"), true);
+        } catch (IllegalArgumentException refused) {
+            return error(Response.Status.BAD_REQUEST, refused.getMessage());
+        }
+        boolean shown = assistant.say(((String) text).trim(), kind, Math.round(seconds * 1000), details);
         JSONObject result = new JSONObject().put("shown", shown);
         if (!shown) {
             result.put("reason", "sleeping");

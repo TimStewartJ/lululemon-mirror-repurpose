@@ -1,7 +1,6 @@
 package dev.mirror.repurpose;
 
 import android.content.Context;
-import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -56,6 +55,8 @@ public final class AssistantManager {
     /** What was understood stays until the answer replaces it. */
     private static final long HEARD_MILLIS = 20_000L;
     private static final long THINKING_MILLIS = ANSWER_TIMEOUT_MS + 2_000L;
+    /** A greeting is answered from what the companion already knows: at once, or not worth the wait. */
+    private static final int SHORTCUT_TIMEOUT_MS = 8_000;
 
     private static volatile AssistantManager instance;
 
@@ -88,6 +89,10 @@ public final class AssistantManager {
     private long requests;
     private long ignored;
     private long failures;
+    /** What is to happen once an answer has been read, such as going dark after "good night". */
+    private Runnable afterShown;
+    /** Counts what was said to the Mirror, so that a greeting's answer knows whether it is still wanted. */
+    private final java.util.concurrent.atomic.AtomicInteger spoken = new java.util.concurrent.atomic.AtomicInteger();
 
     private AssistantManager(Context context) {
         this.context = context.getApplicationContext();
@@ -196,6 +201,61 @@ public final class AssistantManager {
     }
 
     /**
+     * A greeting that the Mirror recognised itself, such as "good morning":
+     * the companion answers it with where things stand. The Mirror has shown
+     * the greeting already; the answer adds its rows.
+     *
+     * @param id the shortcut's name for the companion, such as good-morning
+     * @param wording what was said
+     * @param then what to do once the answer has been read, or at once if none comes; may be null
+     */
+    void shortcut(String id, String wording, Runnable then) {
+        int mine = cancelAfterShown();
+        synchronized (this) {
+            waiting++;
+        }
+        // A thread of its own: a greeting waits neither behind a request that
+        // the companion is still working on, nor behind a look at its health.
+        new Thread(() -> {
+            Result result = exchange(() -> postAsk(wording, "shortcut", id, SHORTCUT_TIMEOUT_MS));
+            record("shortcut", wording, result);
+            handler.post(() -> {
+                if (spoken.get() != mine) {
+                    // Something else was said since, and the glass is about that now.
+                    return;
+                }
+                AssistantReply reply = result.reply;
+                long shown = 1_200L;
+                if (reply != null && !reply.ignored && !reply.reply.isEmpty()) {
+                    shown = reply.millis();
+                    GlassCaption.show(new GlassCaption.Caption(KIND_NOTICE, reply.reply, "", reply.details, shown));
+                }
+                if (then != null) {
+                    afterShown = then;
+                    handler.postDelayed(then, shown);
+                }
+            });
+        }, "mirror-greeting").start();
+    }
+
+    /**
+     * Whoever speaks again has not left: what was to follow the last answer
+     * is called off, and a greeting still on its way is no longer shown.
+     *
+     * @return the count of what was said, for a greeting to know itself by
+     */
+    int cancelAfterShown() {
+        int now = spoken.incrementAndGet();
+        handler.post(() -> {
+            if (afterShown != null) {
+                handler.removeCallbacks(afterShown);
+                afterShown = null;
+            }
+        });
+        return now;
+    }
+
+    /**
      * A request typed in the controls. Waits for the companion's answer.
      *
      * @return the companion's answer as it sent it
@@ -207,6 +267,7 @@ public final class AssistantManager {
                     ? "The assistant has no companion to ask yet"
                     : "The assistant is switched off");
         }
+        cancelAfterShown();
         show(KIND_THINKING, "", THINKING_MILLIS);
         synchronized (this) {
             waiting++;
@@ -235,15 +296,19 @@ public final class AssistantManager {
      * @param millis how long; 0 for as long as its length needs
      * @return whether the glass shows it: a dark Mirror shows nothing
      */
-    public boolean say(String text, String kind, long millis) {
+    public boolean say(String text, String kind, long millis, java.util.List<GlassCaption.Row> details) {
         if (AutomationManager.getInstance(context).isSleeping()) {
             return false;
         }
         if (KIND_HEARD.equals(kind)) {
             show(KIND_HEARD, text, HEARD_MILLIS);
         } else {
-            show(KIND_NOTICE.equals(kind) ? KIND_NOTICE : KIND_REPLY, text,
-                    millis > 0 ? millis : AssistantReply.showMillis(text));
+            GlassCaption.show(new GlassCaption.Caption(
+                    KIND_NOTICE.equals(kind) ? KIND_NOTICE : KIND_REPLY,
+                    text,
+                    "",
+                    details,
+                    millis > 0 ? millis : AssistantReply.showMillis(text, details)));
         }
         return true;
     }
@@ -364,9 +429,40 @@ public final class AssistantManager {
      * @param typed the request's words where the Mirror knows them itself; else empty
      */
     private void finish(String source, VoiceManager voice, String typed, Result result) {
-        long now = System.currentTimeMillis();
         AssistantReply reply = result.reply;
         // At once: whoever asked through the controls reads the state next.
+        record(source, typed, result);
+        handler.post(() -> {
+            if (reply == null) {
+                show(KIND_NOTICE, "The assistant isn\u2019t answering", 5_000L);
+                return;
+            }
+            if (reply.ignored || reply.reply.isEmpty()) {
+                show(KIND_CLEAR, "", 0);
+                return;
+            }
+            AutomationManager automation = AutomationManager.getInstance(context);
+            if (automation.isSleeping() && !reply.acted.contains("set_power")) {
+                // Someone asked and was answered: the answer has to be seen.
+                automation.wakeForPresence();
+            }
+            // With what was understood above it, so that a mishearing can be seen for what it is.
+            GlassCaption.show(new GlassCaption.Caption(
+                    KIND_REPLY,
+                    reply.reply,
+                    reply.heard.isEmpty() ? typed : reply.heard,
+                    reply.details,
+                    reply.millis()));
+            if (reply.listen && voice != null) {
+                voice.awaitAnswer();
+            }
+        });
+    }
+
+    /** Counts a request and keeps what came of it for the controls. Any thread. */
+    private void record(String source, String typed, Result result) {
+        long now = System.currentTimeMillis();
+        AssistantReply reply = result.reply;
         synchronized (this) {
             waiting = Math.max(0, waiting - 1);
             requests++;
@@ -387,6 +483,7 @@ public final class AssistantManager {
                         .put("source", source)
                         .put("heard", reply == null || reply.heard.isEmpty() ? typed : reply.heard)
                         .put("reply", reply == null ? "" : reply.reply)
+                        .put("rows", reply == null ? 0 : reply.details.size())
                         .put("ignored", reply != null && reply.ignored)
                         .put("did", reply == null ? "" : reply.acted)
                         .put("millis", result.millis)
@@ -398,25 +495,6 @@ public final class AssistantManager {
                 recent.removeFirst();
             }
         }
-        handler.post(() -> {
-            if (reply == null) {
-                show(KIND_NOTICE, "The assistant isn\u2019t answering", 5_000L);
-                return;
-            }
-            if (reply.ignored || reply.reply.isEmpty()) {
-                show(KIND_CLEAR, "", 0);
-                return;
-            }
-            AutomationManager automation = AutomationManager.getInstance(context);
-            if (automation.isSleeping() && !reply.acted.contains("set_power")) {
-                // Someone asked and was answered: the answer has to be seen.
-                automation.wakeForPresence();
-            }
-            show(KIND_REPLY, reply.reply, AssistantReply.showMillis(reply.reply));
-            if (reply.listen && voice != null) {
-                voice.awaitAnswer();
-            }
-        });
     }
 
     private void show(String kind, String text, long millis) {
@@ -489,10 +567,17 @@ public final class AssistantManager {
     }
 
     private String postAsk(String text, String source) throws IOException {
+        return postAsk(text, source, null, ANSWER_TIMEOUT_MS);
+    }
+
+    private String postAsk(String text, String source, String shortcut, int timeoutMs) throws IOException {
         try {
-            byte[] body = new JSONObject().put("text", text).put("source", source)
-                    .toString().getBytes(StandardCharsets.UTF_8);
-            return send("POST", "/v1/ask", "application/json", body, null, null, ANSWER_TIMEOUT_MS);
+            JSONObject request = new JSONObject().put("text", text).put("source", source);
+            if (shortcut != null) {
+                request.put("shortcut", shortcut);
+            }
+            byte[] body = request.toString().getBytes(StandardCharsets.UTF_8);
+            return send("POST", "/v1/ask", "application/json", body, null, null, timeoutMs);
         } catch (JSONException impossible) {
             throw new IOException("The request could not be written");
         }

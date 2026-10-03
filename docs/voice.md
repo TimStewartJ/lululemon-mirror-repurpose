@@ -19,14 +19,26 @@ commands is sent to that computer.
 
 | Say "Mirror, ..." | What happens |
 |---|---|
-| "go to sleep" or "good night" | The display goes dark and stays dark, as with **Sleep** in the controls: for four hours, or until it is woken. Walking past does not wake it. |
-| "wake up" or "good morning" | The display comes on. After that it follows its schedule and presence sensing again. |
+| "go to sleep" | The display goes dark and stays dark, as with **Sleep** in the controls: for four hours, or until it is woken. Walking past does not wake it. |
+| "wake up" | The display comes on. After that it follows its schedule and presence sensing again. |
 | "brighter" or "brightness up" | The display gets a step brighter, now and whenever it wakes. Where a light sensor sets the brightness, the Mirror says so and changes nothing. |
 | "dimmer" or "brightness down" | A step dimmer, likewise. |
 | "next video" or "change the video" | The next background video, if the dashboard shows one. |
+| "good morning", "good afternoon" or "good evening" | The display comes on and the glass returns the greeting. With [the assistant](assistant.md) on, where things stand follows under it: the weather, what is due today, and reminders that came due while nobody was looking. |
+| "good night" | The display goes dark, as with "go to sleep". With the assistant on, the glass first shows what tomorrow holds and what is still open, and goes dark once that has been read. Say anything else to the Mirror in that time and it stays on. |
+| "I'm home" or "I'm back" | The display comes on with **Welcome home**. With the assistant on, what came up while you were out follows. |
 
-Anything but "go to sleep" also wakes a dark Mirror, and counts as someone
-being there, like being seen by the camera.
+Anything but "go to sleep" and "good night" also wakes a dark Mirror, and
+counts as someone being there, like being seen by the camera.
+
+The greetings are the Mirror's own, so the display answers at once and
+without a network; only what follows under them comes from the assistant's
+companion, which has it ready and answers in well under a second. In
+trials with synthetic voices played as if from across a room, the
+recogniser caught "good morning" and "good night" about as often as the
+other commands (five times in six), "I'm back" two times in three and "I'm
+home" less than half the time. A greeting it missed goes to the assistant
+like any other request, which answers it the same way a few seconds later.
 
 You can pause after "Mirror". The glass then shows **Listening**, and a
 command counts for the next six seconds without the name. If the Mirror

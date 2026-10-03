@@ -15,7 +15,7 @@ sys.path.insert(0, str(TOOLS / "tests"))
 
 import fake_companion
 import validate
-from test_validate import SPOKEN, SpeakingMirror
+from test_validate import GREETINGS, SPOKEN, SpeakingMirror
 from validate import CheckFailed, CheckSkipped, Reply
 
 
@@ -46,6 +46,9 @@ class AssistingMirror(SpeakingMirror):
         self.asked = {"requests": 0, "ignored": 0, "failures": 0}
         self.exchanges = []
         self.answer_until = 0.0
+        # When the Mirror goes dark by itself, having answered "good night"; None for never.
+        self.sleep_at = None
+        self.greeted = None
         with wave.open(str(validate.VOICE_CLIPS / validate.ASSISTANT_CLIP), "rb") as clip:
             self.request_sound = clip.readframes(clip.getnframes())
         self.request_clip = (validate.VOICE_CLIPS / validate.ASSISTANT_CLIP).read_bytes()
@@ -146,9 +149,63 @@ class AssistingMirror(SpeakingMirror):
             self.answer_until = self.clock.now + 10
         return answer, ""
 
+    # ---- greetings
+
+    def settle(self):
+        """Time passes between one look at the Mirror and the next."""
+        if self.sleep_at is not None and self.clock.now >= self.sleep_at:
+            self.sleeping, self.sleep_at = True, None
+
+    def carry_out(self, command):
+        greeting = GREETINGS.get(command)
+        asks = greeting and self.available() and "greets-alone" not in self.faults
+        if not asks or (command == "good-night" and self.sleeping):
+            return super().carry_out(command)
+        wording = next(words for words, name in SPOKEN.items() if name == command)
+        request = {"text": wording, "source": "shortcut", "shortcut": command}
+        if "greets-as-a-request" in self.faults:
+            request = {"text": wording, "source": "voice"}
+        answer, failure = self.send("POST", "/v1/ask", json.dumps(request).encode("utf-8"))
+        self.tick += 1
+        self.asked["requests"] += 0 if "counts-nothing" in self.faults else 1
+        shown = 1.2
+        if answer is None:
+            self.failed, self.failure = self.tick, failure
+            self.asked["failures"] += 1
+            self.exchanges.append({"source": "shortcut", "heard": wording, "reply": "", "error": failure, "millis": 0})
+        else:
+            self.answered = self.tick
+            self.exchanges.append({
+                "source": "shortcut", "heard": wording, "reply": answer.get("reply", ""), "error": None, "millis": 40,
+            })
+            shown = answer.get("seconds", 6)
+            if "shows-no-answers" not in self.faults:
+                # Shown once the greeting itself is; see hear().
+                self.greeted = (answer["reply"], shown, answer.get("details", []))
+        if command != "good-night":
+            self.sleeping = False
+        elif "sleeps-before-answering" in self.faults:
+            self.sleeping = True
+        elif answer is not None and "never-sleeps-after" in self.faults:
+            pass
+        elif answer is None and "waits-for-an-answer" in self.faults:
+            pass
+        else:
+            self.sleep_at = self.clock.now + shown
+        return greeting
+
     # ---- what a check asks of the Mirror
 
+    def capture(self):
+        self.settle()
+        return super().capture()
+
+    def shell(self, *arguments, **options):
+        self.settle()
+        return super().shell(*arguments, **options)
+
     def call(self, method, path, body=None, **options):
+        self.settle()
         route = (method, path.split("?")[0])
         guarded = route[1] in ("/api/v1/assistant", "/api/v1/screenshot")
         if guarded and options.get("token") == "not-a-credential":
@@ -225,10 +282,24 @@ class AssistingMirror(SpeakingMirror):
         )
         if not acceptable and "shows-anything" not in self.faults:
             return Reply(400, {"error": "text must be one line of 1 to 200 characters"}, {})
+        rows = body.get("details", [])
+        well_formed = isinstance(rows, list) and len(rows) <= 5 and all(
+            isinstance(row, dict)
+            and isinstance(row.get("label", ""), str) and len(row.get("label", "")) <= 14
+            and isinstance(row.get("text"), str) and 1 <= len(row["text"].strip()) and len(row["text"]) <= 90
+            for row in rows
+        )
+        if not well_formed:
+            if "takes-any-rows" not in self.faults:
+                return Reply(400, {"error": "each row of details has a label and a text"}, {})
+            rows = []
         if self.sleeping and "speaks-in-the-dark" not in self.faults:
             return Reply(200, {"shown": False, "reason": "sleeping"}, {})
         if "mute" not in self.faults:
-            self.show(text, seconds)
+            kept = self.rows if "keeps-rows" in self.faults and not rows else None
+            self.show(text, seconds, [] if "drops-rows" in self.faults else rows)
+            if kept:
+                self.rows = kept
         return Reply(200, {"shown": True}, {})
 
     def screenshot(self, query):
@@ -248,10 +319,19 @@ class AssistingMirror(SpeakingMirror):
             words.pop(0)
         rest = " ".join(words)
         own = rest in SPOKEN and "asks-about-its-own-commands" not in self.faults
+        if (named or self.clock.now <= self.window_until) and "sleeps-regardless" not in self.faults:
+            # Whoever speaks to the Mirror again has not gone to bed.
+            self.sleep_at = None
         if not self.available() or not rest or own:
             if rest in SPOKEN:
                 self.answer_until = 0.0
+            self.greeted = None
             super().hear(text, confidence)
+            if self.greeted:
+                reply, seconds, rows = self.greeted
+                if "repeats-the-greeting" in self.faults:
+                    rows = [{"label": "", "text": reply}] + rows
+                self.show(reply, seconds, rows)
             return
         self.counts["sentences"] += 1
         now = self.clock.now
@@ -327,6 +407,7 @@ class AssistantVerdictTest(unittest.TestCase):
         self.fails(check, "takes-any-key", "A key with a space in it answered 200, expected 400")
         self.fails(check, "asks-while-off", "A request while the assistant is off answered 200, expected 503")
         self.fails(check, "shows-anything", "A line without text answered 200, expected 400")
+        self.fails(check, "takes-any-rows", "Rows that are no list answered 200, expected 400")
 
     def test_a_typed_request_must_reach_the_companion_and_its_answer_the_glass(self):
         mirror, ctx = self.run_check(validate.check_assistant_asks)
@@ -341,6 +422,8 @@ class AssistantVerdictTest(unittest.TestCase):
         self.fails(check, "calls-typing-speech", "The companion was asked")
         self.fails(check, "shows-no-answers", "The glass did not show the companion's answer")
         self.fails(check, "mute", "The glass did not show a line that the companion sent")
+        self.fails(check, "drops-rows", "The glass did not show the first row under a line")
+        self.fails(check, "keeps-rows", "The rows of one line stayed under the next")
         self.fails(check, "pictures-nothing", "A picture of 900 bytes holds nothing of the dashboard")
         self.fails(check, "squashed", "The picture is 540 by 2740 for a screen of 10 by 50")
         self.fails(check, "one-size-only", "A picture of another width was not made")
@@ -352,8 +435,27 @@ class AssistantVerdictTest(unittest.TestCase):
         self.fails(check, "counts-nothing", "What was asked is kept as")
         self.fails(check, "connected-whatever-happens", "With a key that is not accepted the assistant is connected")
 
+    def test_a_greeting_is_answered_with_where_things_stand(self):
+        mirror, _ = self.run_check(validate.check_assistant_greets)
+        self.assertEqual(["shortcut"] * 4, [entry["source"] for entry in mirror.exchanges])
+        self.assertFalse(mirror.sleeping)
+        check = validate.check_assistant_greets
+        self.fails(check, "no-caption", "The glass did not show the greeting")
+        self.fails(check, "greets-alone", "The glass did not show where things stand, under the greeting")
+        self.fails(check, "greets-as-a-request", "For a greeting the companion was asked")
+        self.fails(check, "repeats-the-greeting", "are not one answer on the glass")
+        self.fails(check, "sleeps-before-answering", "The glass did not show what tomorrow holds")
+        self.fails(check, "never-sleeps-after", "the Mirror to sleep once it had answered")
+        self.fails(check, "sleeps-regardless", "went dark although someone spoke to it after good night")
+        self.fails(check, "waits-for-an-answer", "the Mirror to sleep without an answer")
+        self.fails(check, "counts-nothing", "The greetings are kept as")
+
+    def test_a_greeting_needs_a_build_that_takes_test_speech(self):
+        with self.assertRaisesRegex(CheckSkipped, validate.NO_TEST_SPEECH):
+            self.run_check(validate.check_assistant_greets, test_hooks=False)
+
     def test_the_assistant_is_switched_off_and_forgotten_even_when_a_check_fails(self):
-        for check in (validate.check_assistant_asks, validate.check_assistant_voice):
+        for check in (validate.check_assistant_asks, validate.check_assistant_voice, validate.check_assistant_greets):
             mirror = AssistingMirror(self, "shows-no-answers")
             with tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises(CheckFailed):
@@ -402,11 +504,11 @@ class AssistantVerdictTest(unittest.TestCase):
     def test_the_assistant_checks_follow_the_voice_checks_and_come_before_the_restarts(self):
         names = [name for name, _, _, _ in validate.EMULATOR_CHECKS]
         self.assertEqual(
-            ["assistant-off", "assistant-asks", "assistant-voice"],
+            ["assistant-off", "assistant-asks", "assistant-voice", "assistant-greets"],
             [name for name in names if name.startswith("assistant-")],
         )
         self.assertEqual(names.index("voice-permission") + 1, names.index("assistant-off"))
-        self.assertLess(names.index("assistant-voice"), names.index("restart"))
+        self.assertLess(names.index("assistant-greets"), names.index("restart"))
 
     def test_the_request_clip_is_as_the_recogniser_takes_it_and_as_the_check_reads_it(self):
         with wave.open(str(validate.VOICE_CLIPS / validate.ASSISTANT_CLIP), "rb") as clip:

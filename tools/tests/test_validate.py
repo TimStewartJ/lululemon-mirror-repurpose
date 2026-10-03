@@ -1159,8 +1159,14 @@ CLIP_SENTENCES = {
     "talk-of-sleep.wav": [("[unk] go to sleep [unk]", 1.0), ("night", 1.0)],
 }
 SPOKEN = {
-    "go to sleep": "sleep", "good night": "sleep", "wake up": "wake", "good morning": "wake",
-    "brighter": "brighter", "dimmer": "dimmer",
+    "go to sleep": "sleep", "wake up": "wake", "brighter": "brighter", "dimmer": "dimmer",
+    "good morning": "good-morning", "good afternoon": "good-afternoon", "good evening": "good-evening",
+    "good night": "good-night", "i'm home": "home", "i'm back": "home",
+}
+# What the glass shows for a greeting; with an assistant, where things stand follows under it.
+GREETINGS = {
+    "good-morning": "Good morning", "good-afternoon": "Good afternoon", "good-evening": "Good evening",
+    "good-night": "Good night", "home": "Welcome home",
 }
 
 
@@ -1201,6 +1207,7 @@ class SpeakingMirror:
         self.window_until = 0.0
         self.caption = ""
         self.caption_until = 0.0
+        self.rows = []
         self.clips = {
             (validate.VOICE_CLIPS / name).read_bytes(): sentences
             for name, sentences in CLIP_SENTENCES.items()
@@ -1256,8 +1263,10 @@ class SpeakingMirror:
             "detail": {"error": "The speech model could not be loaded"}.get(state, f"Voice is {state}"),
             "wakeWord": "mirror",
             "commands": [
-                {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep", "mirror good night"]},
-                {"id": "wake", "caption": "Awake", "say": ["mirror wake up", "mirror good morning"]},
+                {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep"]},
+                {"id": "wake", "caption": "Awake", "say": ["mirror wake up"]},
+                {"id": "good-morning", "caption": "Good morning", "say": ["mirror good morning"]},
+                {"id": "good-night", "caption": "Good night", "say": ["mirror good night"]},
             ],
             "model": self.model,
             "permissionGranted": self.permission,
@@ -1382,17 +1391,23 @@ class SpeakingMirror:
         if command == "sleep":
             self.sleeping = "deaf" not in self.faults
             return "Sleeping"
+        if command == "good-night":
+            self.sleeping = True
+            return GREETINGS[command]
         was_sleeping = self.sleeping
         self.sleeping = False
+        if command in GREETINGS:
+            return GREETINGS[command]
         if command == "wake" or was_sleeping:
             return "Awake"
         step = 40 if command == "brighter" else -40
         self.wake_brightness = max(15, min(255, self.wake_brightness + step))
         return "Brighter" if step > 0 else "Dimmer"
 
-    def show(self, caption, seconds):
+    def show(self, caption, seconds, rows=()):
         self.caption = "" if "no-caption" in self.faults else caption
         self.caption_until = self.clock.now + seconds
+        self.rows = [(row.get("label") or "", row["text"]) for row in rows]
 
     def captioned(self):
         return bool(self.caption) and self.clock.now <= self.caption_until and not self.sleeping
@@ -1435,7 +1450,10 @@ class SpeakingMirror:
             if "dashboard-goes-too" in self.faults:
                 self.run += 1
         elif arguments[0] == "cat":
-            return f'<node text="{self.caption if self.captioned() else ""}" bounds="[0,0][1,1]" />'
+            shown = [self.caption] if self.captioned() else [""]
+            for label, text in self.rows if self.captioned() else ():
+                shown += [label.upper(), text]
+            return "".join(f'<node text="{text}" bounds="[0,0][1,1]" />' for text in shown)
         return ""
 
 

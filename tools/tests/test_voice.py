@@ -27,8 +27,8 @@ def listening_state(**changes):
         "detail": "Listening",
         "wakeWord": "mirror",
         "commands": [
-            {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep", "mirror good night"]},
-            {"id": "wake", "caption": "Awake", "say": ["mirror wake up", "mirror good morning"]},
+            {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep"]},
+            {"id": "wake", "caption": "Awake", "say": ["mirror wake up"]},
         ],
         "model": {"name": "vosk-model-small-en-us-0.15", "bytes": 70_898_967, "installedAt": 1_790_967_492_077},
         "permissionGranted": True,

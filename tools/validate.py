@@ -2004,6 +2004,11 @@ def check_assistant_off(ctx: Context) -> None:
         ({"text": "two\nlines"}, "Two lines"),
         ({"text": "Louder", "kind": "shout"}, "A line of an unknown kind"),
         ({"text": "Briefly", "seconds": 1}, "A line for one second"),
+        ({"text": "Today", "details": "Dry"}, "Rows that are no list"),
+        ({"text": "Today", "details": [{"label": "Weather"}]}, "A row without words"),
+        ({"text": "Today", "details": [{"label": "A label of fifteen", "text": "Dry"}]}, "A row with a label of 18 characters"),
+        ({"text": "Today", "details": [{"label": "Weather", "text": "x" * 91}]}, "A row of 91 characters"),
+        ({"text": "Today", "details": [{"label": "To do", "text": "Row"}] * 6}, "Six rows"),
     ):
         expect_refused(ctx.api.call("POST", "/api/v1/assistant/say", body), 400, what)
     try:
@@ -2052,6 +2057,29 @@ def check_assistant_asks(ctx: Context) -> None:
         )
         require(shown == {"shown": True}, f"A line for an awake glass was answered with {describe(shown)}")
         on_glass(ctx, "The washing is done", "a line that the companion sent")
+        # An answer in several parts: a headline, and a row for each part under it.
+        card = ctx.api.expect("POST", "/api/v1/assistant/say", {
+            "text": "While you were away",
+            "kind": "notice",
+            "seconds": 12,
+            "details": [
+                {"label": "Missed", "text": "Start the dishwasher, due at 9:00 PM"},
+                {"label": "To do", "text": "Water the plants"},
+                {"text": "A row without a label"},
+            ],
+        })
+        require(card == {"shown": True}, f"A line with rows under it was answered with {describe(card)}")
+        on_glass(ctx, "Start the dishwasher, due at 9:00 PM", "the first row under a line")
+        glass = ctx.native_text()
+        require(
+            all(words in glass for words in ("While you were away", "MISSED", "TO DO", "Water the plants", "A row without a label")),
+            "The glass does not show a line with its rows and their labels",
+        )
+        time.sleep(1)
+        ctx.screenshot("assistant-card")
+        ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 8})
+        on_glass(ctx, "The washing is done", "the line that followed the rows")
+        require("Water the plants" not in ctx.native_text(), "The rows of one line stayed under the next")
 
         picture = ctx.api.call("GET", "/api/v1/screenshot")
         require(
@@ -2253,7 +2281,8 @@ def check_assistant_voice(ctx: Context) -> None:
                 f"and {missing_after:.2f} s of its end",
             )
             require(
-                len(heard) // 2 <= len(spoken) // 2 - lead - tail + 24_000,
+                # A second before the first word, and up to a second and a half until the room is quiet.
+                len(heard) // 2 <= len(spoken) // 2 - lead - tail + 40_000,
                 f"{len(heard) / 32_000:.1f} s were sent for a request of {(len(spoken) // 2 - lead - tail) / 16_000:.1f} s",
             )
             counts = voice_state(ctx)["counts"]
@@ -2271,6 +2300,88 @@ def check_assistant_voice(ctx: Context) -> None:
             ctx.note("answerMillis", report["recent"][-1]["millis"])
         finally:
             ctx.set_automation(enabled=False)
+
+
+def check_assistant_greets(ctx: Context) -> None:
+    listening_voice(ctx)
+    ctx.lit_peak()
+    ctx.set_automation(enabled=False)
+
+    def asked(companion: fake_companion.FakeCompanion) -> list[dict]:
+        return [json.loads(request["body"].decode("utf-8")) for request in companion.sent("/v1/ask")]
+
+    try:
+        with companion_for(ctx) as companion:
+            before = assistant_state(ctx)["counts"]
+            companion.script({
+                "heard": "",
+                "reply": "Good morning",
+                "acted": [],
+                "seconds": 12,
+                "details": [
+                    {"label": "Weather", "text": "Clear now, 31\u00b0 later"},
+                    {"label": "Missed", "text": "Start the dishwasher, due at 9:00 PM"},
+                ],
+            })
+            say(ctx, "mirror good morning")
+            # The greeting is the Mirror's own and is there at once; what the companion knows follows.
+            on_glass(ctx, "Good morning", "the greeting", timeout=VOICE_CAPTION_SECONDS)
+            on_glass(ctx, "Start the dishwasher, due at 9:00 PM", "where things stand, under the greeting")
+            require(
+                asked(companion) == [{"text": "good morning", "source": "shortcut", "shortcut": "good-morning"}]
+                and not companion.sent("/v1/utterance"),
+                f"For a greeting the companion was asked {describe(asked(companion))}",
+            )
+            glass = ctx.native_text()
+            require(
+                glass.count("Good morning") == 1 and "WEATHER" in glass and "MISSED" in glass,
+                "The greeting and what the companion knows are not one answer on the glass",
+            )
+            time.sleep(1)
+            ctx.screenshot("assistant-greeting")
+
+            # Told good night, the Mirror says what there is to say and then goes dark.
+            companion.script({
+                "reply": "Good night",
+                "seconds": 5,
+                "details": [{"label": "Tomorrow", "text": "Dentist at 9:30 AM"}],
+            })
+            say(ctx, "mirror good night")
+            on_glass(ctx, "Dentist at 9:30 AM", "what tomorrow holds")
+            require(not asleep(ctx), "Told good night, the Mirror went dark before it had answered")
+            wait_for("the Mirror to sleep once it had answered", lambda: asleep(ctx), timeout=12)
+            require(asked(companion)[-1]["shortcut"] == "good-night", f"The companion was asked {describe(asked(companion)[-1])}")
+
+            # Whoever speaks again has not gone to bed.
+            say(ctx, "mirror wake up")
+            wait_for("the Mirror to wake", lambda: not asleep(ctx), timeout=10)
+            companion.script({"reply": "Good night", "seconds": 6, "details": [{"label": "Tomorrow", "text": "Nothing is planned"}]})
+            say(ctx, "mirror good night")
+            on_glass(ctx, "Nothing is planned", "the answer to good night")
+            say(ctx, "mirror brighter")
+            time.sleep(8)
+            require(not asleep(ctx), "The Mirror went dark although someone spoke to it after good night")
+            say(ctx, "mirror dimmer")
+
+            # A companion that does not answer keeps nobody waiting.
+            companion.script({"status": 500, "error": "Nothing to say"})
+            say(ctx, "mirror good night")
+            wait_for("the Mirror to sleep without an answer", lambda: asleep(ctx), timeout=6)
+
+            report = assistant_state(ctx)
+            counted = {key: report["counts"][key] - before[key] for key in before}
+            sources = [entry["source"] for entry in report["recent"][-4:]]
+            require(
+                counted == {"requests": 4, "ignored": 0, "failures": 1} and sources == ["shortcut"] * 4,
+                f"The greetings are kept as {describe(counted)} from {sources}",
+            )
+        # Without an assistant a greeting is what it always was: it wakes the Mirror, or darkens it.
+        say(ctx, "mirror good morning")
+        wait_for("a greeting to wake the Mirror", lambda: not asleep(ctx), timeout=10)
+        say(ctx, "mirror good night")
+        wait_for("good night to darken a Mirror that has no assistant", lambda: asleep(ctx), timeout=4)
+    finally:
+        ctx.set_automation(enabled=False)
 
 
 def check_voice_returns(ctx: Context) -> None:
@@ -2680,6 +2791,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("assistant-off", "The assistant is off until switched on, and takes only a companion it could reach", check_assistant_off, False),
     ("assistant-asks", "A typed request reaches the companion; its answer, its lines and a picture of the glass come back", check_assistant_asks, False),
     ("assistant-voice", "Said to the Mirror, what is no command of its own reaches the companion as sound", check_assistant_voice, False),
+    ("assistant-greets", "Greeted, the Mirror shows where things stand; told good night, it answers and then goes dark", check_assistant_greets, False),
     ("returns-to-front", "A screen that covers the dashboard does not stay in front", check_returns_to_front, False),
     ("wakes-display", "A display that Android put to sleep is woken again", check_wakes_display, False),
     ("cold-start", "Starting Home never lights the whole screen", check_cold_start, False),

@@ -1,6 +1,7 @@
 package dev.mirror.repurpose;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -15,7 +16,10 @@ public final class VoiceCommandsTest {
     @Test
     public void eachWordingStandsForOneCommand() {
         assertEquals(VoiceCommands.Command.SLEEP, VoiceCommands.forWording("go to sleep"));
-        assertEquals(VoiceCommands.Command.SLEEP, VoiceCommands.forWording("  Good   NIGHT "));
+        assertEquals(VoiceCommands.Command.GOOD_NIGHT, VoiceCommands.forWording("  Good   NIGHT "));
+        assertEquals(VoiceCommands.Command.GOOD_MORNING, VoiceCommands.forWording("good morning"));
+        assertEquals(VoiceCommands.Command.HOME, VoiceCommands.forWording("I'm home"));
+        assertEquals(VoiceCommands.Command.HOME, VoiceCommands.forWording("i'm back"));
         assertEquals(VoiceCommands.Command.WAKE, VoiceCommands.forWording("wake up"));
         assertEquals(VoiceCommands.Command.DIMMER, VoiceCommands.forWording("brightness down"));
         assertEquals(VoiceCommands.Command.NEXT_VIDEO, VoiceCommands.forWording("change the video"));
@@ -79,9 +83,34 @@ public final class VoiceCommandsTest {
         List<String> words = VoiceCommands.words();
         assertEquals("mirror", words.get(0));
         for (String word : words) {
-            assertTrue(word, word.matches("[a-z]+"));
+            assertTrue(word, word.matches("[a-z]+('[a-z]+)?"));
         }
         assertEquals(new HashSet<>(words).size(), words.size());
+    }
+
+    @Test
+    public void aGreetingIsItsOwnCommand() {
+        // "Good night" once stood for sleep alone; with an assistant it is answered first.
+        int greetings = 0;
+        for (VoiceCommands.Command command : VoiceCommands.Command.values()) {
+            greetings += command.greets() ? 1 : 0;
+        }
+        assertEquals(5, greetings);
+        assertTrue(VoiceCommands.Command.GOOD_NIGHT.greets());
+        assertTrue(VoiceCommands.Command.HOME.greets());
+        assertFalse(VoiceCommands.Command.SLEEP.greets());
+        assertFalse(VoiceCommands.Command.WAKE.greets());
+        assertEquals("good-morning", VoiceCommands.Command.GOOD_MORNING.id);
+    }
+
+    @Test
+    public void aWordOfACommandIsNotAlsoSomethingElse() {
+        // "home" and "back" were words to take talk for until a greeting needed them.
+        List<String> others = VoiceCommands.otherWords();
+        for (String word : VoiceCommands.words()) {
+            assertFalse(word, others.contains(word));
+        }
+        assertTrue(others.contains("house"));
     }
 
     @Test

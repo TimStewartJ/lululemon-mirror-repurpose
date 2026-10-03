@@ -251,7 +251,9 @@ smoothly from the current level.
 Say "Mirror, go to sleep", "Mirror, wake up", "Mirror, brighter", "Mirror,
 dimmer" or "Mirror, next video". The Mirror recognises this by itself: no
 sound is stored or leaves it, and it answers on the glass, never out loud.
-Nothing listens until you switch it on.
+Nothing listens until you switch it on. It also knows greetings: "Mirror,
+good morning", "good afternoon", "good evening", "I'm home" and "good
+night", which wake it or, for the last, send it to sleep.
 
 **Settings > Voice** has the switch, and under it where voice stands:
 **Listening**, or what it is waiting for. Two things are needed once:
@@ -263,7 +265,7 @@ Nothing listens until you switch it on.
   grants and an update over the network does not. The page then says how to
   grant it from a computer.
 
-**What to say** lists every command with its second wording. **Heard
+**What to say** lists every command with its wordings. **Heard
 lately** lists what was said to the Mirror since it last started and what it
 did, which is where to look if it ever acts on its own. See
 [Voice commands](voice.md) for how it decides, what it costs the Mirror and
@@ -271,12 +273,18 @@ what it keeps.
 
 ## The assistant
 
-With an assistant, the Mirror can be asked for more than its five commands:
+With an assistant, the Mirror can be asked for more than its own commands:
 "Mirror, remind me to call the dentist at nine", "Mirror, something calmer
 in the background", "Mirror, put the weather under the clock". A companion
 program on a computer of yours works out what is meant and does it, and the
-Mirror answers in a line on the glass. It needs voice commands to be set up
-and a companion to be installed; [The assistant](assistant.md) says how.
+Mirror answers low on the glass, with what it understood you to say above
+the answer. It needs voice commands to be set up and a companion to be
+installed; [The assistant](assistant.md) says how.
+
+With an assistant a greeting is answered too. "Mirror, good morning" brings
+the weather, what is due today and the reminders that came due while nobody
+was looking; "Mirror, I'm home" brings what came up while you were out; and
+"Mirror, good night" shows what tomorrow holds before the display goes dark.
 
 **Settings > Assistant** has the switch, the companion's address and key,
 and under the switch where it stands: **Connected**, or what is missing.
@@ -285,8 +293,8 @@ it, and **Asked lately** lists what was asked and answered since the Mirror
 last started.
 
 While the assistant is on, the sound of what you ask it leaves the Mirror
-for that computer. The Mirror's own five commands stay on the Mirror, and
-nothing else that is said in the room is sent.
+for that computer. The Mirror's own commands and greetings stay on the
+Mirror, and nothing else that is said in the room is sent.
 
 ## Media
 

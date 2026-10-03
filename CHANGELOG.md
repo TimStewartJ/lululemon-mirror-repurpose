@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- Answer greetings. "Mirror, good morning", "good afternoon", "good evening",
+  "I'm home" and "good night" are commands of the Mirror's own: it wakes, or
+  for "good night" goes dark, and the glass returns the greeting. With the
+  assistant on, the Mirror also tells its companion which greeting it heard,
+  and where things stand appears under the greeting in well under a second:
+  the weather, what is due today, the reminders that came due and were not
+  dismissed, and what is still to do. After "good night" the glass shows what
+  tomorrow holds and goes dark once that has been read, unless someone speaks
+  to the Mirror again. "Good night" and "good morning" were second wordings
+  of "go to sleep" and "wake up" before; they still do that, and now say more.
+- Show the assistant's answers in a panel of their own, low on the glass. It
+  fades in and out, its dots breathe while the Mirror listens and run while it
+  works, and what the companion understood stays above the answer in small
+  italics, so that a mishearing can be told from a wrong answer. An answer in
+  several parts is a heading with up to five labelled rows, which arrive one
+  after the other. A companion sends rows as `details`, in an answer or with
+  `POST /api/v1/assistant/say`, and may say for how many `seconds` an answer
+  stays.
+- Let nothing pop into being on the glass. A widget that is switched on fades
+  in, one that is switched off fades out, one that moves glides, one that
+  changes size goes dark for a moment and comes back, and a new item on the
+  board fades in under the ones that were there. The glass also shows a change
+  made through the API within a fraction of a second: Mirror Home now tells
+  the dashboard when its layout, the board, a note, the weather or the
+  background was changed, where the dashboard used to notice at its next look,
+  up to seven seconds later. The layout editor in the controls is unchanged.
+- Send the whole of a spoken request. The sound for the companion began half a
+  second before the first word that the recogniser placed; it places the first
+  word of speech it does not know late, and at a real Mirror "Can we get rid
+  of..." arrived as "We get rid of...". It now begins a second before.
+- The companion answers a greeting with a briefing that it builds itself from
+  the Mirror's status and board, without the model. The model has two new
+  tools: `briefing`, for a greeting in other words or "what did I miss?", and
+  `present`, for an answer that is a list ("what's on my list?"). For three
+  minutes after a briefing "dismiss those" marks the reminders it named as
+  done. A reminder that falls due is shown as a small card, and one that fell
+  due while the display was dark is told to whoever comes next ("While you
+  were away"); the first person in the morning gets the morning's briefing
+  unasked. A board that the assistant brings back is put where nothing else
+  is, not on top of what took its place.
+- The emulator suite has a check for greetings (`assistant-greets`), and the
+  check of a typed request also sends a line with rows and reads them back
+  from the glass.
 - Stop a Mirror that is short of memory from restarting its dashboard over and
   over. After an update the factory launcher's process idles behind the
   dashboard until the Mirror is next restarted. With voice commands listening
@@ -34,7 +77,7 @@
   A question from the assistant can be answered without the name. The Mirror
   decides where a request ends by the room going quiet, not by the
   recogniser's sentences, which end where they please for words it does not
-  know. Its own five commands stay on the Mirror and work without a network.
+  know. Its own commands stay on the Mirror and work without a network.
   New for a companion: `POST /api/v1/assistant/say` shows a line on the
   glass, and `GET /api/v1/screenshot` gives a picture of it. **Settings >
   Assistant** has the switch, the companion's address and key, a field for a
@@ -54,8 +97,8 @@
   fails or is gone, the rules about what is passed on, and a spoken request
   that must arrive as the very sound that was played.
 - Add voice commands, recognised on the Mirror itself. Say "Mirror, go to
-  sleep", "wake up", "brighter", "dimmer" or "next video" (each has a second
-  wording, such as "good night"); the glass shows what it did, and the Mirror
+  sleep", "wake up", "brighter", "dimmer" or "next video" (some have a second
+  wording, such as "brightness up"); the glass shows what it did, and the Mirror
   never speaks. The name may come up to six seconds before the command, and a
   command the recogniser has doubts about is dropped. The recogniser is also
   given the commonest words of spoken English, so that talk is taken for them

@@ -20,15 +20,28 @@ final class AssistantReply {
     final boolean listen;
     /** What the companion did, as the names of its tools. */
     final String acted;
+    /** The parts of an answer that has several; the reply is then their headline. */
+    final java.util.List<GlassCaption.Row> details;
+    /** How long the companion wants the answer shown, in milliseconds; 0 for as long as it needs. */
+    final long showMillis;
 
     private AssistantReply(
-            String heard, String reply, boolean ignored, String reason, boolean listen, String acted) {
+            String heard,
+            String reply,
+            boolean ignored,
+            String reason,
+            boolean listen,
+            String acted,
+            java.util.List<GlassCaption.Row> details,
+            long showMillis) {
         this.heard = heard;
         this.reply = reply;
         this.ignored = ignored;
         this.reason = reason;
         this.listen = listen;
         this.acted = acted;
+        this.details = details;
+        this.showMillis = showMillis;
     }
 
     static AssistantReply parse(String json) throws JSONException {
@@ -40,13 +53,24 @@ final class AssistantReply {
         for (int index = 0; tools != null && index < tools.length() && index < 12; index++) {
             acted.append(acted.length() == 0 ? "" : ", ").append(oneLine(tools.optString(index)));
         }
+        java.util.List<GlassCaption.Row> details = ignored || reply.isEmpty()
+                ? java.util.Collections.<GlassCaption.Row>emptyList()
+                : GlassCaption.rows(body.optJSONArray("details"), false);
+        double seconds = body.optDouble("seconds", 0);
         return new AssistantReply(
                 oneLine(body.optString("heard", "")),
                 reply,
                 ignored,
                 oneLine(body.optString("reason", "")),
                 !reply.isEmpty() && body.optBoolean("listen", false),
-                acted.toString());
+                acted.toString(),
+                details,
+                seconds >= 2 && seconds <= 30 ? Math.round(seconds * 1000) : 0L);
+    }
+
+    /** How long this answer stays on the glass: as long as the companion said, or as its length needs. */
+    long millis() {
+        return showMillis > 0 ? showMillis : showMillis(reply, details);
     }
 
     /** Text as one line of at most {@link #MAX_TEXT} characters, cut between words. */
@@ -65,5 +89,14 @@ final class AssistantReply {
      */
     static long showMillis(String text) {
         return Math.max(3_500L, Math.min(14_000L, 2_000L + 70L * text.length()));
+    }
+
+    /** The same for an answer with rows under it, each of which wants reading too. */
+    static long showMillis(String text, java.util.List<GlassCaption.Row> details) {
+        long rows = 0;
+        for (GlassCaption.Row row : details) {
+            rows += 1_200L + 55L * row.text.length();
+        }
+        return Math.min(24_000L, showMillis(text) + rows);
     }
 }

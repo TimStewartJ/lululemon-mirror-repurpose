@@ -16,7 +16,7 @@ public class VoiceServicePlaceTest {
     @Test
     public void aSentenceLiesWhereItsWordsDoWithALittleBefore() {
         assertArrayEquals(
-                new long[]{RATE, 3L * RATE},
+                new long[]{RATE / 2, 3L * RATE},
                 VoiceService.place(sentence(1.5, 3.0), 0, 10L * RATE));
     }
 
@@ -24,13 +24,19 @@ public class VoiceServicePlaceTest {
     public void wordTimesCountFromWhereTheRecogniserInUseBegan() {
         long began = 120L * RATE;
         assertArrayEquals(
-                new long[]{began + RATE, began + 3L * RATE},
+                new long[]{began + RATE / 2, began + 3L * RATE},
                 VoiceService.place(sentence(1.5, 3.0), began, began + 10L * RATE));
     }
 
     @Test
     public void aSentenceLiesWithinWhatWasHeard() {
         assertArrayEquals(new long[]{0, 2L * RATE}, VoiceService.place(sentence(0.2, 3.0), 0, 2L * RATE));
+    }
+
+    @Test
+    public void theSoundBeforeASentenceIsASecond() {
+        // The first word of a request was placed late by its own length, and lost with less.
+        assertArrayEquals(new long[]{4L * RATE, 8L * RATE}, VoiceService.place(sentence(5.0, 8.0), 0, 10L * RATE));
     }
 
     @Test

@@ -224,7 +224,7 @@ that stands. Times are epoch milliseconds.
 | `model` | What the companion says answers its requests. |
 | `busy`, `lastAnswerAt` | Whether a request is waiting for its answer, and when the companion last answered anything. |
 | `counts` | Since Mirror Home started: `requests`, of which `ignored` (the companion took them for talk) and `failures` (no answer). |
-| `recent` | Up to twelve requests: the time `at`, the `source` (`voice` or `controls`), what the companion `heard`, its `reply`, whether it was `ignored`, what the companion `did`, how many `millis` the answer took, and the `error` if there was none. |
+| `recent` | Up to twelve requests: the time `at`, the `source` (`voice`, `controls`, or `shortcut` for a greeting that the Mirror recognised itself), what the companion `heard`, its `reply` and how many `rows` it had under it, whether it was `ignored`, what the companion `did`, how many `millis` the answer took, and the `error` if there was none. |
 
 `PUT /api/v1/assistant` takes any of `enabled`, `address` and `key`, and
 answers with the same report. An address may be given without `http://`; it
@@ -239,7 +239,8 @@ up to 55 seconds. `503` with the reason means that there was no answer, or
 nobody to ask.
 
 `POST /api/v1/assistant/say` and `GET /api/v1/screenshot` are for the
-companion: a line on the glass, and a picture of it. They are described in
+companion: a line on the glass, with rows under it if it has several parts,
+and a picture of the glass. They are described in
 [The assistant](assistant.md#the-companion-asks-the-mirror).
 
 ### Health

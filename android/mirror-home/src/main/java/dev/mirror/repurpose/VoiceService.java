@@ -86,8 +86,13 @@ public final class VoiceService extends Service {
     private static final double SILENCE_DB = -120.0;
     /** A request for the assistant is cut out of the last half minute of sound. */
     static final int RING_SECONDS = 30;
-    /** Sound kept before a sentence's first word, which the recogniser may place late. */
-    private static final int LEAD_SAMPLES = SAMPLE_RATE / 2;
+    /**
+     * Sound kept before a sentence's first word. The recogniser places the
+     * first word of speech it does not know late, by as much as the word:
+     * with half a second, a request heard at a real Mirror arrived without
+     * its first word, "Can". A second of quiet costs the companion nothing.
+     */
+    private static final int LEAD_SAMPLES = SAMPLE_RATE;
     /** How long the process waits to be wanted again before it ends. */
     private static final long EXIT_DELAY_MS = 2_000L;
 

@@ -72,11 +72,18 @@ final class VoiceCommands {
             + "green blue cold hot dead poor rich whole real";
 
     enum Command {
-        SLEEP("sleep", "Sleeping", "go to sleep", "good night"),
-        WAKE("wake", "Awake", "wake up", "good morning"),
+        SLEEP("sleep", "Sleeping", "go to sleep"),
+        WAKE("wake", "Awake", "wake up"),
         BRIGHTER("brighter", "Brighter", "brighter", "brightness up"),
         DIMMER("dimmer", "Dimmer", "dimmer", "brightness down"),
-        NEXT_VIDEO("next-video", "Next video", "next video", "change the video");
+        NEXT_VIDEO("next-video", "Next video", "next video", "change the video"),
+        // Greetings. Each wakes or darkens the Mirror as its hour suggests, and
+        // with an assistant it is answered with where things stand.
+        GOOD_MORNING("good-morning", "Good morning", "good morning"),
+        GOOD_AFTERNOON("good-afternoon", "Good afternoon", "good afternoon"),
+        GOOD_EVENING("good-evening", "Good evening", "good evening"),
+        GOOD_NIGHT("good-night", "Good night", "good night"),
+        HOME("home", "Welcome home", "i'm home", "i'm back");
 
         /** Name in the API and the health report. */
         final String id;
@@ -92,6 +99,12 @@ final class VoiceCommands {
 
         List<String> wordings() {
             return Collections.unmodifiableList(java.util.Arrays.asList(wordings));
+        }
+
+        /** Whether this is a greeting, which an assistant answers with where things stand. */
+        boolean greets() {
+            return this == GOOD_MORNING || this == GOOD_AFTERNOON || this == GOOD_EVENING
+                    || this == GOOD_NIGHT || this == HOME;
         }
     }
 
@@ -155,7 +168,14 @@ final class VoiceCommands {
 
     /** The words that are there so that talk is not taken for a command. */
     static List<String> otherWords() {
-        return Collections.unmodifiableList(java.util.Arrays.asList(OTHER_WORDS.split(" ")));
+        List<String> others = new ArrayList<>();
+        for (String word : OTHER_WORDS.split(" ")) {
+            // A word of a command is no longer something else to take talk for.
+            if (!COMMAND_WORDS.contains(word)) {
+                others.add(word);
+            }
+        }
+        return Collections.unmodifiableList(others);
     }
 
     /**

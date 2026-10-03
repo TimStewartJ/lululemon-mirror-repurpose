@@ -25,14 +25,16 @@ what it can do.
 
 ## What it is like
 
-The Mirror never speaks. All of it happens in the line near the bottom of
-the glass:
+The Mirror never speaks. All of it happens in a panel low on the glass,
+which fades in when there is something to say and out again afterwards:
 
 | The glass shows | Meaning |
 |---|---|
-| Three dots, pulsing | The Mirror heard its name and a request, and is taking it down or waiting for the answer. |
-| Your words in quotation marks | What the companion understood you to say. |
+| Three dots breathing, and **Listening** | The Mirror heard its name and waits for what follows. |
+| Three dots running one after the other | The Mirror heard a request, and is taking it down or waiting for the answer. |
+| Your words, small and in quotation marks | What the companion understood you to say. They stay above the answer, so that a mishearing can be seen for what it is. |
 | A sentence | The answer. It stays for about as long as it takes to read, at most fourteen seconds. |
+| A heading with rows under it | An answer in several parts, such as where the day stands: each row has a label (**WEATHER**, **MISSED**, **TODAY**) and a line or two of words. It stays longer, up to thirty seconds. |
 | A sentence that ends in a question mark | The assistant needs to know more. Answer within ten seconds, without the name. |
 | **The assistant isn't answering** | The companion could not be reached or failed. The controls say why. |
 
@@ -40,6 +42,34 @@ The Mirror's own commands never go to the companion: "Mirror, go to sleep"
 works at once, and without a network. Everything else that follows the name
 does. You can also pause after "Mirror", wait for **Listening**, and then
 ask.
+
+### Greetings
+
+"Mirror, good morning", "good afternoon", "good evening", "I'm home" and
+"good night" are the Mirror's own as well: it wakes, or for "good night"
+goes dark, whether or not a companion answers. With the assistant on, the
+Mirror also tells the companion which greeting it heard, and the companion
+answers with where things stand. That answer is put together from what the
+companion already knows, without the model and without the sound of what
+was said, so it is there in well under a second:
+
+| Said | The rows under the greeting |
+|---|---|
+| "good morning" | The weather now and what the day brings, what is due today, reminders that came due and nobody dismissed, and what is still to do. |
+| "good afternoon", "good evening" | The same, for what is left of the day. |
+| "I'm home" | What came due while you were out, and what is next. |
+| "good night" | What tomorrow holds, and what was left open today. The display goes dark when it has been read. |
+
+A reminder counts as missed from the moment it was due until it is marked
+done or dismissed, or until the board drops it a day later. After a
+greeting, "Mirror, dismiss those" marks the ones it has just listed as done.
+
+What changes on the glass changes gently. A widget that the assistant adds
+fades in, one it removes fades out, one it moves glides to its place, and
+one whose size changes goes dark for a moment and comes back. A new item on
+the board fades in under the ones that were there. The glass also shows a
+change within a fraction of a second of its being made, where it used to
+look for changes every few seconds.
 
 A request that someone made is answered where they can see it: a Mirror
 that is dark wakes for the answer, unless the answer was to go dark.
@@ -52,7 +82,7 @@ that is dark wakes for the answer, unless the answer was to go dark.
 2. The glass shows the dots. The Mirror waits until you have stopped
    talking: until the room is as quiet as before and the recogniser has no
    more words under way, for at most twelve seconds.
-3. That stretch of sound, from half a second before the name, is cut out of
+3. That stretch of sound, from a second before the name, is cut out of
    the half minute that the recogniser's process keeps in memory, and sent
    to the companion.
 4. The companion transcribes it, shows the words on the glass, and gives
@@ -74,7 +104,7 @@ on the Mirror, and no sound is stored or sent, as before.
 With it switched on:
 
 - **The sound of each request** goes to the companion, over your own
-  network and nowhere else: from half a second before the name to half a
+  network and nowhere else: from a second before the name to half a
   second after you stop. Talk that does not begin with the Mirror's name is
   not sent. The recogniser can take other talk for its name, about as often
   as it would otherwise have shown **Didn't catch that**; that stretch is
@@ -151,7 +181,8 @@ the same route by which it shows anything: a line on the glass.
   what it can.
 - A background film cannot be pictured: in a picture of the glass it
   appears as its still poster.
-- It answers in writing only, in one line of at most 200 characters.
+- It answers in writing only: one line of at most 200 characters, or a
+  heading with up to five rows.
 
 ## Protocol
 
@@ -169,7 +200,13 @@ companion.
 in the sound), `window` (it followed the name after a pause; the name is
 not in the sound) or `follow-up` (it answers the companion's question).
 `X-Mirror-Utterance` is an id for the request. `POST /v1/ask` carries a
-typed one: `{"text": "...", "source": "controls"}`. Both are answered with:
+typed one: `{"text": "...", "source": "controls"}`. A greeting that the
+Mirror recognised itself arrives the same way, as
+`{"text": "good morning", "source": "shortcut", "shortcut": "good-morning"}`;
+the other shortcuts are `good-afternoon`, `good-evening`, `good-night` and
+`home`. For a shortcut the Mirror waits eight seconds, not 45, and a
+companion that does not know shortcuts may answer it as the typed request it
+also is. All are answered with:
 
 ```json
 {
@@ -177,7 +214,9 @@ typed one: `{"text": "...", "source": "controls"}`. Both are answered with:
   "reply": "I'll remind you tomorrow at 7.",
   "ignored": false,
   "listen": false,
-  "acted": ["board_add"]
+  "acted": ["board_add"],
+  "details": [],
+  "seconds": 6
 }
 ```
 
@@ -188,6 +227,8 @@ typed one: `{"text": "...", "source": "controls"}`. Both are answered with:
 | `ignored` | True if the request was not meant for the Mirror or held nothing. The dots go away and nothing is shown. |
 | `listen` | True if `reply` is a question: what is said next, within ten seconds, is sent as a `follow-up`. |
 | `acted` | The names of what the companion did. If `set_power` is among them, a dark Mirror is not woken for the answer. |
+| `details` | Optional: up to five rows to show under `reply`, which is then their heading. Each is `{"label": "Weather", "text": "Clear, 31° later"}`: a label of at most 14 characters, which may be empty or left out, and a text of 1 to 90. More rows are dropped and longer ones cut. |
+| `seconds` | Optional: how long to show the answer, 2 to 30. Without it the Mirror goes by the length of what there is to read. |
 
 The Mirror waits 45 seconds. Any status but `200` counts as no answer;
 `401` is reported as a key that is not accepted.
@@ -212,8 +253,11 @@ videos, sleep and wake. Two routes exist for it:
 one line of 1 to 200 characters. `kind` is `reply` (the default), `notice`
 or `heard`, which is shown as a quotation of what someone said and stays
 until the answer replaces it. `seconds`, 2 to 30, is optional; without it a
-line stays as long as its length needs. The answer is `{"shown": true}`, or
-`{"shown": false, "reason": "sleeping"}` from a dark Mirror, which shows
+line stays as long as its length needs. `details` is optional too: rows to
+show under the line, as in an answer, except that rows which break the
+limits are refused with `400` and not cut. Mirror Home before 2.3.0-dev.10
+ignores `details` and shows the line alone. The answer is `{"shown": true}`,
+or `{"shown": false, "reason": "sleeping"}` from a dark Mirror, which shows
 nothing and is not woken by this.
 
 `GET /api/v1/screenshot` answers with a JPEG of what the glass shows, 540
@@ -226,7 +270,11 @@ The Mirror's side is `GET` and `PUT /api/v1/assistant` and `POST
 ## For developers
 
 `AssistantManager.java` keeps the settings, talks to the companion and
-decides what the glass shows. Whether a sentence is a request is decided in
+decides what the glass shows; `ConversationPanel.java` is the panel that
+shows it, and `GlassCaption.java` the way to it from anywhere in Mirror
+Home. The dashboard's transitions are in `dashboard/mirror.js` and
+`mirror.css`, and `ControlServer.changesGlass` decides which requests make
+the dashboard look again at once. Whether a sentence is a request is decided in
 `VoiceInterpreter.java`; where a request ends, in `RequestEnd.java`; both
 have unit tests. `SoundRing.java` is the half minute of sound, which exists
 only in the recogniser's process and only in memory.

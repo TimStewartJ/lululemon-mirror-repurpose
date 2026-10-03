@@ -58,14 +58,11 @@ public final class MainActivity extends Activity {
     private static final long AMBIENT_FADE_OUT_MS = 900L;
     private static final long AMBIENT_FADE_IN_DELAY_MS = 350L;
     private static final long AMBIENT_FADE_IN_MS = 1400L;
-    private static final long VOICE_CAPTION_MS = 2_500L;
     private static final String OFFLINE_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/offline.html";
     private static final String BUILT_IN_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/custom.html";
     private static final int TEXT_COLOR = Color.rgb(245, 242, 236);
-    /** What was understood, before the answer: the same white, further back. */
-    private static final int CAPTION_HEARD_COLOR = Color.argb(190, 245, 242, 236);
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
@@ -136,18 +133,16 @@ public final class MainActivity extends Activity {
             }
         }
     };
-    private final Handler voiceHandler = new Handler(Looper.getMainLooper());
     private final ScreenCapture.Source screenSource = this::drawGlass;
-    private final GlassCaption.Glass captionGlass = this::showVoiceEvent;
-    private ValueAnimator captionPulse;
-    private final Runnable hideVoiceCaption = new Runnable() {
-        @Override
-        public void run() {
-            stopCaptionPulse();
-            voiceCaption.animate()
-                    .alpha(0f)
-                    .setDuration(400L)
-                    .withEndAction(() -> voiceCaption.setVisibility(View.GONE));
+    private final Runnable refreshGlass = () -> {
+        if (this.webDashboard != null) {
+            // A dashboard of someone's own has no such function, and is left to look when it does.
+            this.webDashboard.evaluateJavascript("window.mirrorRefresh&&window.mirrorRefresh()", null);
+        }
+    };
+    private final GlassCaption.Glass captionGlass = caption -> {
+        if (this.conversation != null) {
+            this.conversation.show(caption);
         }
     };
 
@@ -163,7 +158,7 @@ public final class MainActivity extends Activity {
     private View ambientCurtain;
     private PlayerView playerView;
     private View sleepOverlay;
-    private TextView voiceCaption;
+    private ConversationPanel conversation;
     private TextView nativeStatus;
     private TextView nativeCode;
     private String nativeClockZoneId = "";
@@ -253,32 +248,17 @@ public final class MainActivity extends Activity {
                         ViewGroup.LayoutParams.MATCH_PARENT));
         media.attach(playerView);
 
-        // What the Mirror heard, in place of a sound: nobody wants a mirror to talk back.
-        voiceCaption = new TextView(this);
-        voiceCaption.setTextColor(TEXT_COLOR);
-        voiceCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32);
-        voiceCaption.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
-        voiceCaption.setGravity(Gravity.CENTER);
-        voiceCaption.setPadding(dp(28), dp(10), dp(28), dp(12));
-        // Black is plain mirror on the glass: it shows nothing itself, and
-        // keeps a film or a widget behind the words from tangling with them.
-        // Wholly black, because a clock's large figures show through anything less.
-        GradientDrawable captionBacking = new GradientDrawable();
-        captionBacking.setColor(Color.BLACK);
-        captionBacking.setCornerRadius(dp(36));
-        voiceCaption.setBackground(captionBacking);
-        voiceCaption.setAlpha(0f);
-        voiceCaption.setVisibility(View.GONE);
-        FrameLayout.LayoutParams captionLayout = new FrameLayout.LayoutParams(
+        // Where the Mirror answers, in place of a voice.
+        conversation = new ConversationPanel(this);
+        FrameLayout.LayoutParams conversationLayout = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        captionLayout.bottomMargin = dp(96);
-        // An answer may run to three lines; a command's caption is a word or two.
-        voiceCaption.setMaxWidth(getResources().getDisplayMetrics().widthPixels * 84 / 100);
-        voiceCaption.setMaxLines(4);
-        voiceCaption.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        root.addView(voiceCaption, captionLayout);
+        conversationLayout.bottomMargin = dp(96);
+        int side = getResources().getDisplayMetrics().widthPixels * 6 / 100;
+        conversationLayout.leftMargin = side;
+        conversationLayout.rightMargin = side;
+        root.addView(conversation, conversationLayout);
 
         sleepOverlay = new View(this);
         sleepOverlay.setBackgroundColor(Color.BLACK);
@@ -304,6 +284,7 @@ public final class MainActivity extends Activity {
         startService(new Intent(this, ControlServerService.class));
         ScreenCapture.attach(screenSource);
         GlassCaption.attach(captionGlass);
+        GlassCaption.attachRefresh(refreshGlass);
 
         renderDashboard();
         updateMediaVisibility();
@@ -380,9 +361,8 @@ public final class MainActivity extends Activity {
         dashboardHandler.removeCallbacks(dashboardRetry);
         ScreenCapture.detach(screenSource);
         GlassCaption.detach(captionGlass);
-        voiceHandler.removeCallbacks(hideVoiceCaption);
-        stopCaptionPulse();
-        voiceCaption.animate().cancel();
+        GlassCaption.detachRefresh(refreshGlass);
+        conversation.cancel();
         ambientCurtain.animate().cancel();
         cancelDisplayFade();
         unregisterReceiver(stateReceiver);
@@ -715,9 +695,14 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+        final WebView page = webDashboard;
         webDashboard.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
+                if (page != webDashboard) {
+                    // A request cut off by the page's own end is reported as an error.
+                    return false;
+                }
                 DashboardDiagnostics.recordConsole(
                         message.messageLevel().name(),
                         message.message(),
@@ -760,9 +745,12 @@ public final class MainActivity extends Activity {
 
     private void destroyWebDashboard() {
         if (webDashboard != null) {
-            webDashboard.stopLoading();
-            webDashboard.destroy();
+            // No longer the dashboard from here on: what a page cannot finish
+            // while it is taken down is no fault of it. See onConsoleMessage.
+            WebView leaving = webDashboard;
             webDashboard = null;
+            leaving.stopLoading();
+            leaving.destroy();
         }
     }
 
@@ -780,74 +768,6 @@ public final class MainActivity extends Activity {
     private void updateMediaVisibility() {
         playerView.setVisibility(media.isPresentationActive() ? View.VISIBLE : View.GONE);
         updateAmbientVideoState();
-    }
-
-    /**
-     * Shows what was heard: that the Mirror listens, what it did, that it
-     * did not follow; and what its assistant is doing and answers.
-     *
-     * <p>A caption that breathes means work is going on: three dots while
-     * the request travels, then the words as they were understood. An
-     * answer stands still, in the full white of the glass.
-     */
-    private void showVoiceEvent(String kind, String caption, long millis) {
-        if (voiceCaption == null || kind == null) {
-            return;
-        }
-        String text = caption == null ? "" : caption;
-        long showFor = millis > 0 ? millis : VOICE_CAPTION_MS;
-        boolean working = false;
-        int color = TEXT_COLOR;
-        if (AssistantManager.KIND_CLEAR.equals(kind)) {
-            voiceHandler.removeCallbacks(hideVoiceCaption);
-            hideVoiceCaption.run();
-            return;
-        } else if (VoiceManager.KIND_LISTENING.equals(kind)) {
-            text = "Listening";
-            showFor = VoiceInterpreter.WINDOW_MS;
-        } else if (VoiceManager.KIND_NOT_UNDERSTOOD.equals(kind)) {
-            text = "Didn\u2019t catch that";
-            showFor = VoiceInterpreter.WINDOW_MS;
-        } else if (AssistantManager.KIND_THINKING.equals(kind)) {
-            text = "\u2022  \u2022  \u2022";
-            working = true;
-        } else if (AssistantManager.KIND_HEARD.equals(kind)) {
-            text = "\u201c" + text + "\u201d";
-            color = CAPTION_HEARD_COLOR;
-            working = true;
-        }
-        voiceHandler.removeCallbacks(hideVoiceCaption);
-        stopCaptionPulse();
-        voiceCaption.animate().cancel();
-        voiceCaption.setText(text);
-        voiceCaption.setTextColor(color);
-        // Large for a word or two, smaller for a sentence that has to fit.
-        voiceCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, text.length() <= 32 ? 32 : 26);
-        voiceCaption.setVisibility(View.VISIBLE);
-        voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
-        if (working) {
-            startCaptionPulse(color);
-        }
-        voiceHandler.postDelayed(hideVoiceCaption, showFor);
-    }
-
-    /** Lets the words breathe. Their backing stays, so that what lies behind them does not come and go. */
-    private void startCaptionPulse(int color) {
-        captionPulse = ValueAnimator.ofFloat(1f, 0.35f);
-        captionPulse.setDuration(1_600L);
-        captionPulse.setRepeatCount(ValueAnimator.INFINITE);
-        captionPulse.setRepeatMode(ValueAnimator.REVERSE);
-        captionPulse.addUpdateListener(animation -> voiceCaption.setTextColor(Color.argb(
-                Math.round(Color.alpha(color) * (float) animation.getAnimatedValue()),
-                Color.red(color), Color.green(color), Color.blue(color))));
-        captionPulse.start();
-    }
-
-    private void stopCaptionPulse() {
-        if (captionPulse != null) {
-            captionPulse.cancel();
-            captionPulse = null;
-        }
     }
 
     /**

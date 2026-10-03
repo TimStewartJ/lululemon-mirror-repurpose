@@ -191,8 +191,15 @@
       }).then(null, function () { done(null); });
     };
 
+    /* The glass moves; the editor does not. A widget that fades or glides
+       under someone's finger while they place it would only be in the way. */
     container.className += (container.className ? ' ' : '') + 'mr-stage' +
-      (editing ? ' mr-editing' : '');
+      (editing ? ' mr-editing' : ' mr-live');
+    /* Whether the glass has been drawn once: what is there at the start
+       arrives with the stage, and only what comes later arrives by itself. */
+    var drawn = false;
+    var LEAVE_MS = 650;
+    var DISSOLVE_MS = 320;
     var photoLayer = document.createElement('div');
     photoLayer.className = 'mr-layer mr-backdrop';
     var shadeLayer = document.createElement('div');
@@ -633,10 +640,25 @@
       return pages;
     }
 
-    /* The board changes in three ways, and each is shown differently. New
-       items or a new size are measured afresh. A turned page, or a page whose
-       items changed, fades. A countdown that only ticked over is swapped in
-       place. node.shown is the markup on its way to, or already in, the DOM. */
+    /* Which rows of a page are new, if the page only gained rows: every row
+       it had is still there, in its order. Otherwise null. */
+    function gainedRows(before, current, ids) {
+      if (!before || before.page !== current || ids.length <= before.ids.length) return null;
+      var gained = [];
+      var kept = 0;
+      for (var index = 0; index < ids.length; index++) {
+        if (kept < before.ids.length && ids[index] === before.ids[kept]) kept += 1;
+        else gained.push(index);
+      }
+      return kept === before.ids.length ? gained : null;
+    }
+
+    /* The board changes in four ways, and each is shown differently. New
+       items or a new size are measured afresh. A page that only gained items
+       keeps what it had and fades the new ones in. A turned page, or a page
+       whose items changed otherwise, fades. A countdown that only ticked over
+       is swapped in place. node.shown is the markup on its way to, or already
+       in, the DOM. */
     function renderBoard(node, widget, geometryChanged) {
       var items = boardItems(widget);
       var stage = stageSize();
@@ -660,12 +682,28 @@
       var pages = node.boardPages || [all];
       var current = pages.length > 1 ? Math.floor(now.getTime() / BOARD_PAGE_MS) % pages.length : 0;
       var html = boardPageHtml(view, pages, current);
-      var turn = current + '|' + pages[current].map(function (row) { return items[row].id; }).join(',');
+      var ids = pages[current].map(function (row) { return items[row].id; });
+      var turn = current + '|' + ids.join(',');
       var turned = turn !== node.boardTurn;
+      var before = node.boardPage;
       node.boardTurn = turn;
+      node.boardPage = { page: current, ids: ids };
       if (!measured && html === previous) return;
       node.shown = html;
       if (turned && previous != null && !editing) {
+        var gained = gainedRows(before, current, ids);
+        if (gained) {
+          /* What was there stays as it is; only what is new arrives. */
+          node.content = html;
+          node.pendingHtml = null;
+          node.inner.className = 'mr-inner';
+          node.inner.innerHTML = html;
+          var shownRows = node.inner.querySelectorAll('.mr-board-row');
+          for (var row = 0; row < gained.length; row++) {
+            if (shownRows[gained[row]]) shownRows[gained[row]].className += ' mr-board-new';
+          }
+          return;
+        }
         /* Measuring left its own markup behind; fade from what was showing. */
         if (measured) {
           node.inner.innerHTML = previous;
@@ -787,6 +825,64 @@
         widget.weight || '', widget.show || ''].join('|');
     }
 
+    /* What of a widget cannot change smoothly: its size and what it shows.
+       Where it is and how strong can, and a style sheet glides those. */
+    function shapeKey(widget) {
+      return [widget.w, widget.h, widget.align, widget.locked, widget.type, widget.photo || '',
+        widget.fit || '', widget.source || '', widget.note || '', widget.size || '',
+        widget.weight || '', widget.show || '', layout.textColor, layout.accentColor].join('|');
+    }
+
+    function setPhase(node, phase, on) {
+      node[phase] = on;
+      var name = ' mr-' + phase;
+      var classes = node.element.className.split(name).join('');
+      node.element.className = classes + (on ? name : '');
+    }
+
+    /* A widget that was not there fades in. It is laid out once unseen, or
+       it would simply be there. */
+    function arrive(node) {
+      void node.element.offsetWidth;
+      setPhase(node, 'entering', false);
+    }
+
+    /* A widget that is no longer wanted fades out, and is taken away once
+       it cannot be seen. One that is wanted again before that stays. */
+    function leave(id) {
+      var node = nodes[id];
+      if (node.leaving) return;
+      setPhase(node, 'leaving', true);
+      node.leaveTimer = window.setTimeout(function () {
+        if (nodes[id] !== node || !node.leaving) return;
+        widgetLayer.removeChild(node.element);
+        delete nodes[id];
+      }, LEAVE_MS);
+    }
+
+    function stay(node) {
+      if (!node.leaving) return;
+      window.clearTimeout(node.leaveTimer);
+      setPhase(node, 'leaving', false);
+    }
+
+    /* A widget whose size or kind of content changed goes dark, changes,
+       and comes back: text that is refitted in view jumps. Whatever is
+       asked of it while it is dark is what it comes back as. */
+    function dissolve(id) {
+      var node = nodes[id];
+      setPhase(node, 'dissolving', true);
+      window.setTimeout(function () {
+        if (nodes[id] !== node) return;
+        node.geometry = '';
+        node.settling = true;
+        renderWidget(node.widget, localDate(now, runtime), false);
+        node.settling = false;
+        void node.element.offsetWidth;
+        setPhase(node, 'dissolving', false);
+      }, DISSOLVE_MS);
+    }
+
     function applyGeometry(node, widget) {
       var element = node.element;
       var isPhoto = widget.type === 'photo';
@@ -799,7 +895,10 @@
         ' mr-align-' + widget.align +
         (widget.visible ? '' : ' mr-hidden') +
         (widget.locked ? ' mr-locked' : '') +
-        (editing && widget.id === selectedId ? ' mr-selected' : '');
+        (editing && widget.id === selectedId ? ' mr-selected' : '') +
+        (node.entering ? ' mr-entering' : '') +
+        (node.leaving ? ' mr-leaving' : '') +
+        (node.dissolving ? ' mr-dissolving' : '');
       element.style.left = (widget.x / 10) + '%';
       element.style.top = (widget.y / 10) + '%';
       element.style.width = (widget.w / 10) + '%';
@@ -834,9 +933,17 @@
     function renderWidget(widget, local, force) {
       var node = ensureNode(widget);
       node.widget = widget;
+      if (node.dissolving && !node.settling && !force) return;
       var geometry = geometryKey(widget) + '|' + layout.textColor + '|' + layout.accentColor;
       var geometryChanged = force || geometry !== node.geometry;
       if (geometryChanged) {
+        var shape = shapeKey(widget);
+        if (!editing && !force && !node.settling && !node.entering
+            && node.shape != null && shape !== node.shape) {
+          dissolve(widget.id);
+          return;
+        }
+        node.shape = shape;
         node.geometry = geometry;
         applyGeometry(node, widget);
         if (editing) {
@@ -943,17 +1050,26 @@
         var showsBoard = widget.type !== 'board' || boardItems(widget).length > 0;
         if (!editing && (!widget.visible || !showsWeather || !showsPhoto || !showsNote || !showsBoard)) return;
         seen[widget.id] = true;
+        var arriving = !nodes[widget.id] && drawn && !editing && !force;
         var node = ensureNode(widget);
         if (widget.type === 'photo' && node.order == null) node.order = rotating - 1;
         if (rotatesNotes(widget) && node.noteOrder == null) node.noteOrder = rotatingNotes - 1;
+        if (arriving) node.entering = true;
+        stay(node);
         renderWidget(widget, local, force);
+        if (arriving) arrive(node);
       });
       Object.keys(nodes).forEach(function (id) {
-        if (!seen[id]) {
+        if (seen[id]) return;
+        if (drawn && !editing && !force) {
+          leave(id);
+        } else {
+          window.clearTimeout(nodes[id].leaveTimer);
           widgetLayer.removeChild(nodes[id].element);
           delete nodes[id];
         }
       });
+      drawn = true;
     }
 
     function tick(date) {
@@ -962,8 +1078,9 @@
       var local = localDate(now, runtime);
       layout.widgets.forEach(function (widget) {
         /* The board keeps time too: its pages turn and its countdowns run. */
+        /* What is on its way out keeps what it showed until it is gone. */
         if ((widget.type === 'clock' || widget.type === 'date' || widget.type === 'board')
-            && nodes[widget.id]) {
+            && nodes[widget.id] && !nodes[widget.id].leaving) {
           renderWidget(widget, local, false);
         }
       });
