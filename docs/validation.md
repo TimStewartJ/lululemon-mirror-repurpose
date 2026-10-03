@@ -127,6 +127,9 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `voice-recovers` | The recogniser's process is stopped. It comes back by itself and follows a spoken command, and Mirror Home is the same process throughout, with no crash recorded. |
 | `voice-steps-aside` | Android is told of an installation, which is how an update begins. Voice reports that it is paused and the recogniser's process ends, leaving its memory to the installation. When the installation is given up, voice listens again; none of it counts as a recogniser that stopped, and Mirror Home is the same process throughout. |
 | `voice-permission` | The microphone permission is taken away, as it is missing after an update from a release without voice. Voice waits and no recogniser runs. Once the permission is given, voice starts listening without being asked to. |
+| `assistant-off` | On a fresh installation the assistant is off and has no companion. Its settings and a picture of the glass cannot be read without a pairing. An address that is no web address, has a path or holds a password is refused, as is a key with a space, and a refusal changes nothing. A request while it is off, or on without a companion, is answered with the reason. |
+| `assistant-asks` | A stand-in companion runs on the computer. Set to it, the Mirror finds it, sends its key with every request and reports what answers. A typed request reaches it as typed, and its answer, accents and all, comes back and shows on the glass, as does a line that the companion sends. A picture of the glass has the screen's shape at the width asked for; a dark Mirror shows no line and gives no picture. An answer wakes a dark Mirror unless the answer was to sleep. A companion that fails, refuses the key or is gone is reported as such, on the glass and in the controls, and every request is counted. |
+| `assistant-voice` | The Mirror's own commands and talk without its name do not reach the companion. A sentence after the name that is no command does; the companion's question opens the next sentence to it, without the name, and only that one; so does the name followed by a pause. A sentence whose name the recogniser doubts goes nowhere. A recording of "Mirror, what is the weather like today?" then arrives at the companion as sound: the very samples that were played, from before the first word to after the last, and not much more. |
 | `returns-to-front` | The other HOME app is started over the dashboard. Mirror Home leaves it for ten seconds, then takes the display back without creating a second dashboard. This runs twice: from the arrangement a boot leaves, and from the one an update can leave (see [Rehearsing an update](#rehearsing-an-update)). |
 | `wakes-display` | Android itself is put to sleep, which turns the panel off. Mirror Home wakes it and the dashboard is back within seconds. |
 | `cold-start` | Starting Mirror Home never lights the whole screen, since on mirror glass a white starting window is a bright flash, and the dashboard then fades in. |
@@ -143,7 +146,7 @@ delivers silence. A debug build of Mirror Home therefore has two doors that
 a release build lacks, and the suite speaks through them:
 
 - `POST /api/v1/voice/test/clip` takes a WAV recording, which the recogniser
-  hears in place of the microphone. The three recordings in
+  hears in place of the microphone. The four recordings in
   `tools/validation-clips/` are synthetic speech; its README says how they
   were made. This exercises the whole path: the recogniser's native library
   on Android 6, the speech model, and what Mirror Home does with a sentence.
@@ -154,9 +157,15 @@ a release build lacks, and the suite speaks through them:
 
 Both answer `409` unless voice is listening.
 
+The assistant's checks need someone to ask. `tools/fake_companion.py` is a
+companion that answers as a check scripts it and keeps what it was sent; it
+listens on this computer, which an emulator reaches as `10.0.2.2`. A
+sentence that is handed over has no sound, so a debug build passes its
+words to the companion in place of it; the recording goes the whole way.
+
 `voice-off` and `voice-model` run everywhere. The other voice checks need
 the speech model and are skipped without it. A release build has neither
-door, so `voice-commands` and `voice-wake-word` are skipped on it, and the
+door, so `voice-commands`, `voice-wake-word` and `assistant-voice` are skipped on it, and the
 rest check what they can without speaking: that the recogniser loads the
 model and listens, comes back when it is stopped, steps aside for an
 installation, waits for the microphone permission, and listens again after

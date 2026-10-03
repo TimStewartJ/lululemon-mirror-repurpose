@@ -1,6 +1,6 @@
 # Speech clips for the validation suite
 
-Three short recordings of synthetic speech, 16 kHz mono, that the Android 6
+Four short recordings of synthetic speech, 16 kHz mono, that the Android 6
 emulator suite plays to Mirror Home in place of a microphone (an emulator has
 none worth the name):
 
@@ -9,9 +9,12 @@ none worth the name):
 | `mirror-go-to-sleep.wav` | "Mirror, go to sleep." | `en_US-ljspeech-medium` |
 | `mirror-wake-up.wav` | "Mirror, wake up." | `en_US-norman-medium` |
 | `talk-of-sleep.wav` | "I am going to sleep early tonight." | `en_US-norman-medium` |
+| `mirror-what-is-the-weather.wav` | "Mirror, what is the weather like today?" | `en_US-ljspeech-medium` |
 
 The first two are commands. The third is talk that holds a command's words
-without the Mirror's name, and must do nothing.
+without the Mirror's name, and must do nothing. The fourth is a request
+that is no command: with the assistant switched on, its sound must reach
+the companion from before its first word to after its last.
 
 ## Where they come from
 

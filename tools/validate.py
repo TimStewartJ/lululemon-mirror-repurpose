@@ -30,11 +30,13 @@ import subprocess
 import sys
 import time
 import traceback
+import wave
 import zipfile
 from dataclasses import dataclass, field
 from typing import Callable
 
 import android_emulator
+import fake_companion
 import screen_capture
 import voice
 import webview_devtools
@@ -145,6 +147,14 @@ VOICE_CAPTION_SECONDS = 3
 # The caption's strokes light at least this much more of that box.
 VOICE_CAPTION_LIT = 0.002
 RECORD_AUDIO = "android.permission.RECORD_AUDIO"
+# Said to the Mirror and no command of its own: for the assistant.
+ASSISTANT_CLIP = "mirror-what-is-the-weather.wav"
+# The clip's silence before its first and after its last word, in samples.
+ASSISTANT_CLIP_SILENCE = (4_800, 6_400)
+# How long the suite looks for a line on the glass; the shortest stays 3.5 s.
+ASSISTANT_SHOWN_SECONDS = 12
+# A picture of a black screen at this size is a third of this.
+ASSISTANT_PICTURE_BYTES = 6_000
 NO_SPEECH_MODEL = "no speech model on this computer; fetch it with: python tools/voice.py fetch-model"
 NO_TEST_SPEECH = "a release build cannot be given test speech"
 
@@ -1883,6 +1893,379 @@ def check_voice_permission(ctx: Context) -> None:
     ctx.wait_lit("voice-permission")
 
 
+def expect_refused(reply: Reply, status: int, what: str) -> None:
+    require(reply.status == status, f"{what} answered {reply.status}, expected {status}: {describe(reply.body)}")
+    require(
+        isinstance(reply.body, dict) and reply.body.get("error"),
+        f"{what} was refused without saying why: {describe(reply.body)}",
+    )
+
+
+def assistant_state(ctx: Context) -> dict:
+    return ctx.api.expect("GET", "/api/v1/assistant")
+
+
+@contextlib.contextmanager
+def companion_for(ctx: Context):
+    """A stand-in companion that Mirror Home asks, until the check ends."""
+    with fake_companion.FakeCompanion() as companion:
+        try:
+            wanted = ctx.api.expect(
+                "PUT", "/api/v1/assistant",
+                {"enabled": True, "address": companion.emulator_address + "/", "key": companion.key},
+            )
+            require(
+                wanted["enabled"] and wanted["address"] == companion.emulator_address and wanted["keySet"],
+                f"The companion was not kept as it was set: {describe(wanted)}",
+            )
+            require(companion.key not in json.dumps(wanted), "The Mirror shows the companion's key again")
+            seen: dict = {}
+
+            def connected() -> bool:
+                seen.update(assistant_state(ctx))
+                return seen["state"] == "connected"
+
+            try:
+                wait_for("the Mirror to find its companion", connected, timeout=30)
+            except CheckFailed:
+                raise CheckFailed(
+                    f"The Mirror did not find a companion on this computer; the assistant is "
+                    f"{seen.get('state')}: {seen.get('detail')}"
+                ) from None
+            yield companion
+        finally:
+            ctx.api.expect("PUT", "/api/v1/assistant", {"enabled": False, "address": "", "key": ""})
+
+
+def jpeg_size(picture: bytes) -> tuple[int, int]:
+    """The width and height that a JPEG file's frame header gives."""
+    position = 2
+    while position + 9 <= len(picture) and picture[position] == 0xFF:
+        marker = picture[position + 1]
+        if marker == 0xFF:
+            position += 1
+            continue
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            return (
+                int.from_bytes(picture[position + 7:position + 9], "big"),
+                int.from_bytes(picture[position + 5:position + 7], "big"),
+            )
+        position += 2 + int.from_bytes(picture[position + 2:position + 4], "big")
+    raise CheckFailed("The picture is not a JPEG with a frame header")
+
+
+def on_glass(ctx: Context, words: str, what: str, timeout: float = ASSISTANT_SHOWN_SECONDS) -> None:
+    try:
+        wait_for(what, lambda: words in ctx.native_text(), timeout=timeout, interval=0.1)
+    except CheckFailed:
+        raise CheckFailed(f"The glass did not show {what}: {words!r}") from None
+
+
+def check_assistant_off(ctx: Context) -> None:
+    state = assistant_state(ctx)
+    require(
+        state["enabled"] is False and state["state"] == "off" and state["address"] == "" and not state["keySet"],
+        f"The assistant is set up before anyone did so: {describe(state)}",
+    )
+    require(ctx.status()["assistant"] == {"enabled": False, "state": "off"}, "The status does not say that the assistant is off")
+    health = ctx.health()["assistant"]
+    require(health["state"] == "off" and "recent" not in health, f"The health report says of the assistant: {describe(health)}")
+    for path in ("/api/v1/assistant", "/api/v1/screenshot"):
+        require(
+            ctx.api.call("GET", path, token="not-a-credential").status == 401,
+            f"{path} can be read without a pairing",
+        )
+    for body, what in (
+        ({"enabled": "yes"}, "A switch position that is neither on nor off"),
+        ({"address": 8790}, "An address that is no text"),
+        ({"address": "ftp://10.0.2.2"}, "An address that is no web address"),
+        ({"address": "http://10.0.2.2:8790/v1/health"}, "An address with a path"),
+        ({"address": "http://someone:secret@10.0.2.2:8790"}, "An address with a password in it"),
+        ({"key": "two words"}, "A key with a space in it"),
+        ({"key": "k" * 257}, "A key of 257 characters"),
+    ):
+        expect_refused(ctx.api.call("PUT", "/api/v1/assistant", body), 400, what)
+    require(assistant_state(ctx) == state, "A refused setting changed something")
+    expect_refused(
+        ctx.api.call("POST", "/api/v1/assistant/ask", {"text": "Is anyone there?"}),
+        503, "A request while the assistant is off",
+    )
+    for body, what in (
+        ({}, "A line without text"),
+        ({"text": "   "}, "An empty line"),
+        ({"text": "x" * 201}, "A line of 201 characters"),
+        ({"text": "two\nlines"}, "Two lines"),
+        ({"text": "Louder", "kind": "shout"}, "A line of an unknown kind"),
+        ({"text": "Briefly", "seconds": 1}, "A line for one second"),
+    ):
+        expect_refused(ctx.api.call("POST", "/api/v1/assistant/say", body), 400, what)
+    try:
+        waiting = ctx.api.expect("PUT", "/api/v1/assistant", {"enabled": True})
+        require(
+            waiting["state"] == "unconfigured",
+            f"Switched on without a companion, the assistant is {waiting['state']}",
+        )
+        expect_refused(
+            ctx.api.call("POST", "/api/v1/assistant/ask", {"text": "Is anyone there?"}),
+            503, "A request without a companion",
+        )
+    finally:
+        ctx.api.expect("PUT", "/api/v1/assistant", {"enabled": False})
+
+
+def check_assistant_asks(ctx: Context) -> None:
+    ctx.lit_peak()
+    ctx.set_automation(enabled=False)
+    with companion_for(ctx) as companion:
+        state = assistant_state(ctx)
+        before = state["counts"]
+        require(state["model"] == "scripted", f"The Mirror does not say what answers: {describe(state)}")
+        require(ctx.status()["assistant"]["state"] == "connected", "The status does not say that a companion answers")
+        greeted = companion.sent("/v1/health")
+        require(
+            greeted and all(request["headers"].get("authorization") == "Bearer " + companion.key for request in greeted),
+            "The Mirror asked its companion without the key",
+        )
+
+        reply = "Calm and clear tonight \u2013 18\u00b0 outside, and nothing left on your list."
+        companion.script({"heard": "What kind of evening is it?", "reply": reply, "acted": ["get_state"]})
+        answer = ctx.api.expect("POST", "/api/v1/assistant/ask", {"text": "What kind of evening is it?"}, timeout=70)
+        require(answer["reply"] == reply, f"The companion's answer came back as {describe(answer)}")
+        asked = companion.sent("/v1/ask")
+        require(
+            len(asked) == 1
+            and json.loads(asked[0]["body"].decode("utf-8")) == {"text": "What kind of evening is it?", "source": "controls"},
+            f"The companion was asked {describe([request['body'] for request in asked])}",
+        )
+        on_glass(ctx, "Calm and clear tonight", "the companion's answer")
+        ctx.screenshot("assistant-reply")
+
+        shown = ctx.api.expect(
+            "POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 8}
+        )
+        require(shown == {"shown": True}, f"A line for an awake glass was answered with {describe(shown)}")
+        on_glass(ctx, "The washing is done", "a line that the companion sent")
+
+        picture = ctx.api.call("GET", "/api/v1/screenshot")
+        require(
+            picture.status == 200
+            and picture.headers.get("content-type") == "image/jpeg"
+            and isinstance(picture.body, bytes)
+            and picture.body[:2] == b"\xff\xd8",
+            f"The glass was not pictured: {picture.status} {describe(picture.body)}",
+        )
+        (ctx.output / "assistant-screenshot.jpg").write_bytes(picture.body)
+        width, height = jpeg_size(picture.body)
+        screen = ctx.adb.capture()
+        require(
+            width == 540 and abs(height - round(540 * screen.height / screen.width)) <= 1,
+            f"The picture is {width} by {height} for a screen of {screen.width} by {screen.height}",
+        )
+        require(
+            len(picture.body) >= ASSISTANT_PICTURE_BYTES,
+            f"A picture of {len(picture.body)} bytes holds nothing of the dashboard",
+        )
+        small = ctx.api.call("GET", "/api/v1/screenshot?width=200")
+        require(
+            small.status == 200 and jpeg_size(small.body)[0] == 200,
+            "A picture of another width was not made",
+        )
+        ctx.note("pictureBytes", len(picture.body))
+
+        try:
+            ctx.api.expect("POST", "/api/v1/automation/sleep", {})
+            ctx.wait_peak("black", lambda peak: peak <= BLACK_PEAK, "assistant-asleep")
+            dark = ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "Nobody sees this"})
+            require(dark == {"shown": False, "reason": "sleeping"}, f"A dark glass answered a line with {describe(dark)}")
+            expect_refused(ctx.api.call("GET", "/api/v1/screenshot"), 409, "A picture of a dark glass")
+            # Someone who asks is answered where they can see it, unless the answer was to stay dark.
+            companion.script({"heard": "Good night", "reply": "Good night.", "acted": ["set_power"]})
+            ctx.api.expect("POST", "/api/v1/assistant/ask", {"text": "Good night"}, timeout=70)
+            time.sleep(2)
+            require(asleep(ctx), "An answer that put the Mirror to sleep woke it")
+            companion.script({"heard": "Are you there?", "reply": "Here, and listening for whatever comes next."})
+            ctx.api.expect("POST", "/api/v1/assistant/ask", {"text": "Are you there?"}, timeout=70)
+            wait_for("an answer to wake a dark Mirror", lambda: not asleep(ctx), timeout=10)
+            ctx.wait_lit("assistant-awake")
+        finally:
+            ctx.set_automation(enabled=False)
+
+        companion.script({"status": 500, "error": "The model gave no answer"})
+        failed = ctx.api.call("POST", "/api/v1/assistant/ask", {"text": "And now?"}, timeout=70)
+        expect_refused(failed, 503, "A request that the companion failed at")
+        on_glass(ctx, "answering", "that the assistant gave no answer")
+
+        report = assistant_state(ctx)
+        recent = report["recent"]
+        counted = {key: report["counts"][key] - before[key] for key in before}
+        require(
+            counted == {"requests": 4, "ignored": 0, "failures": 1}
+            and [entry["reply"] for entry in recent[-4:]] == [reply, "Good night.", "Here, and listening for whatever comes next.", ""]
+            and recent[-1]["error"]
+            and recent[-4]["heard"] == "What kind of evening is it?",
+            f"What was asked is kept as {describe(counted)} {describe(recent, 900)}",
+        )
+
+        accepted = companion.key
+        companion.key = "another-key-altogether"
+        expect_refused(
+            ctx.api.call("POST", "/api/v1/assistant/ask", {"text": "Still there?"}, timeout=70),
+            503, "A request with a key that the companion does not accept",
+        )
+        refused = assistant_state(ctx)
+        require(
+            refused["state"] == "unreachable" and "key" in refused["detail"],
+            f"With a key that is not accepted the assistant is {refused['state']}: {refused['detail']}",
+        )
+        companion.key = accepted
+        ctx.api.expect("PUT", "/api/v1/assistant", {"enabled": True})
+        wait_for("the companion to be found again", lambda: assistant_state(ctx)["state"] == "connected", timeout=30)
+
+        companion.close()
+        gone = ctx.api.call("POST", "/api/v1/assistant/ask", {"text": "Anyone?"}, timeout=70)
+        expect_refused(gone, 503, "A request to a companion that is gone")
+        lost = assistant_state(ctx)
+        require(
+            lost["state"] == "unreachable",
+            f"With its companion gone the assistant is {lost['state']}: {lost['detail']}",
+        )
+        require(ctx.health()["assistant"]["state"] == "unreachable", "The health report does not say that the companion is gone")
+        ctx.note("gone", lost["detail"])
+    require(assistant_state(ctx)["state"] == "off", "The assistant did not switch off")
+
+
+def check_assistant_voice(ctx: Context) -> None:
+    listening_voice(ctx)
+    ctx.lit_peak()
+    usual = ctx.set_automation(enabled=False)["wakeBrightness"]
+
+    def brightness() -> int:
+        return ctx.api.expect("GET", "/api/v1/automation")["wakeBrightness"]
+
+    def requests(companion: fake_companion.FakeCompanion) -> list[dict]:
+        return companion.sent("/v1/ask") + companion.sent("/v1/utterance")
+
+    def texts(companion: fake_companion.FakeCompanion) -> list[str]:
+        return [json.loads(request["body"].decode("utf-8"))["text"] for request in companion.sent("/v1/ask")]
+
+    with companion_for(ctx) as companion:
+        try:
+            before = voice_state(ctx)["counts"]
+            # The Mirror's own commands stay with the Mirror.
+            say(ctx, "mirror brighter")
+            wait_for("the wake brightness to rise", lambda: brightness() == usual + VOICE_BRIGHTNESS_STEP, timeout=10)
+            say(ctx, "mirror dimmer")
+            wait_for("the wake brightness to fall again", lambda: brightness() == usual, timeout=10)
+            say(ctx, "[unk] [unk] [unk]")
+            time.sleep(1.5)
+            require(
+                not requests(companion),
+                f"The companion was asked about a command of the Mirror's own, or about talk: {texts(companion)}",
+            )
+
+            # What is no command goes to the companion; its question opens the next sentence to it.
+            companion.script(
+                {"heard": "Add milk to the list", "reply": "Which list do you mean?", "listen": True},
+                {"heard": "The shopping list", "reply": "Milk is on the shopping list."},
+                {"heard": "Show me the list", "reply": "Here is what you still need."},
+            )
+            say(ctx, "mirror [unk] [unk] [unk] [unk]")
+            wait_for("the companion to be asked", lambda: len(requests(companion)) == 1, timeout=10)
+            on_glass(ctx, "Which list do you mean?", "the companion's question")
+            say(ctx, "[unk] [unk]")
+            wait_for("an answer without the name to reach the companion", lambda: len(requests(companion)) == 2, timeout=10)
+            on_glass(ctx, "Milk is on the shopping list.", "the companion's answer")
+            say(ctx, "[unk] [unk]")
+            time.sleep(1.5)
+            require(len(requests(companion)) == 2, "Talk after an answer was passed on to the companion")
+
+            # The name, a pause, then the request.
+            say(ctx, "mirror")
+            say(ctx, "[unk] [unk] [unk]")
+            wait_for("a request that follows the name to reach the companion", lambda: len(requests(companion)) == 3, timeout=10)
+            require(
+                texts(companion) == ["mirror [unk] [unk] [unk] [unk]", "[unk] [unk]", "[unk] [unk] [unk]"]
+                and all(json.loads(request["body"].decode("utf-8"))["source"] == "test" for request in companion.sent("/v1/ask")),
+                f"The companion was asked {texts(companion)}",
+            )
+
+            # A request the recogniser was unsure of having been for the Mirror goes nowhere.
+            say(ctx, "mirror [unk] [unk]", 0.5)
+            time.sleep(1.5)
+            require(len(requests(companion)) == 3, "A sentence that may not have been for the Mirror was passed on")
+
+            # Spoken, the request arrives as the sound of it.
+            wait_for(
+                "the answer to leave the glass",
+                lambda: "Here is what you still need." not in ctx.native_text(),
+                timeout=20,
+            )
+            companion.script({
+                "heard": "Mirror, what is the weather like today?",
+                "reply": "Mild and dry until the evening.",
+                "delaySeconds": 3,
+            })
+            hear(ctx, ASSISTANT_CLIP)
+            sent = wait_for(
+                "the sound of a request to reach the companion",
+                lambda: companion.sent("/v1/utterance"),
+                timeout=VOICE_ACT_SECONDS,
+            )
+            # While the companion works on it, the glass shows that it does.
+            frames = [ctx.adb.capture()]
+            (ctx.output / "assistant-thinking.png").write_bytes(screen_capture.to_png(frames[0]))
+            on_glass(ctx, "Mild and dry until the evening.", "the answer to what was said")
+            request = sent[0]
+            headers = request["headers"]
+            require(
+                headers.get("content-type") == "audio/wav"
+                and headers.get("x-mirror-addressed") == "name"
+                and len(headers.get("x-mirror-utterance", "")) >= 8
+                and headers.get("authorization") == "Bearer " + companion.key,
+                f"The sound arrived with {describe({name: value for name, value in headers.items() if name != 'authorization'})}",
+            )
+            (ctx.output / "assistant-utterance.wav").write_bytes(request["body"])
+            with wave.open(io.BytesIO(request["body"])) as sound:
+                form = (sound.getframerate(), sound.getnchannels(), sound.getsampwidth())
+                heard = sound.readframes(sound.getnframes())
+            require(form == (16_000, 1, 2), f"The sound is {form} and not 16 kHz, one channel, 16 bits")
+            with wave.open(str(VOICE_CLIPS / ASSISTANT_CLIP)) as clip:
+                spoken = clip.readframes(clip.getnframes())
+            # The recogniser heard the clip sample for sample, so the request's sound
+            # is a stretch of it. All that was said must lie within what was sent.
+            lead, tail = ASSISTANT_CLIP_SILENCE
+            middle = len(spoken) // 4 * 2
+            found = heard.find(spoken[middle:middle + 3200])
+            require(found >= 0 and found % 2 == 0, "What was sent is not the sound that was heard")
+            begins = (found - middle) // 2
+            missing_before = max(0, -(begins + lead)) / 16_000
+            missing_after = max(0, (begins + len(spoken) // 2 - tail) - len(heard) // 2) / 16_000
+            require(
+                missing_before <= 0.05 and missing_after <= 0.05,
+                f"The sound that was sent lacks {missing_before:.2f} s of the request's beginning "
+                f"and {missing_after:.2f} s of its end",
+            )
+            require(
+                len(heard) // 2 <= len(spoken) // 2 - lead - tail + 24_000,
+                f"{len(heard) / 32_000:.1f} s were sent for a request of {(len(spoken) // 2 - lead - tail) / 16_000:.1f} s",
+            )
+            counts = voice_state(ctx)["counts"]
+            require(
+                counts["asked"] - before["asked"] == 4 and counts["commands"] - before["commands"] == 2,
+                f"What was said is counted as {describe({key: counts[key] - before[key] for key in before})}",
+            )
+            report = assistant_state(ctx)
+            require(
+                report["counts"]["requests"] >= 4 and report["recent"][-1]["reply"] == "Mild and dry until the evening.",
+                f"What was asked is kept as {describe(report['recent'][-1])}",
+            )
+            ctx.note("sentSeconds", round(len(heard) / 32_000, 2))
+            ctx.note("spokenSeconds", round((len(spoken) // 2 - lead - tail) / 16_000, 2))
+            ctx.note("answerMillis", report["recent"][-1]["millis"])
+        finally:
+            ctx.set_automation(enabled=False)
+
+
 def check_voice_returns(ctx: Context) -> None:
     state = voice_state(ctx)
     if ctx.voice_model is None:
@@ -2265,6 +2648,9 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("voice-recovers", "A recogniser that stops comes back, and the dashboard never notices", check_voice_recovers, False),
     ("voice-steps-aside", "While Android installs an app, voice gives back its memory; then it listens again", check_voice_steps_aside, False),
     ("voice-permission", "Without the microphone permission voice waits, and starts once it is given", check_voice_permission, False),
+    ("assistant-off", "The assistant is off until switched on, and takes only a companion it could reach", check_assistant_off, False),
+    ("assistant-asks", "A typed request reaches the companion; its answer, its lines and a picture of the glass come back", check_assistant_asks, False),
+    ("assistant-voice", "Said to the Mirror, what is no command of its own reaches the companion as sound", check_assistant_voice, False),
     ("returns-to-front", "A screen that covers the dashboard does not stay in front", check_returns_to_front, False),
     ("wakes-display", "A display that Android put to sleep is woken again", check_wakes_display, False),
     ("cold-start", "Starting Home never lights the whole screen", check_cold_start, False),

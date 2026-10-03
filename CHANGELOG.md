@@ -26,6 +26,11 @@
   typed request and what was asked lately. The assistant is off unless an
   owner turns it on; with it on, the sound of each such request leaves the
   Mirror for that computer. See [The assistant](docs/assistant.md).
+- The emulator suite checks the assistant against a stand-in companion on the
+  computer: three new checks cover its settings, a typed request and its
+  answer on the glass, lines and pictures for the companion, a companion that
+  fails or is gone, the rules about what is passed on, and a spoken request
+  that must arrive as the very sound that was played.
 - Add voice commands, recognised on the Mirror itself. Say "Mirror, go to
   sleep", "wake up", "brighter", "dimmer" or "next video" (each has a second
   wording, such as "good night"); the glass shows what it did, and the Mirror
