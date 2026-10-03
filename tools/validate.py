@@ -107,6 +107,9 @@ HOME_LABEL = "Mirror Home"
 # (ForegroundKeeper.COVERED_GRACE_MS) before it takes the display back.
 COVERED_GRACE_SECONDS = 10
 RETURN_SECONDS = 45
+# How long the other HOME app's idle process may stay under a dashboard that is
+# back in front. Mirror Home asks Android to end it three times within 6 seconds.
+OTHER_HOME_ENDS_SECONDS = 20
 WAKE_SECONDS = 30
 # Said of every check that could not run because the emulator had gone.
 EMULATOR_LOST = (
@@ -1461,8 +1464,12 @@ def voice_state(ctx: Context) -> dict:
     return ctx.api.expect("GET", "/api/v1/voice")
 
 
+def process_running(ctx: Context, name: str) -> bool:
+    return any(line.split()[-1:] == [name] for line in ctx.adb.shell("ps").splitlines())
+
+
 def voice_process_running(ctx: Context) -> bool:
-    return any(line.split()[-1:] == [VOICE_PROCESS] for line in ctx.adb.shell("ps").splitlines())
+    return process_running(ctx, VOICE_PROCESS)
 
 
 def model_archive(files: dict[str, bytes]) -> bytes:
@@ -2362,6 +2369,28 @@ def dashboard_returns(ctx: Context, name: str) -> float:
             interval=1,
         )
         seconds = time.monotonic() - covered_at
+        if cover == STOCK_LAUNCHER:
+            # Its process idles under the dashboard now. On a Mirror, whenever
+            # the kernel ended that process for want of memory, Mirror Home's
+            # ended with it, and both started again, over and over.
+            try:
+                wait_for(
+                    "the other HOME app's idle process to be ended",
+                    lambda: not process_running(ctx, cover),
+                    timeout=OTHER_HOME_ENDS_SECONDS,
+                    interval=1,
+                )
+            except CheckFailed:
+                raise CheckFailed(
+                    f"Mirror Home left the idle process of {cover} under its dashboard"
+                ) from None
+            ended = ctx.health()
+            require(
+                ended["process"]["runId"] == before["process"]["runId"] and ended["activity"]["showing"],
+                "Ending the other HOME app's process disturbed the dashboard: "
+                f"run {before['process']['runId']} is now run {ended['process']['runId']}, {ended['activity']}",
+            )
+            ctx.note("otherHomeEnds", ended["activity"]["recovery"].get("otherHomeEnds"))
     finally:
         # It does not run on a Mirror, and its task would stay under the dashboard.
         ctx.adb.shell("am", "force-stop", cover, check=False)

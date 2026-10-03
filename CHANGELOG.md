@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Stop a Mirror that is short of memory from restarting its dashboard over and
+  over. After an update the factory launcher's process idles behind the
+  dashboard until the Mirror is next restarted. With voice commands listening
+  a Mirror has little memory left, and whenever the kernel ended that process,
+  Mirror Home's ended with it and Android started both again; the launcher's
+  new process was then the next to go. On one Mirror, eight days after its
+  last restart and two hours after an update, this restarted the dashboard
+  twenty-five times in eighteen minutes. Mirror Home now asks Android to end
+  the launcher's idle process as soon as the dashboard is in front, and once
+  a minute after that, which takes nothing else with it. It does so only on a
+  device without touchscreen or keys where it is the HOME app, and needs the
+  `KILL_BACKGROUND_PROCESSES` permission, which Android grants by itself. The
+  emulator suite checks that the other HOME app's process does not stay under
+  the dashboard. Restarting a Mirror after an update removes the launcher's
+  process as well.
 - Keep accents, signs and other scripts in what the controls send. A new note
   such as "Café at 72°" was stored with replacement characters in place of the
   é and the °, in every release so far: the web server read a posted request

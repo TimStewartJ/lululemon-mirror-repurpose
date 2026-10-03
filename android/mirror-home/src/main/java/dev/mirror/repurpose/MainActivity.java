@@ -328,6 +328,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         activityResumed = true;
         ActivityDiagnostics.resumed();
+        ForegroundKeeper.dashboardResumed(this);
         if (root != null) {
             renderDashboard();
         }

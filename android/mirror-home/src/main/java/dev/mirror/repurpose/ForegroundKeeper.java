@@ -26,6 +26,16 @@ import java.util.List;
  * start the other HOME app, the factory launcher, whose screen then ends up
  * on top. This notices either state and puts the dashboard back.
  *
+ * <p>Once the dashboard is back, that launcher's process is still there,
+ * idle, with its screen underneath. On a Mirror that is a trap. When memory
+ * runs short the kernel ends idle processes, and every time it ended that
+ * one, Mirror Home's process ended in the same instant and Android started
+ * both again: the launcher's new process was then the next to go. One night
+ * this restarted the dashboard twenty-five times in eighteen minutes. When
+ * Android itself is asked to end the launcher's process, nothing else goes
+ * with it. So Mirror Home asks, as soon as the dashboard is in front and
+ * now and then for as long as it stays there.
+ *
  * <p>It acts only where nobody could do so by hand: Mirror Home is the HOME
  * app, the device has no input devices, and no computer is using its USB
  * port. A phone's owner, or someone working over ADB, is left alone.
@@ -36,6 +46,14 @@ final class ForegroundKeeper {
     static final long COVERED_GRACE_MS = 10_000L;
     static final long WAKE_RETRY_MS = 10_000L;
     static final long RELAUNCH_RETRY_MS = 30_000L;
+    /**
+     * How long after the dashboard came to the front another HOME app's
+     * process is ended, and twice more in case it was not idle yet. Soon:
+     * the kernel has ended one within seven seconds of its start.
+     */
+    static final long[] END_OTHER_HOME_AFTER_MS = {1_500L, 3_500L, 6_000L};
+    /** How often after that, for one that something started behind the dashboard. */
+    static final long END_OTHER_HOME_EVERY_MS = 60_000L;
 
     private static final String TAG = "ForegroundKeeper";
     private static final long WAKE_HOLD_MS = 3_000L;
@@ -45,6 +63,8 @@ final class ForegroundKeeper {
     private static final String USB_STATE = "android.hardware.usb.action.USB_STATE";
     private static final String USB_CONNECTED = "connected";
     private static final String USB_CONFIGURED = "configured";
+    private static final android.os.Handler MAIN =
+            new android.os.Handler(android.os.Looper.getMainLooper());
 
     enum Action { NONE, WAKE, RELAUNCH }
 
@@ -55,8 +75,54 @@ final class ForegroundKeeper {
     private static long lastAt;
     private static String lastReason = "";
     private static String lastFront = "";
+    private static int otherHomeEnds;
+    private static long lastOtherHomeEndElapsed = -1L;
 
     private ForegroundKeeper() {
+    }
+
+    /**
+     * Whether to end the idle processes of the other HOME apps: where nobody
+     * could want to go to one, and only from under a dashboard that is in front.
+     */
+    static boolean mayEndOtherHome(boolean selectedHome, boolean resumed, boolean attended) {
+        return selectedHome && resumed && !attended;
+    }
+
+    /** The dashboard has come to the front. Call on the main thread. */
+    static void dashboardResumed(Context context) {
+        Context application = context.getApplicationContext();
+        for (long delay : END_OTHER_HOME_AFTER_MS) {
+            MAIN.postDelayed(() -> endOtherHome(application), delay);
+        }
+    }
+
+    /**
+     * Asks Android to end the other HOME apps' processes. It ends only idle
+     * ones: a launcher whose screen is in front is not touched.
+     */
+    static synchronized void endOtherHome(Context context) {
+        try {
+            if (!mayEndOtherHome(
+                    HomeSelection.isMirrorHomeSelected(context),
+                    ActivityDiagnostics.isResumed(),
+                    attended(context))) {
+                return;
+            }
+            ActivityManager manager =
+                    (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager == null) {
+                return;
+            }
+            for (String other : HomeSelection.otherHomePackages(context)) {
+                manager.killBackgroundProcesses(other);
+            }
+            otherHomeEnds++;
+            lastOtherHomeEndElapsed = SystemClock.elapsedRealtime();
+        } catch (RuntimeException error) {
+            // A system service that is restarting; the next time will do.
+            Log.w(TAG, "Unable to end the other HOME app's process", error);
+        }
     }
 
     /**
@@ -97,6 +163,11 @@ final class ForegroundKeeper {
      */
     static synchronized void check(Context context) {
         try {
+            if (ActivityDiagnostics.isResumed()
+                    && since(lastOtherHomeEndElapsed, SystemClock.elapsedRealtime())
+                            >= END_OTHER_HOME_EVERY_MS) {
+                endOtherHome(context);
+            }
             restoreIfNeeded(context);
         } catch (RuntimeException error) {
             // A system service that is restarting; the next look will do.
@@ -170,7 +241,8 @@ final class ForegroundKeeper {
                 .put("relaunches", relaunches)
                 .put("lastAt", lastAt == 0L ? JSONObject.NULL : lastAt)
                 .put("lastReason", lastReason)
-                .put("lastFront", lastFront);
+                .put("lastFront", lastFront)
+                .put("otherHomeEnds", otherHomeEnds);
     }
 
     /** What Android's power management would do with an unattended display. */

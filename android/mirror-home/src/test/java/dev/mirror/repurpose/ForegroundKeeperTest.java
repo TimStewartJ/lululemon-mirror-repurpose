@@ -18,6 +18,19 @@ public final class ForegroundKeeperTest {
     }
 
     @Test
+    public void anotherHomeAppsIdleProcessIsEndedOnlyFromUnderTheDashboardOfAnUnattendedMirror() {
+        assertEquals(true, ForegroundKeeper.mayEndOtherHome(true, true, false));
+        // Not while that app's screen may be the one in front.
+        assertEquals(false, ForegroundKeeper.mayEndOtherHome(true, false, false));
+        // Not on a phone, where someone may want to go to their launcher.
+        assertEquals(false, ForegroundKeeper.mayEndOtherHome(true, true, true));
+        // Not where Mirror Home is one app among others.
+        assertEquals(false, ForegroundKeeper.mayEndOtherHome(false, true, false));
+        // Soon enough to come before the kernel, which has taken seven seconds.
+        assertEquals(true, ForegroundKeeper.END_OTHER_HOME_AFTER_MS[0] <= 2_000L);
+    }
+
+    @Test
     public void aDashboardInFrontIsLeftAlone() {
         assertEquals(Action.NONE, onAMirror(true, true, 0, NEVER, NEVER));
     }

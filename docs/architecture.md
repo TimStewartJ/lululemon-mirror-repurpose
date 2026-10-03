@@ -72,6 +72,19 @@ turns the display on and dismisses a lock screen when it opens. The health
 report's `activity.recovery` counts what was done and why; see
 [Control protocol](protocol.md#health).
 
+Under the same conditions Mirror Home also ends the factory launcher's idle
+process, a second and a half after the dashboard comes to the front, twice
+more within six seconds, and then once a minute. After an update that process is left
+behind the dashboard, and on a Mirror it is a trap. A Mirror has little
+memory to spare once voice commands are listening, and when the kernel ended
+the launcher's process for want of it, Mirror Home's process ended in the
+same instant, every time it was seen. Android then started both again, and
+the launcher's new process was the next to go: one night the dashboard
+restarted twenty-five times in eighteen minutes. When Android itself is
+asked to end the launcher's process, nothing else goes with it, and a
+launcher whose screen is in front is not touched. A Mirror that has been
+restarted since its last update has no such process.
+
 ## Device-hosted controls
 
 Mirror Home serves the control application and its API from the same origin on

@@ -2028,8 +2028,15 @@ class Glass:
     def __init__(
         self, clock, *, returns_after=13, wakes_after=3, attended=False, stock_launcher=True,
         root=True, by_keeper=True, duplicates=False, keeps_focus=False, wakefulness=None,
+        ends_other_home=True, goes_with_it=False,
     ):
         self.clock = clock
+        self.ends_other_home = ends_other_home
+        self.goes_with_it = goes_with_it
+        self.run = 7
+        # The other HOME app's process, which outlives its screen.
+        self.other_home = False
+        self.returned_at = 0.0
         self.returns_after = returns_after
         self.wakes_after = wakes_after
         self.attended = attended
@@ -2067,6 +2074,16 @@ class Glass:
         self.front = package
         self.since = self.clock.now
         self.pauses += 1
+        self.other_home = self.other_home or package == self.LAUNCHER
+
+    def other_home_running(self):
+        """Mirror Home asks Android to end it a moment after the dashboard is back."""
+        ended = self.ends_other_home and not self.front and self.clock.now - self.returned_at >= 2
+        if self.other_home and ended:
+            self.other_home = False
+            if self.goes_with_it:
+                self.run += 1
+        return self.other_home
 
     def shell(self, *arguments, **_options):
         self.adb.commands.append(("shell", *arguments))
@@ -2078,8 +2095,14 @@ class Glass:
             self.cover("com.android.settings")
         elif arguments == ("am", "force-stop", validate.PACKAGE):
             self.running = False
-        elif arguments[:2] == ("am", "force-stop") and arguments[2] == self.front:
-            self.front = ""
+        elif arguments[:2] == ("am", "force-stop") and arguments[2] in (self.front, self.LAUNCHER):
+            self.front = "" if arguments[2] == self.front else self.front
+            self.other_home = self.other_home and arguments[2] != self.LAUNCHER
+        elif arguments == ("ps",):
+            lines = ["USER PID PPID VSIZE RSS WCHAN PC NAME", f"u0_a55 2604 1 1 1 0 0 S {validate.PACKAGE}"]
+            if self.other_home_running():
+                lines.append(f"u0_a8 2710 1 1 1 0 0 S {self.LAUNCHER}")
+            return "\n".join(lines)
         elif arguments == ("am", "start", "-n", validate.ACTIVITY):
             # A new process: its dashboard is an ordinary task in front.
             self.running, self.front = True, ""
@@ -2115,6 +2138,7 @@ class Glass:
         if self.awake and self.front and self.returns_after is not None and waited >= self.returns_after:
             self.last_front = f"{self.front}/.Launcher, dev.mirror.repurpose/.MainActivity"
             self.front = ""
+            self.returned_at = self.clock.now
             if self.by_keeper:
                 self.relaunches += 1
                 self.reason = "covered"
@@ -2133,6 +2157,7 @@ class Glass:
         report["activity"].update(
             showing=showing, resumed=showing, creates=self.creates, pauses=self.pauses,
         )
+        report["process"]["runId"] = self.run
         report["activity"]["recovery"].update(
             attended=self.attended, relaunches=self.relaunches, wakeUps=self.wake_ups,
             lastReason=self.reason, lastFront=self.last_front,
@@ -2177,6 +2202,15 @@ class ReturnsToFrontTest(unittest.TestCase):
         glass, _ = self.run_check()
         self.assertEqual(2, len(glass.issued("am", "force-stop", Glass.LAUNCHER)))
         self.assertEqual("", glass.front)
+
+    def test_the_other_home_apps_idle_process_must_not_stay_under_the_dashboard(self):
+        glass, ctx = self.run_check()
+        self.assertFalse(glass.other_home)
+        self.assertIn("otherHomeEnds", ctx.details)
+        with self.assertRaisesRegex(CheckFailed, "left the idle process of com.android.launcher3 under its dashboard"):
+            self.run_check(ends_other_home=False)
+        with self.assertRaisesRegex(CheckFailed, "disturbed the dashboard: run 7 is now run 8"):
+            self.run_check(goes_with_it=True)
 
     def test_an_attended_emulator_skips_before_anything_is_covered(self):
         with self.assertRaisesRegex(CheckSkipped, "leaves another screen alone"):
