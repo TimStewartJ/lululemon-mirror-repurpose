@@ -1718,10 +1718,18 @@ def check_voice_wake_word(ctx: Context) -> None:
 
     try:
         usual = ctx.set_automation(enabled=False)["wakeBrightness"]
-        # A command ends the wait that an earlier name may have begun.
+        # A command ends the wait that an earlier name may have begun. The
+        # sentence is taken after the request has been answered, and a Mirror
+        # that is awake already shows nothing of it: wait for it to be counted.
+        taken = voice_state(ctx)["counts"]["commands"]
         say(ctx, "mirror wake up")
+
+        def counted_since() -> dict | None:
+            counts = voice_state(ctx)["counts"]
+            return counts if counts["commands"] > taken else None
+
+        start = wait_for("the Mirror to take a command", counted_since, timeout=10)
         wait_for("the Mirror to be awake", lambda: not asleep(ctx), timeout=10)
-        start = voice_state(ctx)["counts"]
 
         say(ctx, "go to sleep")
         # Long enough for the glass to have stopped saying that it woke.
