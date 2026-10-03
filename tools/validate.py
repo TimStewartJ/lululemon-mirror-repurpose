@@ -1067,6 +1067,257 @@ def check_notes(ctx: Context) -> None:
         ctx.api.expect("PUT", "/api/v1/dashboard/layout", json.loads(original))
 
 
+BOARD = "/api/v1/board"
+BOARD_ITEMS = BOARD + "/items"
+BOARD_GUIDE = BOARD + "/guide"
+BOARD_SOURCE = "validation"
+# The widget's pages turn every ten seconds; allow each a little longer.
+BOARD_PAGE_SECONDS = 14
+# The dashboard asks for its runtime every five seconds and then for the board.
+BOARD_GLASS_POLL_SECONDS = 7
+# What the glass lists, read out of the page: one entry per row, in order.
+BOARD_ON_GLASS = (
+    "JSON.stringify((function () {"
+    "var board = document.querySelector('.mr-board');"
+    "if (!board) return null;"
+    "var rows = board.querySelectorAll('.mr-board-row');"
+    "var seen = {rows: [], heading: '', dots: board.querySelectorAll('.mr-board-dot').length,"
+    " fading: Boolean(board.querySelector('.mr-fading')),"
+    " inner: board.querySelector('.mr-inner').offsetHeight, box: board.clientHeight};"
+    "var heading = board.querySelector('.mr-board-heading');"
+    "if (heading) seen.heading = heading.textContent;"
+    "for (var index = 0; index < rows.length; index++) {"
+    "var when = rows[index].querySelector('.mr-board-when');"
+    "seen.rows.push({title: rows[index].querySelector('.mr-board-title').textContent,"
+    " when: when ? when.textContent : '', state: rows[index].className});"
+    "}"
+    "return seen;"
+    "}()))"
+)
+
+
+def board_refusal(reply: Reply, status: int, field: str | None, what: str) -> None:
+    """A refusal has to tell a program what to change and where to read more."""
+    require(reply.status == status, f"{what} answered {reply.status}, expected {status}: {describe(reply.body)}")
+    body = reply.body if isinstance(reply.body, dict) else {}
+    require(body.get("error"), f"{what} was refused without saying why: {describe(reply.body)}")
+    require(body.get("guide") == BOARD_GUIDE, f"{what} was refused without pointing at the guide")
+    require(body.get("field") == field, f"{what} blamed the field {body.get('field')!r}, expected {field!r}")
+
+
+def check_board_api(ctx: Context) -> None:
+    """The board as a program meets it: with nothing but the Mirror's address."""
+    guide = ctx.api.expect("GET", BOARD_GUIDE, token=None)
+    require(guide.get("start") and guide.get("item"), f"The board's guide is empty: {describe(guide)}")
+    board_refusal(
+        ctx.api.call("POST", BOARD_ITEMS, {"title": "No token"}, token=None), 401, None,
+        "A post without a token",
+    )
+    # The suite reaches the emulator over loopback, where the glass may read the
+    # summary without a token; everything else is closed even there.
+    board_refusal(ctx.api.call("GET", BOARD_ITEMS, token=None), 401, None, "Listing the board without a token")
+    ctx.api.expect("DELETE", BOARD_ITEMS + "?all=true")
+    version = ctx.status()["boardVersion"]
+    try:
+        # The guide's own examples, sent as they are written.
+        for example in guide["examples"]:
+            reply = ctx.api.call(example["method"], example["path"], example.get("body"))
+            require(
+                reply.status in (200, 201),
+                f"The guide's example {example['does']!r} answered {reply.status}: {describe(reply.body)}",
+            )
+        posted = ctx.api.expect("GET", BOARD_ITEMS)
+        require(
+            posted["total"] >= 3 and {item["source"] for item in posted["items"]} == {"Validation suite"},
+            f"The guide's examples did not leave three items named after this device: {describe(posted)}",
+        )
+        ctx.api.expect("DELETE", BOARD_ITEMS + "?all=true")
+
+        # An id the caller chose: the same request creates, then replaces.
+        todo = {"kind": "todo", "title": "Water the plants", "source": BOARD_SOURCE}
+        first = ctx.api.expect("PUT", BOARD_ITEMS + "/plants", todo, status=201)
+        second = ctx.api.expect("PUT", BOARD_ITEMS + "/plants", todo)
+        require(first["created"] is True and second["created"] is False, "A repeated PUT made a second item")
+        done = ctx.api.expect("PATCH", BOARD_ITEMS + "/plants", {"done": True})["item"]
+        require(
+            done["state"] == "done" and done["title"] == todo["title"] and done["doneAt"],
+            f"PATCH did not mark the item done and keep the rest: {describe(done)}",
+        )
+        reminder = ctx.api.expect(
+            "POST", BOARD_ITEMS,
+            {"kind": "reminder", "title": "Call", "due": "2099-01-01T09:00:00-08:00", "source": BOARD_SOURCE},
+            status=201,
+        )["item"]
+        require(
+            reminder["due"] == 4_070_970_000_000 and reminder["dueIso"] == "2099-01-01T17:00:00Z",
+            f"An ISO 8601 time was not read as given: {describe(reminder)}",
+        )
+
+        board_refusal(ctx.api.call("POST", BOARD_ITEMS, {"text": "Buy milk"}), 400, "text", "An unknown field")
+        board_refusal(
+            ctx.api.call("POST", BOARD_ITEMS, {"kind": "reminder", "title": "No time"}), 400, "due",
+            "A reminder without a time",
+        )
+        board_refusal(
+            ctx.api.call("POST", BOARD_ITEMS, data=b"not json", content_type="application/json"), 400, None,
+            "A body that is not JSON",
+        )
+        # Text as a program sends it: UTF-8 bytes, whatever the Content-Type says or omits.
+        accented = "Caf\u00e9 at 72\u00b0, \u8cb7\u3044\u7269"
+        raw = json.dumps({"title": accented, "source": BOARD_SOURCE}, ensure_ascii=False).encode("utf-8")
+        for method, path, content_type, status in (
+            ("POST", BOARD_ITEMS, "application/json", 201),
+            ("POST", BOARD_ITEMS, "application/x-www-form-urlencoded", 201),
+            ("PUT", BOARD_ITEMS + "/accented", "application/json", 201),
+            ("PATCH", BOARD_ITEMS + "/accented", "application/json", 200),
+        ):
+            reply = ctx.api.call(method, path, data=raw, content_type=content_type)
+            require(
+                reply.status == status and reply.body["item"]["title"] == accented,
+                f"{method} as {content_type} did not keep its text: {reply.status} {describe(reply.body)}",
+            )
+        ctx.api.expect("DELETE", f"{BOARD_ITEMS}?source={BOARD_SOURCE}")
+        board_refusal(ctx.api.call("PATCH", BOARD_ITEMS + "/missing", {"done": True}), 404, "id", "A missing item")
+        board_refusal(ctx.api.call("POST", BOARD_ITEMS + "/plants", todo), 405, None, "POST to an item")
+        board_refusal(ctx.api.call("DELETE", BOARD_ITEMS), 400, None, "Removing items without saying which")
+
+        # Pages of the listing, walked the way the guide says.
+        for number in range(5):
+            ctx.api.expect(
+                "PUT", f"{BOARD_ITEMS}/page-{number}",
+                {"title": f"Page item {number}", "source": BOARD_SOURCE}, status=201,
+            )
+        walked, offset, requests = [], 0, 0
+        while offset is not None:
+            page = ctx.api.expect("GET", f"{BOARD_ITEMS}?source={BOARD_SOURCE}&limit=3&offset={offset}")
+            walked += [item["id"] for item in page["items"]]
+            offset = page["nextOffset"]
+            requests += 1
+            require(requests <= 5, "The listing's pages never end")
+        whole = [item["id"] for item in ctx.api.expect("GET", f"{BOARD_ITEMS}?source={BOARD_SOURCE}")["items"]]
+        require(len(whole) == 5 and walked == whole, f"Walking pages of three gave {walked}, the whole is {whole}")
+
+        # Everything leaves by itself.
+        brief = ctx.api.expect(
+            "POST", BOARD_ITEMS, {"title": "Brief", "ttlSeconds": 2, "source": BOARD_SOURCE}, status=201
+        )
+        before_expiry = brief["version"]
+        wait_for(
+            "an item to leave when its time is up",
+            lambda: ctx.api.call("GET", f"{BOARD_ITEMS}/{brief['item']['id']}").status == 404,
+            timeout=15,
+        )
+        require(
+            ctx.status()["boardVersion"] > before_expiry,
+            "An expired item did not move boardVersion, so the glass would keep showing it",
+        )
+        removed = ctx.api.expect("DELETE", f"{BOARD_ITEMS}?source={BOARD_SOURCE}")
+        require(removed["deleted"] == 5, f"Removing one sender's items removed {removed['deleted']}, expected 5")
+        require(ctx.status()["boardVersion"] > version, "Changing the board did not move boardVersion")
+        ctx.note("boardExamples", len(guide["examples"]))
+    finally:
+        ctx.api.call("DELETE", BOARD_ITEMS + "?all=true")
+    require(ctx.api.expect("GET", BOARD)["counts"]["total"] == 0, "The board was not left empty")
+
+
+def check_board_glass(ctx: Context) -> None:
+    """More items than fit: every one of them has to come round, unclipped."""
+    ctx.require_inspectable()
+    layout = ctx.api.expect("GET", "/api/v1/dashboard/layout")
+    original = json.dumps(layout)
+    for widget in layout["widgets"]:
+        if widget["id"] == "board":
+            widget.update({
+                "visible": True, "opacity": 100, "text": "Validation", "size": "large", "show": "all",
+                "x": 50, "y": 440, "w": 600, "h": 260,
+            })
+    ctx.api.expect("DELETE", BOARD_ITEMS + "?all=true")
+    ctx.api.expect("PUT", "/api/v1/dashboard/layout", layout)
+    now = ctx.api.expect("GET", BOARD)["now"]
+    items = {
+        "soon": {"kind": "reminder", "title": "Leave for the dentist", "due": now + 25 * 60_000},
+        "late": {"kind": "todo", "title": "Take out the bins", "due": now - 5 * 60_000},
+        "plants": {"kind": "todo", "title": "Water the plants", "body": "Not the cactus"},
+        "dinner": {"title": "Dinner is in the oven"},
+        "parcel": {"title": "A parcel is at the door", "body": "Signed for next door"},
+        "milk": {"kind": "todo", "title": "Buy milk", "priority": "low"},
+        "laundry": {"kind": "todo", "title": "Move the laundry", "done": True},
+    }
+    try:
+        for name, item in items.items():
+            ctx.api.expect("PUT", f"{BOARD_ITEMS}/{name}", dict(item, source=BOARD_SOURCE), status=201)
+        # The glass asks every five seconds; let it hold all seven before reading its pages.
+        time.sleep(BOARD_GLASS_POLL_SECONDS)
+        titles = {item["title"] for item in items.values()}
+        with ctx.page() as page:
+            def glass():
+                seen = json.loads(page.evaluate(BOARD_ON_GLASS))
+                return seen if seen and seen["rows"] and not seen["fading"] else None
+
+            first = wait_for(
+                "the board to list the items a page at a time",
+                lambda: (lambda seen: seen if seen and seen["dots"] >= 2 else None)(glass()),
+                timeout=40,
+            )
+            require(first["heading"] == "Validation", f"The board's heading reads {first['heading']!r}")
+            # Let the list finish fading in, so the picture shows what a person sees.
+            time.sleep(1)
+            ctx.screenshot("board")
+            shown: dict[str, dict] = {}
+            pages = []
+
+            def all_shown():
+                seen = glass()
+                if seen:
+                    require(
+                        seen["inner"] <= seen["box"] + 1,
+                        f"A page of the board is taller than its widget and would be cut off: {seen}",
+                    )
+                    page_titles = [row["title"] for row in seen["rows"]]
+                    if page_titles not in pages:
+                        pages.append(page_titles)
+                    shown.update({row["title"]: row for row in seen["rows"]})
+                return titles.issubset(shown)
+
+            wait_for(
+                "every item to come round as the pages turn", all_shown,
+                timeout=first["dots"] * BOARD_PAGE_SECONDS + 10, interval=1,
+            )
+            require(
+                len(pages) == first["dots"],
+                f"The board shows {first['dots']} page dots but turned through {len(pages)} pages: {pages}",
+            )
+            listed = [item["title"] for item in ctx.api.expect("GET", BOARD)["items"]]
+            require(
+                [title for page_titles in sorted(pages, key=lambda rows: listed.index(rows[0]))
+                 for title in page_titles] == listed,
+                f"The pages {pages} are not the API's order {listed}",
+            )
+            require(
+                re.fullmatch(r"In 2[0-5] min", shown[items["soon"]["title"]]["when"]),
+                f"A reminder 25 minutes away reads {shown[items['soon']['title']]['when']!r}",
+            )
+            require("mr-board-soon" in shown[items["soon"]["title"]]["state"], "A reminder due soon is not marked so")
+            require(
+                "mr-board-overdue" in shown[items["late"]["title"]]["state"]
+                and re.fullmatch(r"\d+ min ago", shown[items["late"]["title"]]["when"]),
+                f"An overdue to-do reads {shown[items['late']['title']]}",
+            )
+            require("mr-board-done" in shown[items["laundry"]["title"]]["state"], "A done to-do is not struck through")
+            require("mr-board-low" in shown[items["milk"]["title"]]["state"], "A low priority item is not drawn fainter")
+            ctx.note("boardPages", len(pages))
+
+            ctx.api.expect("DELETE", f"{BOARD_ITEMS}?source={BOARD_SOURCE}")
+            wait_for(
+                "an empty board to leave the glass",
+                lambda: page.evaluate("document.querySelector('.mr-board') === null") is True,
+                timeout=30,
+            )
+    finally:
+        ctx.api.call("DELETE", BOARD_ITEMS + "?all=true")
+        ctx.api.expect("PUT", "/api/v1/dashboard/layout", json.loads(original))
+
+
 def check_offline_fallback(ctx: Context) -> None:
     ctx.api.expect("PUT", "/api/v1/dashboard", {"url": UNREACHABLE_PAGE})
     try:
@@ -1975,6 +2226,8 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("pairing-lockout", "Five wrong codes lock pairing; an owner's new code clears it", check_pairing_lockout, False),
     ("pairing-widget", "The Pairing code widget opens pairing while it is on the glass", check_pairing_widget, False),
     ("notes", "A note posted from the controls appears on the glass", check_notes, False),
+    ("board-api", "A program with only the address can learn the board, post to it and clear it", check_board_api, False),
+    ("board-glass", "A board with more than fits turns its pages until everything was shown", check_board_glass, False),
     ("offline-fallback", "An unreachable web page falls back to the offline clock", check_offline_fallback, False),
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),
@@ -2774,6 +3027,43 @@ def exercise_notes(ctx: MirrorContext) -> None:
     require(len(remaining) == len(notes["notes"]), "The number of notes is not what it was")
 
 
+def exercise_board(ctx: MirrorContext) -> None:
+    require_health_report(ctx)
+    if "boardVersion" not in ctx.api.expect("GET", "/api/v1/status"):
+        raise CheckSkipped("this Mirror Home has no board; it came after 2.2.0")
+    before = ctx.api.expect("GET", BOARD)
+    version = before["version"]
+    path = f"{BOARD_ITEMS}/validation-{int(time.time())}"
+    # Two minutes to live, so that an exercise that is cut short still leaves nothing behind.
+    item = {"kind": "todo", "title": EXERCISE_NOTE, "ttlSeconds": 120, "source": EXERCISE_CLIENT}
+    created = ctx.api.call("PUT", path, item)
+    if created.status == 409:
+        raise CheckSkipped("the board already holds as many items as it can")
+    require(created.status == 201, f"Posting to the board answered {created.status}: {describe(created.body)}")
+    try:
+        require(
+            ctx.api.expect("GET", "/api/v1/status")["boardVersion"] != version,
+            "Posting to the board did not change boardVersion, so the glass would not show it",
+        )
+        done = ctx.api.expect("PATCH", path, {"done": True})["item"]
+        require(done["state"] == "done", f"Marking the item done left it {done['state']}")
+        listed = ctx.api.expect("GET", BOARD)["items"]
+        require(
+            any(entry["id"] == done["id"] and entry["title"] == EXERCISE_NOTE for entry in listed),
+            "The posted item is not among those the glass lists",
+        )
+    finally:
+        ctx.api.expect("DELETE", path)
+    require(ctx.api.call("GET", path).status == 404, "The removed item can still be read")
+    after = ctx.api.expect("GET", BOARD)
+    require(
+        after["counts"]["total"] == before["counts"]["total"],
+        "The number of items on the board is not what it was",
+    )
+    ctx.note("boardOnGlass", bool(before["glass"]["showsBoard"]))
+    ctx.note("boardItems", after["counts"]["total"])
+
+
 def exercise_display(ctx: MirrorContext) -> None:
     require_health_report(ctx)
 
@@ -2938,6 +3228,7 @@ def exercise_health_after(ctx: MirrorContext) -> None:
 EXERCISE_CHECKS = [
     ("pairing", "Pairing is closed until a paired device asks for a code, which works once", exercise_pairing, False),
     ("notes", "A note can be posted, read back and deleted", exercise_notes, False),
+    ("board", "A program's item can be posted to the board, marked done and removed", exercise_board, False),
     ("display", "The display sleeps and wakes, brightness is set and read back, the video resumes", exercise_display, False),
     ("offline-fallback", "A page that cannot load gives way to the offline clock, and the dashboard returns", exercise_offline_fallback, False),
     ("weather", "The weather refreshes from the network", exercise_weather, False),

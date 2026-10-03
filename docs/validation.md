@@ -82,7 +82,7 @@ left out fails here and not on a Mirror.
 | `--quick` | Skip the check that reboots the emulator. |
 | `--only NAMES` | Run only these checks, comma-separated. `install` and `first-pairing` always run, because the others need the pairing they make. |
 | `--skip-build` | Install the debug APK that is already built. |
-| `--apk PATH` | Install this APK instead. It may be a release build: `clock-switch`, `pairing-widget` and `notes` are then skipped, because only debug builds let their page be read, and the other checks judge the screen and the API. The two voice checks that speak to the Mirror are skipped as well; see [How the suite speaks](#how-the-suite-speaks). |
+| `--apk PATH` | Install this APK instead. It may be a release build: `clock-switch`, `pairing-widget`, `notes` and `board-glass` are then skipped, because only debug builds let their page be read, and the other checks judge the screen and the API. The two voice checks that speak to the Mirror are skipped as well; see [How the suite speaks](#how-the-suite-speaks). |
 | `--voice-model PATH` | Use this speech model archive for the voice checks, and fail if it is missing. By default the one in `build/voice/` is used if it is there. |
 | `--window` | Show the emulator's screen while it runs. |
 | `--keep-running` | Leave the emulator running afterwards, to look around. |
@@ -113,6 +113,8 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `pairing-lockout` | Five wrong codes lock pairing, even for the correct code, with a `Retry-After`; an owner's new code clears the lock. |
 | `pairing-widget` | The Pairing code widget shows the current code and opens pairing only while it is on the glass. |
 | `notes` | A note posted through the API appears on the glass and leaves it when deleted. |
+| `board-api` | Starting with nothing but the address, as a program would: the board's guide is served without a credential and each example in it works as written. A chosen id creates and then replaces, `PATCH` marks an item done, an ISO 8601 time is read as given, accented and non-Latin text survives whatever `Content-Type` it was sent with, every refusal names the field and points at the guide, pages of a listing add up to the whole, and an item leaves when its time is up, which the glass is told of. |
+| `board-glass` | Seven items go on a Board widget too small for them. The glass lists them a page at a time, in the API's order, and turns pages until each item was shown; no page is taller than the widget. A reminder counts down, an overdue to-do says how long ago, a done item is struck through, and an emptied board leaves the glass. |
 | `offline-fallback` | An unreachable web dashboard falls back to the offline clock, and clearing the address brings the built-in dashboard back. |
 | `control-page` | The control page, everything it references and the dashboard's files are served, with a content security policy and no framing; the bundled zone table is not served. |
 | `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, a 128 MB app heap, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. |
@@ -343,6 +345,7 @@ once, and the offline clock replace the dashboard for a few seconds.
 |---|---|
 | `pairing` | A guess is refused unread while no code is on display. A code requested as a paired device pairs one temporary device, once; that device is then revoked and its credential stops working. |
 | `notes` | A note is posted, listed and announced to the glass, then deleted. |
+| `board` | A to-do is posted to the [board](board.md) under a name of its own, with two minutes to live in case the exercise is cut short. It is announced to the glass, marked done, listed and removed. People near a Mirror that shows the board see it for a moment. Skipped on a Mirror Home that has no board, and when the board is full. |
 | `display` | The display is put to sleep, and the background video stops once it is dark. It is woken, the Mirror's own services report the wake brightness, a different brightness is set and read back, and the video plays again without dropping frames. The sleep schedule is then saved again as it was. |
 | `offline-fallback` | The dashboard is pointed at a page that cannot load, the offline clock takes its place, and the original dashboard is restored and loads. |
 | `weather` | The weather is refreshed from the network. Skipped when weather is off. |

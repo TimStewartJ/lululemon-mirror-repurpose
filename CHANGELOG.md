@@ -94,7 +94,9 @@
   points there. The new Board widget lists the items, overdue and soon-due
   first with a countdown, and turns pages when they do not fit. The controls
   list what was posted, with who posted it, and can mark items done, remove
-  them or clear the board. See [The board](docs/board.md).
+  them or clear the board. The emulator suite gains `board-api` and
+  `board-glass`, and the live exercise gains `board`. See
+  [The board](docs/board.md).
 - A saved layout that already holds 40 widgets stays readable when an update
   adds a widget type, instead of falling back to the default layout.
 

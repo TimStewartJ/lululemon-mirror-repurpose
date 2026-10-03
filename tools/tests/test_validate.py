@@ -2437,6 +2437,8 @@ class LiveMirror(FakeApi):
         self.window = None
         self.notes = []
         self.notes_version = 4
+        self.board = {}
+        self.board_version = 9
         self.settings = dict(self.SETTINGS)
         self.sleeping = False
         self.manual = False
@@ -2460,6 +2462,8 @@ class LiveMirror(FakeApi):
             self.notes = [note for note in self.notes if note["id"] != path.rsplit("/", 1)[1]]
             self.notes_version += 1
             return Reply(200, {}, {})
+        if handler is None and path.startswith("/api/v1/board/items/"):
+            return self.board_item(method, path.rsplit("/", 1)[1], body or {})
         if handler is None:
             raise AssertionError(f"Unexpected {method} {path}")
         reply = handler(body or {})
@@ -2492,7 +2496,9 @@ class LiveMirror(FakeApi):
     def get_status(self, _body):
         if self.playing and not self.sleeping:
             self.frames += 45
+        board = {} if "no-board" in self.faults else {"boardVersion": self.board_version}
         return {
+            **board,
             "appVersion": "2.2.0", "notesVersion": self.notes_version,
             "brightness": 0 if self.sleeping else self.brightness,
             "media": {"state": self.media},
@@ -2511,6 +2517,27 @@ class LiveMirror(FakeApi):
         if "notes-version-stuck" not in self.faults:
             self.notes_version += 1
         return Reply(201, {"note": note}, {})
+
+    def get_board(self, _body):
+        return {
+            "version": self.board_version, "items": list(self.board.values()),
+            "counts": {"total": len(self.board)}, "glass": {"showsBoard": False},
+        }
+
+    def board_item(self, method, name, body):
+        if method == "PUT":
+            if "board-full" in self.faults:
+                return Reply(409, {"error": "The board holds at most 100 items"}, {})
+            self.board[name] = {"id": name, "title": body["title"], "state": "open"}
+        elif name not in self.board:
+            return Reply(404, {"error": "The board has no such item"}, {})
+        elif method == "PATCH":
+            self.board[name]["state"] = "open" if "board-done-ignored" in self.faults else "done"
+        elif method == "DELETE" and "board-delete-ignored" not in self.faults:
+            del self.board[name]
+        if method != "GET" and "board-version-stuck" not in self.faults:
+            self.board_version += 1
+        return Reply(201 if method == "PUT" else 200, {"item": self.board.get(name)}, {})
 
     def get_automation(self, _body):
         return dict(self.settings, sleeping=self.sleeping, manualOverride=self.manual, sleepReason="none")
@@ -2586,9 +2613,10 @@ class ExerciseTest(unittest.TestCase):
         ctx.health = None
         with contextlib.redirect_stdout(io.StringIO()):
             results = validate.run_checks(validate.MIRROR_CHECKS[2:3] + validate.EXERCISE_CHECKS, ctx)
-        self.assertEqual(["pass"] * 7, [result.status for result in results], [r.message for r in results])
+        self.assertEqual(["pass"] * 8, [result.status for result in results], [r.message for r in results])
         self.assertEqual({"owner-id": "owner"}, mirror.credentials)
         self.assertEqual([], mirror.notes)
+        self.assertEqual({}, mirror.board)
         self.assertEqual(LiveMirror.SETTINGS, mirror.settings)
         self.assertEqual((False, 190, ""), (mirror.manual, mirror.brightness, mirror.url))
 
@@ -2631,6 +2659,48 @@ class ExerciseTest(unittest.TestCase):
         with self.assertRaisesRegex(CheckSkipped, "as many notes as it can"):
             validate.exercise_notes(self.context(mirror))
         self.assertEqual(50, len(mirror.notes))
+
+    def test_the_board_item_says_who_posted_it_and_would_clear_itself(self):
+        mirror = LiveMirror()
+        ctx = self.context(mirror)
+        validate.exercise_board(ctx)
+        (path, posted), = [(call[1], call[2]) for call in mirror.calls if call[0] == "PUT"]
+        self.assertRegex(path, r"^/api/v1/board/items/validation-\d+$")
+        self.assertEqual(
+            {"kind": "todo", "title": "Validation note", "ttlSeconds": 120, "source": "Validation (temporary)"},
+            posted,
+        )
+        self.assertEqual({}, mirror.board)
+        self.assertEqual({"boardOnGlass": False, "boardItems": 0}, ctx.details)
+
+    def test_a_mirror_home_from_before_the_board_is_skipped(self):
+        mirror = LiveMirror("no-board")
+        with self.assertRaisesRegex(CheckSkipped, "has no board"):
+            validate.exercise_board(self.context(mirror))
+        self.assertEqual([("GET", "/api/v1/status", None)], mirror.calls)
+
+    def test_a_full_board_is_left_alone(self):
+        mirror = LiveMirror("board-full")
+        with self.assertRaisesRegex(CheckSkipped, "as many items as it can"):
+            validate.exercise_board(self.context(mirror))
+        self.assertEqual({}, mirror.board)
+
+    def test_a_board_change_the_glass_would_not_hear_of_fails(self):
+        mirror = LiveMirror("board-version-stuck")
+        with self.assertRaisesRegex(CheckFailed, "did not change boardVersion"):
+            validate.exercise_board(self.context(mirror))
+        self.assertEqual({}, mirror.board)
+
+    def test_an_item_that_does_not_become_done_fails(self):
+        mirror = LiveMirror("board-done-ignored")
+        with self.assertRaisesRegex(CheckFailed, "Marking the item done left it open"):
+            validate.exercise_board(self.context(mirror))
+        self.assertEqual({}, mirror.board)
+
+    def test_an_item_that_is_not_removed_fails(self):
+        mirror = LiveMirror("board-delete-ignored")
+        with self.assertRaisesRegex(CheckFailed, "The removed item can still be read"):
+            validate.exercise_board(self.context(mirror))
 
     def test_the_display_is_left_alone_while_something_plays(self):
         mirror = LiveMirror()

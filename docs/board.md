@@ -285,3 +285,7 @@ they are, when they are due, who sent them and when they should go.
   person marks things done in the phone controls.
 - There is one board. A widget can list one kind of item, but items cannot
   be grouped into named lists.
+
+`python tools\validate.py emulator` checks the board on Android 6 with the
+checks `board-api` and `board-glass`, and `python tools\validate.py mirror
+--exercise` tries it on a Mirror; see [Validation](validation.md).
