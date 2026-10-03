@@ -64,6 +64,8 @@ public final class MainActivity extends Activity {
     private static final String BUILT_IN_DASHBOARD_URL =
             "http://127.0.0.1:8787/dashboard/custom.html";
     private static final int TEXT_COLOR = Color.rgb(245, 242, 236);
+    /** What was understood, before the answer: the same white, further back. */
+    private static final int CAPTION_HEARD_COLOR = Color.argb(190, 245, 242, 236);
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Handler dashboardHandler = new Handler(Looper.getMainLooper());
@@ -134,14 +136,18 @@ public final class MainActivity extends Activity {
             } else if (VoiceManager.ACTION_VOICE_EVENT.equals(intent.getAction())) {
                 showVoiceEvent(
                         intent.getStringExtra(VoiceManager.EXTRA_KIND),
-                        intent.getStringExtra(VoiceManager.EXTRA_CAPTION));
+                        intent.getStringExtra(VoiceManager.EXTRA_CAPTION),
+                        intent.getLongExtra(AssistantManager.EXTRA_MILLIS, 0L));
             }
         }
     };
     private final Handler voiceHandler = new Handler(Looper.getMainLooper());
+    private final ScreenCapture.Source screenSource = this::drawGlass;
+    private ValueAnimator captionPulse;
     private final Runnable hideVoiceCaption = new Runnable() {
         @Override
         public void run() {
+            stopCaptionPulse();
             voiceCaption.animate()
                     .alpha(0f)
                     .setDuration(400L)
@@ -271,6 +277,10 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         captionLayout.bottomMargin = dp(96);
+        // An answer may run to three lines; a command's caption is a word or two.
+        voiceCaption.setMaxWidth(getResources().getDisplayMetrics().widthPixels * 84 / 100);
+        voiceCaption.setMaxLines(4);
+        voiceCaption.setEllipsize(android.text.TextUtils.TruncateAt.END);
         root.addView(voiceCaption, captionLayout);
 
         sleepOverlay = new View(this);
@@ -296,6 +306,7 @@ public final class MainActivity extends Activity {
             registerReceiver(stateReceiver, filter);
         }
         startService(new Intent(this, ControlServerService.class));
+        ScreenCapture.attach(screenSource);
 
         renderDashboard();
         updateMediaVisibility();
@@ -369,7 +380,9 @@ public final class MainActivity extends Activity {
         statusHandler.removeCallbacks(statusRefresh);
         scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
+        ScreenCapture.detach(screenSource);
         voiceHandler.removeCallbacks(hideVoiceCaption);
+        stopCaptionPulse();
         voiceCaption.animate().cancel();
         ambientCurtain.animate().cancel();
         cancelDisplayFade();
@@ -770,29 +783,124 @@ public final class MainActivity extends Activity {
         updateAmbientVideoState();
     }
 
-    /** Shows what was heard: that the Mirror listens, what it did, or that it did not follow. */
-    private void showVoiceEvent(String kind, String caption) {
+    /**
+     * Shows what was heard: that the Mirror listens, what it did, that it
+     * did not follow; and what its assistant is doing and answers.
+     *
+     * <p>A caption that breathes means work is going on: three dots while
+     * the request travels, then the words as they were understood. An
+     * answer stands still, in the full white of the glass.
+     */
+    private void showVoiceEvent(String kind, String caption, long millis) {
         if (voiceCaption == null || kind == null) {
             return;
         }
-        String text;
-        long showFor;
-        if (VoiceManager.KIND_LISTENING.equals(kind)) {
+        String text = caption == null ? "" : caption;
+        long showFor = millis > 0 ? millis : VOICE_CAPTION_MS;
+        boolean working = false;
+        int color = TEXT_COLOR;
+        if (AssistantManager.KIND_CLEAR.equals(kind)) {
+            voiceHandler.removeCallbacks(hideVoiceCaption);
+            hideVoiceCaption.run();
+            return;
+        } else if (VoiceManager.KIND_LISTENING.equals(kind)) {
             text = "Listening";
             showFor = VoiceInterpreter.WINDOW_MS;
         } else if (VoiceManager.KIND_NOT_UNDERSTOOD.equals(kind)) {
             text = "Didn\u2019t catch that";
             showFor = VoiceInterpreter.WINDOW_MS;
-        } else {
-            text = caption == null ? "" : caption;
-            showFor = VOICE_CAPTION_MS;
+        } else if (AssistantManager.KIND_THINKING.equals(kind)) {
+            text = "\u2022  \u2022  \u2022";
+            working = true;
+        } else if (AssistantManager.KIND_HEARD.equals(kind)) {
+            text = "\u201c" + text + "\u201d";
+            color = CAPTION_HEARD_COLOR;
+            working = true;
         }
         voiceHandler.removeCallbacks(hideVoiceCaption);
+        stopCaptionPulse();
         voiceCaption.animate().cancel();
         voiceCaption.setText(text);
+        voiceCaption.setTextColor(color);
+        // Large for a word or two, smaller for a sentence that has to fit.
+        voiceCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, text.length() <= 32 ? 32 : 26);
         voiceCaption.setVisibility(View.VISIBLE);
-        voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
+        if (working) {
+            startCaptionPulse();
+        } else {
+            voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
+        }
         voiceHandler.postDelayed(hideVoiceCaption, showFor);
+    }
+
+    private void startCaptionPulse() {
+        captionPulse = ValueAnimator.ofFloat(Math.max(0.35f, voiceCaption.getAlpha()), 1f, 0.35f);
+        captionPulse.setDuration(1_600L);
+        captionPulse.setRepeatCount(ValueAnimator.INFINITE);
+        captionPulse.setRepeatMode(ValueAnimator.REVERSE);
+        captionPulse.addUpdateListener(
+                animation -> voiceCaption.setAlpha((float) animation.getAnimatedValue()));
+        captionPulse.start();
+    }
+
+    private void stopCaptionPulse() {
+        if (captionPulse != null) {
+            captionPulse.cancel();
+            captionPulse = null;
+        }
+    }
+
+    /**
+     * Draws what the glass shows, for {@link ScreenCapture}: the widgets and
+     * captions as they are, over the background film's poster, since the
+     * film's own layer cannot be drawn.
+     *
+     * @return the picture, or null while the display is dark or the dashboard is not in front
+     */
+    private android.graphics.Bitmap drawGlass(int width) {
+        if (root == null || !activityResumed || automation.isSleeping()
+                || root.getWidth() == 0 || root.getHeight() == 0) {
+            return null;
+        }
+        float scale = width / (float) root.getWidth();
+        int height = Math.round(root.getHeight() * scale);
+        android.graphics.Bitmap views = android.graphics.Bitmap.createBitmap(
+                width, height, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(views);
+        canvas.scale(scale, scale);
+        // The video's surface draws itself as a hole, which leaves the poster to show through.
+        root.draw(canvas);
+        android.graphics.Bitmap glass = android.graphics.Bitmap.createBitmap(
+                width, height, android.graphics.Bitmap.Config.RGB_565);
+        android.graphics.Canvas composed = new android.graphics.Canvas(glass);
+        composed.drawColor(Color.BLACK);
+        File poster = ambientVideoView.getVisibility() == View.VISIBLE && !appliedAmbientId.isEmpty()
+                ? backgroundVideos.poster(appliedAmbientId)
+                : null;
+        android.graphics.Bitmap still = poster == null
+                ? null
+                : android.graphics.BitmapFactory.decodeFile(poster.getAbsolutePath());
+        if (still != null) {
+            boolean contain = "contain".equals(ambientBackgroundFit);
+            float fit = contain
+                    ? Math.min(width / (float) still.getWidth(), height / (float) still.getHeight())
+                    : Math.max(width / (float) still.getWidth(), height / (float) still.getHeight());
+            float drawnWidth = still.getWidth() * fit;
+            float drawnHeight = still.getHeight() * fit;
+            composed.drawBitmap(
+                    still,
+                    null,
+                    new android.graphics.RectF(
+                            (width - drawnWidth) / 2f,
+                            (height - drawnHeight) / 2f,
+                            (width + drawnWidth) / 2f,
+                            (height + drawnHeight) / 2f),
+                    new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG));
+            still.recycle();
+        }
+        composed.drawBitmap(views, 0f, 0f, null);
+        views.recycle();
+        return glass;
     }
 
     /** Re-arms the boundary timer so a newly saved schedule is timed precisely. */

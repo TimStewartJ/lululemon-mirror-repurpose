@@ -39,10 +39,17 @@ public final class VoiceService extends Service {
     static final int MSG_STOP = 2;
     /** To the service: a WAV file to hear in place of the microphone (debug builds). */
     static final int MSG_CLIP = 3;
+    /**
+     * Asks for a request as a WAV file: the sound from {@link #KEY_FROM}, past
+     * {@link #KEY_TO}, to where {@link RequestEnd} finds that whoever spoke
+     * has finished. Answered with {@link #MSG_CUT_DONE} once that is known.
+     */
+    static final int MSG_CUT = 4;
     /** From the service. */
     static final int MSG_STATE = 10;
     static final int MSG_SENTENCE = 11;
     static final int MSG_STATS = 12;
+    static final int MSG_CUT_DONE = 13;
 
     static final String KEY_MODEL = "model";
     static final String KEY_GRAMMAR = "grammar";
@@ -52,6 +59,13 @@ public final class VoiceService extends Service {
     static final String KEY_PID = "pid";
     static final String KEY_LOAD_MS = "loadMs";
     static final String KEY_JSON = "json";
+    /**
+     * Where a sentence lies in the sound, in samples since listening began: from a
+     * little before its first word to the end of its last; -1 if unknown.
+     */
+    static final String KEY_FROM = "from";
+    static final String KEY_TO = "to";
+    static final String KEY_SAMPLES = "samples";
     static final String KEY_LEVEL_DB = "levelDb";
     static final String KEY_PEAK_DB = "peakDb";
     static final String KEY_SILENT = "silent";
@@ -70,6 +84,10 @@ public final class VoiceService extends Service {
     private static final int BUFFER_SECONDS = 10;
     private static final long STATS_INTERVAL_MS = 5_000L;
     private static final double SILENCE_DB = -120.0;
+    /** A request for the assistant is cut out of the last half minute of sound. */
+    static final int RING_SECONDS = 30;
+    /** Sound kept before a sentence's first word, which the recogniser may place late. */
+    private static final int LEAD_SAMPLES = SAMPLE_RATE / 2;
     /** How long the process waits to be wanted again before it ends. */
     private static final long EXIT_DELAY_MS = 2_000L;
 
@@ -148,8 +166,67 @@ public final class VoiceService extends Service {
                     listening.hear(new File(data.getString(KEY_PATH, "")));
                 }
                 break;
+            case MSG_CUT:
+                Cut cut = new Cut(
+                        data.getLong(KEY_FROM, -1),
+                        data.getLong(KEY_TO, -1),
+                        data.getString(KEY_PATH, ""),
+                        message.replyTo);
+                if (listening == null || cut.from < 0 || cut.to < cut.from || cut.path.isEmpty()) {
+                    cut.answer(0, -1);
+                } else {
+                    listening.cut(cut);
+                }
+                break;
             default:
                 break;
+        }
+    }
+
+    /** A request that the dashboard's process waits for as a file. */
+    private static final class Cut {
+        final long from;
+        final long to;
+        final String path;
+        private final Messenger client;
+
+        Cut(long from, long to, String path, Messenger client) {
+            this.from = from;
+            this.to = to;
+            this.path = path;
+            this.client = client;
+        }
+
+        /** Writes the sound to the file and says how much it is, and where it ends. */
+        void write(short[] samples, long end) {
+            int written = 0;
+            if (samples.length > 0) {
+                try (java.io.FileOutputStream output = new java.io.FileOutputStream(path)) {
+                    output.write(SoundRing.wav(samples, SAMPLE_RATE));
+                    written = samples.length;
+                } catch (IOException error) {
+                    Log.w(TAG, "Unable to write what was heard", error);
+                }
+            }
+            answer(written, end);
+        }
+
+        void answer(int samples, long end) {
+            if (client == null) {
+                return;
+            }
+            Bundle data = new Bundle();
+            data.putString(KEY_PATH, path);
+            data.putInt(KEY_SAMPLES, samples);
+            data.putLong(KEY_TO, end);
+            Message done = Message.obtain(null, MSG_CUT_DONE);
+            done.setData(data);
+            try {
+                client.send(done);
+            } catch (RemoteException gone) {
+                // The dashboard's process has ended; nobody waits for the file.
+                new File(path).delete();
+            }
         }
     }
 
@@ -174,8 +251,15 @@ public final class VoiceService extends Service {
         private final String grammar;
         private final Messenger client;
         private final Object clipLock = new Object();
+        /** Kept in memory only; see {@link SoundRing}. */
+        final SoundRing ring = new SoundRing(SAMPLE_RATE * RING_SECONDS);
         private short[] clip;
         private int clipOffset;
+        /** A request that was asked for and that the listening thread has not taken up yet. */
+        private Cut wanted;
+        /** The request whose end is being listened for; the listening thread's own. */
+        private Cut cutting;
+        private RequestEnd ending;
         volatile boolean stopRequested;
 
         Listening(File model, String grammar, Messenger client) {
@@ -183,6 +267,17 @@ public final class VoiceService extends Service {
             this.model = model;
             this.grammar = grammar;
             this.client = client;
+        }
+
+        void cut(Cut cut) {
+            Cut replaced;
+            synchronized (clipLock) {
+                replaced = wanted;
+                wanted = cut;
+            }
+            if (replaced != null) {
+                replaced.answer(0, -1);
+            }
         }
 
         void hear(File wav) {
@@ -227,6 +322,64 @@ public final class VoiceService extends Service {
                 if (recognizer != null) {
                     recognizer.close();
                 }
+                // Nobody is left to hear the end of a request.
+                Cut unanswered;
+                synchronized (clipLock) {
+                    unanswered = wanted;
+                    wanted = null;
+                }
+                if (unanswered != null) {
+                    unanswered.answer(0, -1);
+                }
+                if (cutting != null) {
+                    cutting.answer(0, -1);
+                    cutting = null;
+                }
+            }
+        }
+
+        /**
+         * Looks after a request that is being waited for: takes it up, and
+         * writes it out once whoever spoke has finished.
+         *
+         * @param ended whether the recogniser ended a sentence with this sound
+         * @param wordEnd where that sentence's last word ended; -1 if it named no place
+         * @param lastWordEnd where the last word of any sentence so far ended
+         */
+        private void attend(
+                VoskRecognizer recognizer, short[] chunk, int read, boolean ended, long wordEnd, long lastWordEnd) {
+            Cut asked;
+            synchronized (clipLock) {
+                asked = wanted;
+                wanted = null;
+            }
+            long heard = ring.written();
+            if (asked != null) {
+                if (cutting != null) {
+                    cutting.write(ring.copy(cutting.from, heard), heard);
+                }
+                cutting = asked;
+                // A sentence may have ended since the one that was asked about.
+                long sentenceEnd = Math.min(heard - read, Math.max(asked.to, lastWordEnd));
+                ending = RequestEnd.begin(
+                        asked.from,
+                        sentenceEnd,
+                        ring.copy(asked.from - RequestEnd.ROOM_SAMPLES, asked.from),
+                        ring.copy(asked.from, sentenceEnd),
+                        ring.copy(sentenceEnd, heard - read));
+            }
+            if (cutting == null) {
+                return;
+            }
+            if (wordEnd >= 0) {
+                ending.sentence(wordEnd);
+            }
+            long end = ending.heard(
+                    heard, RequestEnd.level(chunk, 0, read), !ended && recognizer.wordsUnderWay());
+            if (end >= 0) {
+                cutting.write(ring.copy(cutting.from, end), end);
+                cutting = null;
+                ending = null;
             }
         }
 
@@ -261,6 +414,10 @@ public final class VoiceService extends Service {
             short[] chunk = new short[CHUNK_SAMPLES];
             long began = SystemClock.elapsedRealtime();
             long samplesRead = 0;
+            // The ring's count at the first sample of the recogniser in use.
+            long recogniserBegan = ring.written();
+            // Where the last word of the last sentence ended.
+            long lastWordEnd = 0;
             long startDelay = -1;
             long behindMs = 0;
             long periodBegan = began;
@@ -291,11 +448,28 @@ public final class VoiceService extends Service {
                     peak = Math.max(peak, Math.abs(sample));
                 }
                 measured += read;
-                if (recognizer.accept(chunk, read)) {
+                ring.write(chunk, read);
+                boolean ended = recognizer.accept(chunk, read);
+                long wordEnd = -1;
+                if (ended) {
+                    String json = recognizer.result();
                     Bundle sentence = new Bundle();
-                    sentence.putString(KEY_JSON, recognizer.result());
+                    sentence.putString(KEY_JSON, json);
+                    long[] place = place(json, recogniserBegan, ring.written());
+                    if (place[1] >= 0) {
+                        // Not into the sentence before it.
+                        place[0] = Math.min(place[1], Math.max(place[0], lastWordEnd));
+                        wordEnd = place[1];
+                        lastWordEnd = wordEnd;
+                    }
+                    sentence.putLong(KEY_FROM, place[0]);
+                    sentence.putLong(KEY_TO, place[1]);
                     send(MSG_SENTENCE, sentence);
+                    if (recognizer.position() == 0) {
+                        recogniserBegan = ring.written();
+                    }
                 }
+                attend(recognizer, chunk, read, ended, wordEnd, lastWordEnd);
                 if (now - periodBegan >= STATS_INTERVAL_MS) {
                     long cpu = Process.getElapsedCpuTime();
                     Bundle stats = new Bundle();
@@ -350,6 +524,29 @@ public final class VoiceService extends Service {
                 // The dashboard's process has ended; there is nobody to listen for.
                 stopRequested = true;
             }
+        }
+    }
+
+    /**
+     * Where a sentence lies in the sound, from a little before its first word
+     * to the end of its last, in samples since listening began.
+     *
+     * @param json the recogniser's result, whose word times count from its first sample
+     * @param recogniserBegan the count of samples heard when that recogniser began
+     * @param heard the count of samples heard by now
+     * @return first and one past the last sample; -1 for both if the result names no times
+     */
+    static long[] place(String json, long recogniserBegan, long heard) {
+        try {
+            VoiceSentence sentence = VoiceSentence.parse(json);
+            if (sentence == null || sentence.endMs <= sentence.startMs) {
+                return new long[]{-1, -1};
+            }
+            long from = recogniserBegan + sentence.startMs * SAMPLE_RATE / 1000 - LEAD_SAMPLES;
+            long to = Math.min(heard, recogniserBegan + sentence.endMs * SAMPLE_RATE / 1000);
+            return new long[]{Math.max(0, Math.min(from, to)), to};
+        } catch (org.json.JSONException unreadable) {
+            return new long[]{-1, -1};
         }
     }
 

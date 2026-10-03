@@ -103,6 +103,11 @@ public final class AutomationManager implements SensorEventListener {
         return Boolean.TRUE.equals(sleeping);
     }
 
+    /** Why the display is dark: "manual", "schedule" or "inactivity"; "none" while it is awake. */
+    public synchronized String sleepReason() {
+        return sleepReason;
+    }
+
     public synchronized boolean hasAmbientLightSensor() {
         return lightSensor != null;
     }
@@ -387,8 +392,15 @@ public final class AutomationManager implements SensorEventListener {
     }
 
     private synchronized void handleMotionDetected(long elapsedRealtime) {
+        boolean wasEmpty = isSleeping() && "inactivity".equals(sleepReason);
+        long emptySince = lastMotionElapsed;
         lastMotionElapsed = elapsedRealtime;
         evaluate();
+        if (wasEmpty && !isSleeping()) {
+            // Someone has come back: the assistant may have something to say.
+            AssistantManager.getInstance(context)
+                    .presence(Math.max(0L, elapsedRealtime - emptySince) / 1000L);
+        }
     }
 
     private synchronized void handleMotionStateChanged() {

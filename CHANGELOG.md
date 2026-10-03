@@ -8,6 +8,24 @@
   as ASCII unless its Content-Type named a charset, and browsers name none for
   JSON. Every JSON request is now read as UTF-8, and the emulator suite posts
   such a note the way the controls do and reads it back (`note-text`).
+- Add the assistant. With it switched on, what is said after the Mirror's
+  name and is not one of its own commands goes to a companion: a server on a
+  computer of yours, which turns the sound into words, lets a language model
+  work out what is meant, and carries it out through the Mirror's API. "Mirror,
+  remind me to take out the trash at seven", "something calmer in the
+  background" and "make the clock bigger" then work, and the Mirror answers
+  in a line on the glass. While it takes a request down and waits, the glass
+  shows three dots; then the words as they were understood; then the answer.
+  A question from the assistant can be answered without the name. The Mirror
+  decides where a request ends by the room going quiet, not by the
+  recogniser's sentences, which end where they please for words it does not
+  know. Its own five commands stay on the Mirror and work without a network.
+  New for a companion: `POST /api/v1/assistant/say` shows a line on the
+  glass, and `GET /api/v1/screenshot` gives a picture of it. **Settings >
+  Assistant** has the switch, the companion's address and key, a field for a
+  typed request and what was asked lately. The assistant is off unless an
+  owner turns it on; with it on, the sound of each such request leaves the
+  Mirror for that computer. See [The assistant](docs/assistant.md).
 - Add voice commands, recognised on the Mirror itself. Say "Mirror, go to
   sleep", "wake up", "brighter", "dimmer" or "next video" (each has a second
   wording, such as "good night"); the glass shows what it did, and the Mirror

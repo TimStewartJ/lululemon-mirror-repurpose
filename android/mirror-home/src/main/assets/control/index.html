@@ -477,7 +477,7 @@
 
         <h2 class="section-title">Voice</h2>
         <div class="group">
-          <label class="row"><div class="row-main"><span class="row-label">Voice commands</span><span class="row-sub">Recognised on the mirror itself. No sound is stored or sent anywhere.</span></div><input id="voice-enabled" class="switch" type="checkbox" disabled></label>
+          <label class="row"><div class="row-main"><span class="row-label">Voice commands</span><span class="row-sub">The mirror’s own commands are recognised on the mirror itself. No sound of them is stored or sent anywhere.</span></div><input id="voice-enabled" class="switch" type="checkbox" disabled></label>
           <p id="voice-status" class="status inset voice-status" role="status"></p>
           <div class="row"><div class="row-main"><span class="row-label">Speech model</span><span id="voice-model" class="row-sub">—</span></div><button id="voice-model-choose" type="button" class="btn small">Install</button></div>
           <div id="voice-model-progress" class="upload-progress hidden"><span></span></div>
@@ -492,6 +492,26 @@
             <summary><span class="row-label">Heard lately</span><span class="chevron" aria-hidden="true"></span></summary>
             <ul id="voice-heard" class="heard"></ul>
             <p id="voice-heard-summary" class="hint inset"></p>
+          </details>
+        </div>
+
+        <h2 class="section-title">Assistant</h2>
+        <form id="assistant-form" class="group">
+          <label class="row"><div class="row-main"><span class="row-label">Assistant</span><span class="row-sub">What you ask after the mirror’s name, beyond its own commands, goes to a companion on a computer of yours, which works out what to do.</span></div><input id="assistant-enabled" class="switch" type="checkbox" disabled></label>
+          <p id="assistant-status" class="status inset voice-status" role="status"></p>
+          <label class="row"><span class="row-label">Companion</span><input id="assistant-address" class="row-input" maxlength="200" placeholder="http://192.168.1.20:8790" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+          <label class="row"><span class="row-label">Key</span><input id="assistant-key" class="row-input" type="password" maxlength="256" placeholder="Not set" autocomplete="off"></label>
+          <div class="row actions-row"><button id="assistant-save" type="submit" class="btn primary">Save companion</button></div>
+          <p id="assistant-message" class="status inset" role="status"></p>
+          <p class="hint inset">While the assistant is on, the sound of a request leaves the mirror for the companion, which may pass its words on to the service that answers. The key is the one the companion printed when it was set up. The mirror does not show it again; type a new one to replace it.</p>
+        </form>
+        <div class="group">
+          <form id="assistant-ask-form" class="row"><input id="assistant-ask" class="row-input ask-input" maxlength="500" placeholder="Ask in your own words" aria-label="Request for the assistant" autocomplete="off" disabled><button id="assistant-ask-send" type="submit" class="btn small" disabled>Ask</button></form>
+          <p id="assistant-answer" class="status inset" role="status"></p>
+          <details class="disclosure">
+            <summary><span class="row-label">Asked lately</span><span class="chevron" aria-hidden="true"></span></summary>
+            <ul id="assistant-recent" class="heard asked"></ul>
+            <p id="assistant-recent-summary" class="hint inset"></p>
           </details>
         </div>
 

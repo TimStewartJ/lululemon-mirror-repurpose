@@ -9,6 +9,12 @@ Speech is recognised on the Mirror itself, by the open-source
 [Vosk](https://alphacephei.com/vosk/) recogniser. No sound leaves the
 Mirror, none is stored, and nothing listens until you switch voice on.
 
+That holds for the commands on this page. A Mirror can also be asked for
+anything else, which a computer of yours then works out: that is
+[the assistant](assistant.md), a separate switch that is off unless you
+turn it on. With it on, the sound of a request that is not one of these
+commands is sent to that computer.
+
 ## What you can say
 
 | Say "Mirror, ..." | What happens |
@@ -25,7 +31,8 @@ being there, like being seen by the camera.
 You can pause after "Mirror". The glass then shows **Listening**, and a
 command counts for the next six seconds without the name. If the Mirror
 heard its name but not a command it knows, it shows **Didn't catch that**
-and waits another six seconds.
+and waits another six seconds. With [the assistant](assistant.md) switched
+on, it passes what it heard on instead.
 
 The Mirror never speaks. It shows what it did in a line near the bottom of
 the glass: **Sleeping**, **Awake**, **Brighter**, **Next video**.
@@ -159,6 +166,11 @@ restarts:
 Paired devices can read this, and the [health report](validation.md#the-health-report)
 includes it.
 
+The recogniser's process also holds the last half minute of sound in
+memory, overwritten as it goes, and it is never written anywhere while
+[the assistant](assistant.md) is off. With the assistant on, a request to
+it is cut out of that half minute and sent to the companion.
+
 ## When it does not listen
 
 `.\tools\voice.ps1 status` and the controls name one of these:
@@ -184,7 +196,8 @@ be in its vocabulary, so it must be an English model.
 ## For developers
 
 The command list is `VoiceCommands.java`, the rules about the name are
-`VoiceInterpreter.java`, and both have unit tests. The API is described in
+`VoiceInterpreter.java`, and both have unit tests. What becomes of a
+sentence that is no command is in [The assistant](assistant.md#for-developers). The API is described in
 [Control protocol](protocol.md#voice). The
 [emulator suite](validation.md#how-the-suite-speaks) plays recordings to a
 debug build in place of a microphone.

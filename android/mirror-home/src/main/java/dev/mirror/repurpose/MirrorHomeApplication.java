@@ -36,6 +36,7 @@ public final class MirrorHomeApplication extends Application {
         AutomationManager.getInstance(this);
         WeatherProvider.getInstance(this);
         VoiceManager.getInstance(this).start();
+        AssistantManager.getInstance(this).start();
         startService(new Intent(this, ControlServerService.class));
         WatchdogReceiver.schedule(this);
     }

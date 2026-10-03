@@ -67,6 +67,24 @@ final class VoskRecognizer implements Closeable {
         return recognizer.acceptWaveForm(samples, count);
     }
 
+    /**
+     * How many samples the recogniser in use has been given. The times it
+     * reports for words count from its first sample; zero right after
+     * {@link #result()} means that a new one has taken over.
+     */
+    long position() {
+        return samplesHeard;
+    }
+
+    /** Whether the recogniser holds words of a sentence that it has not ended yet. */
+    boolean wordsUnderWay() {
+        try {
+            return !new org.json.JSONObject(recognizer.getPartialResult()).optString("partial", "").isEmpty();
+        } catch (org.json.JSONException unreadable) {
+            return false;
+        }
+    }
+
     /** The sentence that has just ended. To be asked for once, after {@link #accept} said so. */
     String result() throws IOException {
         String result = recognizer.getResult();

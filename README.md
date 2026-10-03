@@ -102,7 +102,9 @@ network when neither a managed SSID nor an active Wi-Fi connection exists,
 supports named revocable clients,
 device-local clock/photo dashboards, custom and Home Assistant URLs, offline
 fallback, timezone-aware sleep/wake schedules, private on-device motion presence
-sensing, voice commands recognised on the Mirror itself, cached local weather,
+sensing, voice commands recognised on the Mirror itself, an optional
+[assistant](docs/assistant.md) that takes any other spoken request to a
+companion server of your own, cached local weather,
 precision dashboard editing, signed LAN OTA
 updates with automatic rollback, content-addressed background videos stored
 outside the APK, a health report that survives restarts, a
@@ -138,6 +140,7 @@ References: [User guide](docs/user-guide.md),
 [The board](docs/board.md),
 [Background videos](docs/background-videos.md),
 [Voice commands](docs/voice.md),
+[The assistant](docs/assistant.md) and its [companion](companion/README.md),
 [LAN OTA updates](docs/ota-updates.md), [Validation](docs/validation.md),
 [Voice lab](docs/voice-lab.md) (the experiment that came before voice commands),
 [Casting roadmap](docs/casting-roadmap.md), and

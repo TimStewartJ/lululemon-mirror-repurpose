@@ -32,6 +32,10 @@
   var noteList = [];
   var voiceReport = null;
   var voiceBusy = false;
+  var assistantReport = null;
+  var assistantBusy = false;
+  var assistantEdited = false;
+  var assistantAsking = false;
   var notesVersion = null;
   var noteLimit = 1000;
   var editingNoteId = '';
@@ -611,6 +615,7 @@
         }
         if (next.automation) renderMotionStatus(next.automation);
         renderVoiceSummary(next.voice);
+        renderAssistantSummary(next.assistant);
         renderHomeStatus();
         renderNowPlaying();
         renderHomePreview();
@@ -1764,6 +1769,108 @@
     });
   }
 
+  /* ---------- Assistant ---------- */
+
+  function assistantStatusText(assistant) {
+    switch (assistant.state) {
+      case 'off':
+        return 'Off. The mirror answers only its own commands.';
+      case 'unconfigured':
+        return 'Waiting for a companion. Enter its address and key.';
+      case 'connecting':
+        return 'Looking for the companion\u2026';
+      case 'connected':
+        return 'Connected' + (assistant.model ? ', answering with ' + assistant.model : '') + '.';
+      case 'trouble':
+        return assistant.detail || 'The companion reports a problem.';
+      case 'unreachable':
+        return (assistant.detail || 'The companion does not answer') + '.';
+      default:
+        return '';
+    }
+  }
+
+  /* The switch and where the assistant stands; the status carries this much every few seconds. */
+  function renderAssistantSummary(assistant) {
+    if (!assistant) return;
+    /* The status knows the state only; the full report also knows why. */
+    if (assistantReport && assistantReport.state === assistant.state) assistant = assistantReport;
+    var toggle = byId('assistant-enabled');
+    if (!assistantBusy) {
+      toggle.disabled = false;
+      toggle.checked = Boolean(assistant.enabled);
+    }
+    var element = byId('assistant-status');
+    element.textContent = '';
+    if (assistant.state === 'connected') {
+      var dot = document.createElement('span');
+      dot.className = 'live-dot online';
+      dot.setAttribute('aria-hidden', 'true');
+      element.appendChild(dot);
+    }
+    element.appendChild(document.createTextNode(assistantStatusText(assistant)));
+    element.classList.toggle('error', assistant.state === 'trouble' || assistant.state === 'unreachable');
+    element.classList.toggle('quiet', assistant.state === 'off');
+    var canAsk = Boolean(assistant.enabled) && assistant.state !== 'unconfigured' && !assistantAsking;
+    byId('assistant-ask').disabled = !canAsk;
+    byId('assistant-ask-send').disabled = !canAsk;
+    byId('assistant-ask').placeholder = assistantAsking ? 'Asking\u2026'
+      : !assistant.enabled ? 'Switch the assistant on first'
+        : assistant.state === 'unconfigured' ? 'Set a companion first'
+          : 'Ask in your own words';
+  }
+
+  function renderAssistant(report) {
+    assistantReport = report;
+    var address = byId('assistant-address');
+    if (document.activeElement !== address && !assistantEdited) address.value = report.address || '';
+    byId('assistant-key').placeholder = report.keySet ? 'Saved' : 'Not set';
+
+    var recent = report.recent || [];
+    var list = byId('assistant-recent');
+    list.textContent = '';
+    recent.slice().reverse().forEach(function (entry) {
+      var item = document.createElement('li');
+      var time = document.createElement('time');
+      time.textContent = new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      var exchange = document.createElement('div');
+      exchange.className = 'exchange';
+      var said = document.createElement('span');
+      said.className = 'said';
+      said.textContent = entry.heard ? '\u201c' + entry.heard + '\u201d'
+        : entry.error ? 'A request' : 'Nothing that could be made out';
+      var reply = document.createElement('span');
+      reply.className = 'reply' + (entry.error ? ' error' : '');
+      reply.textContent = entry.error ? entry.error
+        : entry.ignored ? 'Not meant for the mirror; let pass'
+          : (entry.reply || 'Done, without a word')
+            + (entry.millis ? ' (' + (entry.millis / 1000).toFixed(1) + ' s)' : '');
+      exchange.appendChild(said);
+      exchange.appendChild(reply);
+      item.appendChild(time);
+      item.appendChild(exchange);
+      list.appendChild(item);
+    });
+    var counts = report.counts || {};
+    var summary = 'Nothing has been asked since the mirror last started.';
+    if (counts.requests) {
+      summary = 'Since the mirror last started: ' + counts.requests
+        + (counts.requests === 1 ? ' request' : ' requests');
+      if (counts.ignored) summary += ', ' + counts.ignored + ' let pass';
+      if (counts.failures) summary += ', ' + counts.failures + ' without an answer';
+      summary += '.';
+    }
+    byId('assistant-recent-summary').textContent = summary;
+    renderAssistantSummary(report);
+  }
+
+  function refreshAssistant() {
+    if (!token) return Promise.resolve();
+    return request('/api/v1/assistant').then(renderAssistant).catch(function (error) {
+      setMessage('assistant-message', error.message, true);
+    });
+  }
+
   function refreshAll() {
     return refreshStatus()
       .then(function () {
@@ -1780,6 +1887,7 @@
           refreshBoard(),
           refreshNotes(),
           refreshVoice(),
+          refreshAssistant(),
           refreshHealth()
         ]);
       })
@@ -1811,6 +1919,7 @@
     if (name === 'settings') {
       refreshHealth();
       refreshVoice();
+      refreshAssistant();
     }
   }
 
@@ -3101,6 +3210,74 @@
     xhr.send(file);
   });
 
+  /* ---------- Assistant ---------- */
+
+  byId('assistant-enabled').addEventListener('change', function () {
+    var toggle = byId('assistant-enabled');
+    var wanted = toggle.checked;
+    assistantBusy = true;
+    toggle.disabled = true;
+    setMessage('assistant-message', '');
+    request('/api/v1/assistant', json('PUT', { enabled: wanted })).then(function (report) {
+      assistantBusy = false;
+      renderAssistant(report);
+      /* The mirror asks the companion how it is right away; the answer takes a moment. */
+      if (wanted) window.setTimeout(refreshAssistant, 2500);
+    }).catch(function (error) {
+      assistantBusy = false;
+      toggle.disabled = false;
+      toggle.checked = !wanted;
+      setMessage('assistant-message', error.message, true);
+    });
+  });
+
+  byId('assistant-address').addEventListener('input', function () { assistantEdited = true; });
+
+  byId('assistant-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var body = { address: byId('assistant-address').value.trim() };
+    var key = byId('assistant-key').value.trim();
+    if (key) body.key = key;
+    var button = byId('assistant-save');
+    button.disabled = true;
+    setMessage('assistant-message', '');
+    request('/api/v1/assistant', json('PUT', body)).then(function (report) {
+      button.disabled = false;
+      assistantEdited = false;
+      byId('assistant-key').value = '';
+      renderAssistant(report);
+      toast('Companion saved');
+      window.setTimeout(refreshAssistant, 2500);
+    }).catch(function (error) {
+      button.disabled = false;
+      setMessage('assistant-message', error.message, true);
+    });
+  });
+
+  byId('assistant-ask-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var input = byId('assistant-ask');
+    var text = input.value.trim();
+    if (!text || assistantAsking) return;
+    assistantAsking = true;
+    renderAssistantSummary(assistantReport);
+    setMessage('assistant-answer', 'Asking\u2026');
+    request('/api/v1/assistant/ask', json('POST', { text: text })).then(function (answer) {
+      input.value = '';
+      setMessage('assistant-answer', answer.ignored ? 'The assistant let that pass.'
+        : answer.reply ? '\u201c' + answer.reply + '\u201d'
+          : 'Done, without a word.');
+    }).catch(function (error) {
+      setMessage('assistant-answer', error.message, true);
+    }).then(function () {
+      assistantAsking = false;
+      return refreshAssistant();
+    }).then(function () {
+      renderAssistantSummary(assistantReport);
+      byId('assistant-ask').focus();
+    });
+  });
+
   /* ---------- Boot ---------- */
 
   if (!byId('time-zone').value) {
@@ -3114,7 +3291,10 @@
     if (document.hidden) return;
     refreshStatus().catch(function () {});
     /* What the mirror heard changes while Settings is open. */
-    if (token && byId('settings').classList.contains('active')) refreshVoice();
+    if (token && byId('settings').classList.contains('active')) {
+      refreshVoice();
+      refreshAssistant();
+    }
   }, 10000);
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) refreshStatus().catch(function () {});

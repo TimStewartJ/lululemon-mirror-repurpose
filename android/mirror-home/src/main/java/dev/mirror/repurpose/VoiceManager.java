@@ -52,6 +52,13 @@ public final class VoiceManager {
     /** Measuring another process's memory takes a tenth of a second on a Mirror. */
     private static final long MEMORY_INTERVAL_MS = 30_000L;
     private static final int MAX_RECENT = 20;
+    /** The recogniser's process answers once whoever spoke has finished: within twelve seconds, or not at all. */
+    private static final long CUT_TIMEOUT_MS = 16_000L;
+
+    /** Told how many samples were written to the file; none if the sound is gone. */
+    interface CutListener {
+        void written(int samples);
+    }
 
     private static volatile VoiceManager instance;
 
@@ -67,6 +74,12 @@ public final class VoiceManager {
     }));
     private final ArrayDeque<JSONObject> recent = new ArrayDeque<>();
     private final ArrayDeque<Long> stops = new ArrayDeque<>();
+    private final java.util.HashMap<String, CutListener> cuts = new java.util.HashMap<>();
+    /**
+     * Where the last request for the assistant ended in what the recogniser's
+     * process heard. Its sentences up to there are that request's own words.
+     */
+    private volatile long requestEnd = -1;
     private final Runnable check = new Runnable() {
         @Override
         public void run() {
@@ -113,6 +126,7 @@ public final class VoiceManager {
     private long commands;
     private long notUnderstood;
     private long unsure;
+    private long asked;
     private JSONObject lastCommand;
     private int measuredPid;
     private long measuredAtElapsed;
@@ -256,7 +270,8 @@ public final class VoiceManager {
                 throw new IOException("Voice is not listening");
             }
         }
-        handler.post(() -> heard(new VoiceSentence(VoiceCommands.normalize(text), confidence, 0, 0)));
+        handler.post(() -> heard(
+                new VoiceSentence(VoiceCommands.normalize(text), confidence, 0, 0), -1, -1, text));
     }
 
     /**
@@ -324,7 +339,8 @@ public final class VoiceManager {
                         .put("wakeWords", wakeWords)
                         .put("commands", commands)
                         .put("notUnderstood", notUnderstood)
-                        .put("unsure", unsure))
+                        .put("unsure", unsure)
+                        .put("asked", asked))
                 .put("lastCommand", lastCommand == null ? JSONObject.NULL : lastCommand)
                 .put("recent", new JSONArray(recent))
                 .put("testHooks", BuildConfig.DEBUG);
@@ -467,6 +483,8 @@ public final class VoiceManager {
         synchronized (this) {
             target = service;
             interpreter.reset();
+            // Listening that starts afresh counts its sound from nothing again.
+            requestEnd = -1;
         }
         if (target == null) {
             return;
@@ -542,25 +560,104 @@ public final class VoiceManager {
                 try {
                     VoiceSentence sentence = VoiceSentence.parse(data.getString(VoiceService.KEY_JSON, "{}"));
                     if (sentence != null) {
-                        heard(sentence);
+                        heard(
+                                sentence,
+                                data.getLong(VoiceService.KEY_FROM, -1),
+                                data.getLong(VoiceService.KEY_TO, -1),
+                                null);
                     }
                 } catch (JSONException malformed) {
                     Log.w(TAG, "The recogniser reported something unreadable", malformed);
                 }
+                break;
+            case VoiceService.MSG_CUT_DONE:
+                String written = data.getString(VoiceService.KEY_PATH, "");
+                if (cuts.containsKey(written)) {
+                    requestEnd = Math.max(requestEnd, data.getLong(VoiceService.KEY_TO, -1));
+                }
+                cutDone(written, data.getInt(VoiceService.KEY_SAMPLES, 0));
                 break;
             default:
                 break;
         }
     }
 
-    /** Decides what a sentence means and acts on it. Runs on the main thread. */
-    private void heard(VoiceSentence sentence) {
+    /**
+     * Has the recogniser's process write a request to a file: what it heard
+     * from {@code from}, past {@code to}, until whoever spoke has finished.
+     * The listener is told on the main thread, also when nothing could be
+     * written. Until then, and up to where the request ended, the
+     * recogniser's sentences are taken as the request's own words.
+     */
+    void cut(long from, long to, File file, CutListener listener) {
+        Messenger target;
+        synchronized (this) {
+            target = service;
+        }
+        String path = file.getAbsolutePath();
+        if (target == null) {
+            handler.post(() -> listener.written(0));
+            return;
+        }
+        cuts.put(path, listener);
+        Bundle data = new Bundle();
+        data.putLong(VoiceService.KEY_FROM, from);
+        data.putLong(VoiceService.KEY_TO, to);
+        data.putString(VoiceService.KEY_PATH, path);
+        Message message = Message.obtain(null, VoiceService.MSG_CUT);
+        message.setData(data);
+        message.replyTo = incoming;
+        try {
+            target.send(message);
+        } catch (RemoteException gone) {
+            handler.post(() -> cutDone(path, 0));
+            return;
+        }
+        handler.postDelayed(() -> cutDone(path, 0), CUT_TIMEOUT_MS);
+    }
+
+    /** Runs on the main thread, once per request whichever comes first: the file or the wait's end. */
+    private void cutDone(String path, int samples) {
+        CutListener listener = cuts.remove(path);
+        if (listener != null) {
+            listener.written(samples);
+        }
+    }
+
+    /** The assistant asked a question: what is said next is its answer. */
+    void awaitAnswer() {
+        synchronized (this) {
+            interpreter.awaitAnswer(SystemClock.elapsedRealtime());
+        }
+    }
+
+    /**
+     * Decides what a sentence means and acts on it. Runs on the main thread.
+     *
+     * @param from where the sentence lies in what the recogniser's process heard; -1 if unknown
+     * @param injected the words as a debug build was handed them, or null
+     */
+    private void heard(VoiceSentence sentence, long from, long to, String injected) {
+        if (injected == null && (!cuts.isEmpty() || (to >= 0 && to <= requestEnd))) {
+            // More of a request that is being taken down, or has been.
+            synchronized (this) {
+                sentences++;
+            }
+            return;
+        }
         // Timed by when it arrives: the recogniser's own clock starts afresh with each start.
         long now = SystemClock.elapsedRealtime();
         long began = now - Math.max(0, sentence.endMs - sentence.startMs);
+        AssistantManager assistant = AssistantManager.getInstance(context);
         VoiceInterpreter.Outcome outcome;
         synchronized (this) {
-            outcome = interpreter.heard(sentence.text, sentence.lowestConfidence, began, now);
+            outcome = interpreter.heard(
+                    sentence.text,
+                    sentence.lowestConfidence,
+                    sentence.nameConfidence,
+                    began,
+                    now,
+                    assistant.available());
             sentences++;
         }
         String caption = null;
@@ -596,6 +693,12 @@ public final class VoiceManager {
                 synchronized (this) {
                     unsure++;
                 }
+                break;
+            case ASK:
+                synchronized (this) {
+                    asked++;
+                }
+                assistant.heardRequest(this, from, to, outcome.addressed, injected);
                 break;
             default:
                 break;

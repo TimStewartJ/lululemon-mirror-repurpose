@@ -493,6 +493,11 @@ textarea.note-input { resize: none; overflow-y: auto; min-height: 44px; max-heig
 .heard .outcome { flex: none; color: var(--text-2); font-size: 13px; text-align: right; }
 .heard:empty { display: none; }
 .disclosure .heard:empty + .hint { padding-top: 12px; }
+.ask-input { max-width: none; text-align: left; }
+.asked li { align-items: flex-start; }
+.asked .exchange { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.asked .reply { color: var(--text-2); font-size: 13px; line-height: 1.4; }
+.asked .reply.error { color: var(--danger); }
 .report { margin: 0; padding: 12px 16px 14px; max-height: 320px; overflow: auto; color: var(--text-2); font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .group > .disclosure { border-top: 1px solid var(--line); }
 

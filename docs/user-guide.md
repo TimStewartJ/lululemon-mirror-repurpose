@@ -269,6 +269,25 @@ did, which is where to look if it ever acts on its own. See
 [Voice commands](voice.md) for how it decides, what it costs the Mirror and
 what it keeps.
 
+## The assistant
+
+With an assistant, the Mirror can be asked for more than its five commands:
+"Mirror, remind me to call the dentist at nine", "Mirror, something calmer
+in the background", "Mirror, put the weather under the clock". A companion
+program on a computer of yours works out what is meant and does it, and the
+Mirror answers in a line on the glass. It needs voice commands to be set up
+and a companion to be installed; [The assistant](assistant.md) says how.
+
+**Settings > Assistant** has the switch, the companion's address and key,
+and under the switch where it stands: **Connected**, or what is missing.
+The field below takes a typed request, which is the quickest way to try
+it, and **Asked lately** lists what was asked and answered since the Mirror
+last started.
+
+While the assistant is on, the sound of what you ask it leaves the Mirror
+for that computer. The Mirror's own five commands stay on the Mirror, and
+nothing else that is said in the room is sent.
+
 ## Media
 
 FCast v3 senders discover the Mirror automatically on TCP `46899`. Direct

@@ -66,6 +66,11 @@ GET  /api/v1/voice
 PUT  /api/v1/voice
 PUT  /api/v1/voice/model
 DELETE /api/v1/voice/model
+GET  /api/v1/assistant
+PUT  /api/v1/assistant
+POST /api/v1/assistant/ask
+POST /api/v1/assistant/say
+GET  /api/v1/screenshot[?width=180..1080]
 GET  /api/v1/photos
 GET  /api/v1/photos/{name}
 GET  /api/v1/photos/{name}/thumbnail
@@ -179,7 +184,7 @@ Spoken commands are recognised on the Mirror; see [Voice commands](voice.md).
 | `process` | The recogniser's `pid` and `pssKb`, measured at most every half minute, and `restarts`: how often it stopped by itself since Mirror Home started. |
 | `recogniser` | `modelLoadMs`; `cpuShare`, the share of one core it used over the last five seconds; `behindMs`, how late sound reached it at worst in that time; and `listenedSeconds`. |
 | `microphone` | `levelDb` and `peakDb` of the last five seconds, in dB below full scale, and `silent` when every sample was zero. |
-| `counts` | Since Mirror Home started: `sentences` (stretches of speech the recogniser ended), `wakeWords` (the name alone), `commands`, `notUnderstood`, and `unsure` (commands the recogniser had doubts about, which are not carried out). |
+| `counts` | Since Mirror Home started: `sentences` (stretches of speech the recogniser ended), `wakeWords` (the name alone), `commands`, `notUnderstood`, `unsure` (commands the recogniser had doubts about, which are not carried out), and `asked` (requests passed to the [assistant](#assistant)). |
 | `lastCommand`, `recent` | The last command's `id`, its time `at` and what the glass has `shown`; and up to twenty sentences that were addressed to the Mirror, each with `heard` (in which every word that is not a command's word reads `[unk]`), `confidence`, `outcome` (`command`, `wake`, `not-understood` or `unsure`), `command` and, for a command, what the glass has `shown`. Speech that was not addressed to it is counted and not kept. |
 | `testHooks` | True in a debug build only; see below. |
 
@@ -204,6 +209,39 @@ hears in place of the microphone, and `POST /api/v1/voice/test/sentence`
 takes `{text, confidence}` as if the recogniser had heard it. Both answer
 `202`, or `409` unless voice is listening. A release build answers `404`.
 
+### Assistant
+
+What is said to the Mirror beyond its own commands goes to a companion on
+the home network; see [The assistant](assistant.md), which also describes
+what the Mirror asks of a companion. `GET /api/v1/assistant` reports where
+that stands. Times are epoch milliseconds.
+
+| Field | Contents |
+|---|---|
+| `enabled` | The switch. It is off until an owner turns it on. |
+| `address`, `keySet` | Where the companion is, as `http://host:port`; and whether the Mirror has a key to send it. The key itself is never reported. |
+| `state`, `detail` | `off`, `unconfigured` (switched on, but the address or the key is missing), `connecting`, `connected`, `trouble` (the companion answers and reports that a part of it is not ready) or `unreachable` (no answer, a late one, or a key that is not accepted); and a sentence about it for the controls. |
+| `model` | What the companion says answers its requests. |
+| `busy`, `lastAnswerAt` | Whether a request is waiting for its answer, and when the companion last answered anything. |
+| `counts` | Since Mirror Home started: `requests`, of which `ignored` (the companion took them for talk) and `failures` (no answer). |
+| `recent` | Up to twelve requests: the time `at`, the `source` (`voice` or `controls`), what the companion `heard`, its `reply`, whether it was `ignored`, what the companion `did`, how many `millis` the answer took, and the `error` if there was none. |
+
+`PUT /api/v1/assistant` takes any of `enabled`, `address` and `key`, and
+answers with the same report. An address may be given without `http://`; it
+ends after its port. A key is up to 256 characters without spaces. An empty
+address or key removes it. `400` says what is wrong with either. `status`
+carries `assistant` with `enabled` and `state`.
+
+`POST /api/v1/assistant/ask` takes `{"text": "..."}`, 1 to 500 characters,
+passes it to the companion as a typed request, shows the answer on the
+glass, and answers with what the companion answered. It waits for that, for
+up to 55 seconds. `503` with the reason means that there was no answer, or
+nobody to ask.
+
+`POST /api/v1/assistant/say` and `GET /api/v1/screenshot` are for the
+companion: a line on the glass, and a picture of it. They are described in
+[The assistant](assistant.md#the-companion-asks-the-mirror).
+
 ### Health
 
 `GET /api/v1/health` reports how Mirror Home itself is doing, for a person or
@@ -224,6 +262,7 @@ a monitor that cannot see the glass. Times are epoch milliseconds.
 | `pairing` | `open`, `lockedForSeconds`, `wrongCodes` and the number of paired `clients`. |
 | `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. |
 | `voice` | The whole [voice report](#voice). |
+| `assistant` | The [assistant's report](#assistant) without `recent`: what people asked is not part of a health report. |
 
 `appVersion`, `versionCode`, `debuggable` and `now` complete the report. It
 holds no credential, pairing code or Wi-Fi name; it does name the page the

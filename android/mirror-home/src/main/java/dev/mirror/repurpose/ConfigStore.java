@@ -31,6 +31,9 @@ public final class ConfigStore {
     private static final String KEY_WEATHER_LOCATION_NAME = "weather_location_name";
     private static final String KEY_WEATHER_UNITS = "weather_units";
     private static final String KEY_VOICE_ENABLED = "voice_enabled";
+    private static final String KEY_ASSISTANT_ENABLED = "assistant_enabled";
+    private static final String KEY_ASSISTANT_ADDRESS = "assistant_address";
+    private static final String KEY_ASSISTANT_KEY = "assistant_key";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
        to the built-in dashboard instead of the offline page. */
     private static final String[] RETIRED_DASHBOARD_URLS = {
@@ -263,5 +266,32 @@ public final class ConfigStore {
 
     public void setVoiceEnabled(boolean enabled) {
         preferences.edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply();
+    }
+
+    /** Whether requests are passed on to a companion. Off until its owner turns it on. */
+    public boolean isAssistantEnabled() {
+        return preferences.getBoolean(KEY_ASSISTANT_ENABLED, false);
+    }
+
+    public void setAssistantEnabled(boolean enabled) {
+        preferences.edit().putBoolean(KEY_ASSISTANT_ENABLED, enabled).apply();
+    }
+
+    /** Where the companion is, as {@link AssistantAddress} keeps it; empty for none. */
+    public String getAssistantAddress() {
+        return preferences.getString(KEY_ASSISTANT_ADDRESS, "");
+    }
+
+    public void setAssistantAddress(String address) {
+        preferences.edit().putString(KEY_ASSISTANT_ADDRESS, address).apply();
+    }
+
+    /** The secret the companion asks for with every request; empty for none. */
+    public String getAssistantKey() {
+        return preferences.getString(KEY_ASSISTANT_KEY, "");
+    }
+
+    public void setAssistantKey(String key) {
+        preferences.edit().putString(KEY_ASSISTANT_KEY, key).apply();
     }
 }

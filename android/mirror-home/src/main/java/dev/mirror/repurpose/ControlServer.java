@@ -45,6 +45,7 @@ public final class ControlServer extends NanoHTTPD {
     private final PhotoLibrary photos;
     private final SystemHelperClient systemHelper;
     private final VoiceManager voice;
+    private final AssistantManager assistant;
     private final WeatherProvider weather;
     private final WifiProvisioner wifi;
     private final WifiDirectOnboarding wifiDirect;
@@ -64,6 +65,7 @@ public final class ControlServer extends NanoHTTPD {
         photos = new PhotoLibrary(context);
         systemHelper = SystemHelperClient.getInstance(context);
         voice = VoiceManager.getInstance(context);
+        assistant = AssistantManager.getInstance(context);
         weather = WeatherProvider.getInstance(context);
         wifi = new WifiProvisioner(context);
         wifiDirect = WifiDirectOnboarding.getInstance(context);
@@ -324,6 +326,21 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/voice/test/clip".equals(uri)) {
                 return hearVoiceClip(session);
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/assistant".equals(uri)) {
+                return response(Response.Status.OK, assistant.snapshot());
+            }
+            if (Method.PUT.equals(session.getMethod()) && "/api/v1/assistant".equals(uri)) {
+                return updateAssistant(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/assistant/say".equals(uri)) {
+                return assistantSay(readJson(session));
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/assistant/ask".equals(uri)) {
+                return assistantAsk(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/screenshot".equals(uri)) {
+                return screenshot(session);
+            }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/weather".equals(uri)) {
                 return response(Response.Status.OK, weather.snapshot(true));
             }
@@ -511,6 +528,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("backgroundVideos", backgroundVideos.selectionSnapshot());
         result.put("automation", automation.snapshot());
         result.put("voice", voice.summary());
+        result.put("assistant", assistant.summary());
         result.put("weather", weather.snapshot(false));
         result.put("notesVersion", notes.version());
         result.put("boardVersion", board.version());
@@ -1173,6 +1191,87 @@ public final class ControlServer extends NanoHTTPD {
         }
         voice.setEnabled(body.getBoolean("enabled"));
         return response(Response.Status.OK, voice.snapshot());
+    }
+
+    private Response updateAssistant(JSONObject body) throws JSONException {
+        for (String name : new String[]{"address", "key"}) {
+            if (body.has(name) && !(body.opt(name) instanceof String)) {
+                return error(Response.Status.BAD_REQUEST, name + " must be text");
+            }
+        }
+        if (body.has("enabled") && !(body.opt("enabled") instanceof Boolean)) {
+            return error(Response.Status.BAD_REQUEST, "enabled must be true or false");
+        }
+        try {
+            assistant.configure(
+                    body.has("enabled") ? body.getBoolean("enabled") : null,
+                    body.has("address") ? body.getString("address") : null,
+                    body.has("key") ? body.getString("key") : null);
+        } catch (IllegalArgumentException refused) {
+            return error(Response.Status.BAD_REQUEST, refused.getMessage());
+        }
+        return response(Response.Status.OK, assistant.snapshot());
+    }
+
+    /** A line on the glass from the companion; see docs/assistant.md. */
+    private Response assistantSay(JSONObject body) throws JSONException {
+        Object text = body.opt("text");
+        if (!(text instanceof String)
+                || ((String) text).trim().isEmpty()
+                || ((String) text).length() > AssistantReply.MAX_TEXT
+                || ((String) text).contains("\n")
+                || ((String) text).contains("\r")) {
+            return error(
+                    Response.Status.BAD_REQUEST,
+                    "text must be one line of 1 to " + AssistantReply.MAX_TEXT + " characters");
+        }
+        String kind = body.optString("kind", AssistantManager.KIND_REPLY);
+        if (!AssistantManager.KIND_REPLY.equals(kind)
+                && !AssistantManager.KIND_HEARD.equals(kind)
+                && !AssistantManager.KIND_NOTICE.equals(kind)) {
+            return error(Response.Status.BAD_REQUEST, "kind must be heard, reply or notice");
+        }
+        double seconds = body.optDouble("seconds", 0);
+        if (body.has("seconds") && !(seconds >= 2 && seconds <= 30)) {
+            return error(Response.Status.BAD_REQUEST, "seconds must be between 2 and 30");
+        }
+        boolean shown = assistant.say(((String) text).trim(), kind, Math.round(seconds * 1000));
+        JSONObject result = new JSONObject().put("shown", shown);
+        if (!shown) {
+            result.put("reason", "sleeping");
+        }
+        return response(Response.Status.OK, result);
+    }
+
+    /** A request typed in the controls, passed on to the companion. */
+    private Response assistantAsk(JSONObject body) throws JSONException {
+        Object text = body.opt("text");
+        if (!(text instanceof String)
+                || ((String) text).trim().isEmpty()
+                || ((String) text).length() > 500) {
+            return error(Response.Status.BAD_REQUEST, "text must be 1 to 500 characters");
+        }
+        try {
+            return response(Response.Status.OK, assistant.ask(((String) text).trim()));
+        } catch (IOException unanswered) {
+            return error(Response.Status.SERVICE_UNAVAILABLE, unanswered.getMessage());
+        }
+    }
+
+    private Response screenshot(IHTTPSession session) throws IOException {
+        java.util.List<String> asked = session.getParameters().get("width");
+        byte[] picture = ScreenCapture.jpeg(
+                ScreenCapture.width(asked == null || asked.isEmpty() ? null : asked.get(0)));
+        if (picture == null) {
+            return error(
+                    Response.Status.CONFLICT,
+                    "The glass shows nothing now: the display is dark or the dashboard is not in front");
+        }
+        Response result = newFixedLengthResponse(
+                Response.Status.OK, "image/jpeg", new ByteArrayInputStream(picture), picture.length);
+        result.addHeader("Cache-Control", "no-store");
+        result.addHeader("X-Content-Type-Options", "nosniff");
+        return result;
     }
 
     private Response uploadVoiceModel(IHTTPSession session)
