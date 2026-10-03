@@ -133,16 +133,12 @@ public final class MainActivity extends Activity {
                 requestCameraPermissionIfNeeded();
             } else if (WifiDirectOnboarding.ACTION_STATE_CHANGED.equals(intent.getAction())) {
                 renderDashboard();
-            } else if (VoiceManager.ACTION_VOICE_EVENT.equals(intent.getAction())) {
-                showVoiceEvent(
-                        intent.getStringExtra(VoiceManager.EXTRA_KIND),
-                        intent.getStringExtra(VoiceManager.EXTRA_CAPTION),
-                        intent.getLongExtra(AssistantManager.EXTRA_MILLIS, 0L));
             }
         }
     };
     private final Handler voiceHandler = new Handler(Looper.getMainLooper());
     private final ScreenCapture.Source screenSource = this::drawGlass;
+    private final GlassCaption.Glass captionGlass = this::showVoiceEvent;
     private ValueAnimator captionPulse;
     private final Runnable hideVoiceCaption = new Runnable() {
         @Override
@@ -266,8 +262,9 @@ public final class MainActivity extends Activity {
         voiceCaption.setPadding(dp(28), dp(10), dp(28), dp(12));
         // Black is plain mirror on the glass: it shows nothing itself, and
         // keeps a film or a widget behind the words from tangling with them.
+        // Wholly black, because a clock's large figures show through anything less.
         GradientDrawable captionBacking = new GradientDrawable();
-        captionBacking.setColor(0xD9000000);
+        captionBacking.setColor(Color.BLACK);
         captionBacking.setCornerRadius(dp(36));
         voiceCaption.setBackground(captionBacking);
         voiceCaption.setAlpha(0f);
@@ -299,7 +296,6 @@ public final class MainActivity extends Activity {
         filter.addAction(WifiManager.WIFI_STATE_CHANGED_ACTION);
         filter.addAction(AutomationManager.ACTION_STATE_CHANGED);
         filter.addAction(WifiDirectOnboarding.ACTION_STATE_CHANGED);
-        filter.addAction(VoiceManager.ACTION_VOICE_EVENT);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -307,6 +303,7 @@ public final class MainActivity extends Activity {
         }
         startService(new Intent(this, ControlServerService.class));
         ScreenCapture.attach(screenSource);
+        GlassCaption.attach(captionGlass);
 
         renderDashboard();
         updateMediaVisibility();
@@ -381,6 +378,7 @@ public final class MainActivity extends Activity {
         scheduleHandler.removeCallbacks(scheduleCheck);
         dashboardHandler.removeCallbacks(dashboardRetry);
         ScreenCapture.detach(screenSource);
+        GlassCaption.detach(captionGlass);
         voiceHandler.removeCallbacks(hideVoiceCaption);
         stopCaptionPulse();
         voiceCaption.animate().cancel();
@@ -825,21 +823,22 @@ public final class MainActivity extends Activity {
         // Large for a word or two, smaller for a sentence that has to fit.
         voiceCaption.setTextSize(TypedValue.COMPLEX_UNIT_SP, text.length() <= 32 ? 32 : 26);
         voiceCaption.setVisibility(View.VISIBLE);
+        voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
         if (working) {
-            startCaptionPulse();
-        } else {
-            voiceCaption.animate().alpha(1f).setDuration(180L).withEndAction(null);
+            startCaptionPulse(color);
         }
         voiceHandler.postDelayed(hideVoiceCaption, showFor);
     }
 
-    private void startCaptionPulse() {
-        captionPulse = ValueAnimator.ofFloat(Math.max(0.35f, voiceCaption.getAlpha()), 1f, 0.35f);
+    /** Lets the words breathe. Their backing stays, so that what lies behind them does not come and go. */
+    private void startCaptionPulse(int color) {
+        captionPulse = ValueAnimator.ofFloat(1f, 0.35f);
         captionPulse.setDuration(1_600L);
         captionPulse.setRepeatCount(ValueAnimator.INFINITE);
         captionPulse.setRepeatMode(ValueAnimator.REVERSE);
-        captionPulse.addUpdateListener(
-                animation -> voiceCaption.setAlpha((float) animation.getAnimatedValue()));
+        captionPulse.addUpdateListener(animation -> voiceCaption.setTextColor(Color.argb(
+                Math.round(Color.alpha(color) * (float) animation.getAnimatedValue()),
+                Color.red(color), Color.green(color), Color.blue(color))));
         captionPulse.start();
     }
 

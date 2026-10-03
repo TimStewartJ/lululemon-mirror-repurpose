@@ -35,9 +35,6 @@ import java.util.ArrayDeque;
  */
 public final class VoiceManager {
     /** Sent to the dashboard so that the glass can show what was heard. */
-    static final String ACTION_VOICE_EVENT = "dev.mirror.repurpose.VOICE_EVENT";
-    static final String EXTRA_KIND = "kind";
-    static final String EXTRA_CAPTION = "caption";
     static final String KIND_LISTENING = "listening";
     static final String KIND_COMMAND = "command";
     static final String KIND_NOT_UNDERSTOOD = "not-understood";
@@ -802,10 +799,6 @@ public final class VoiceManager {
     }
 
     private void show(String kind, String caption) {
-        Intent event = new Intent(ACTION_VOICE_EVENT);
-        event.setPackage(context.getPackageName());
-        event.putExtra(EXTRA_KIND, kind);
-        event.putExtra(EXTRA_CAPTION, caption);
-        context.sendBroadcast(event);
+        GlassCaption.show(kind, caption, 0L);
     }
 }

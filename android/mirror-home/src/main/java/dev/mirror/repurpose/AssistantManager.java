@@ -44,7 +44,6 @@ public final class AssistantManager {
     static final String KIND_REPLY = "reply";
     static final String KIND_NOTICE = "notice";
     static final String KIND_CLEAR = "clear";
-    static final String EXTRA_MILLIS = "millis";
 
     private static final String TAG = "AssistantManager";
     private static final int CONNECT_TIMEOUT_MS = 4_000;
@@ -421,12 +420,7 @@ public final class AssistantManager {
     }
 
     private void show(String kind, String text, long millis) {
-        Intent event = new Intent(VoiceManager.ACTION_VOICE_EVENT);
-        event.setPackage(context.getPackageName());
-        event.putExtra(VoiceManager.EXTRA_KIND, kind);
-        event.putExtra(VoiceManager.EXTRA_CAPTION, text);
-        event.putExtra(EXTRA_MILLIS, millis);
-        context.sendBroadcast(event);
+        GlassCaption.show(kind, text, millis);
     }
 
     private void event(String type, JSONObject more) {
