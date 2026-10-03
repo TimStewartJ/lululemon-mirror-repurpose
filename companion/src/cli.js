@@ -160,6 +160,12 @@ function print(line) {
   process.stdout.write(line + "\n");
 }
 
+// Piped into a command that stops reading, such as head, there is nobody left to write to.
+process.stdout.on("error", (error) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
+
 const [name, ...rest] = process.argv.slice(2);
 const command = Object.hasOwn(commands, name ?? "") ? commands[name] : null;
 if (!command) {
