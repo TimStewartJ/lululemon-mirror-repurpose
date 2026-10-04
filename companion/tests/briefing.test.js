@@ -45,9 +45,9 @@ const WET = {
 };
 
 /** The mirror's state as fetchState would hand it over, from fixed facts. */
-function stateAt(now, { items = [], weather = FAIR, clock24Hour = false, offset = -420, board = true } = {}) {
+function stateAt(now, { items = [], weather = FAIR, clock24Hour = false, offset = -420, board = true, status = {} } = {}) {
   return buildState({
-    status: { utcOffsetMinutes: offset, timeZone: "America/Los_Angeles", clock24Hour, weather, automation: {} },
+    status: { utcOffsetMinutes: offset, timeZone: "America/Los_Angeles", clock24Hour, weather, automation: {}, ...status },
     layout: null,
     board: board ? { items, version: 1 } : null,
     films: null,
@@ -403,4 +403,26 @@ test("the last briefing is remembered for three minutes, with the titles of what
   memory.note(buildBriefing(state, "good-morning"), state);
   memory.forget();
   assert.equal(memory.recall(), null);
+});
+
+test("a mirror that asks to be restarted says so in every briefing but the last of the day", () => {
+  const short = { restart: { advised: true, reason: "Memory is running short after 9 days without a restart" }, deviceUptimeSeconds: 770_000 };
+  const morning = buildBriefing(stateAt(day("07:12"), { items: [todo("Buy milk")], status: short }), "good-morning");
+  assert.deepEqual(rows(morning).slice(-2), ["To do: Buy milk", "Mirror: Short of memory after 9 days. Please switch me off and on."]);
+  assert.equal(morning.seconds, 8 + 2 * morning.details.length);
+  for (const kind of ["good-afternoon", "good-evening", "home", "catch-up"]) {
+    assert.match(rows(buildBriefing(stateAt(day("15:00"), { status: short }), kind)).at(-1), /^Mirror: Short of memory after 9 days\./, kind);
+  }
+  assert.ok(!rows(buildBriefing(stateAt(day("22:10"), { status: short }), "good-night")).some((row) => row.startsWith("Mirror:")));
+  // It is the only thing to say on an empty morning without weather, and a young mirror names no days.
+  const young = { restart: { advised: true, reason: "" }, deviceUptimeSeconds: 90_000 };
+  assert.deepEqual(rows(buildBriefing(stateAt(day("07:12"), { weather: null, board: false, status: young }), "good-morning")), [
+    "Mirror: Short of memory. Please switch me off and on.",
+  ]);
+});
+
+test("a mirror that is well, or too old to say, says nothing of itself", () => {
+  for (const status of [{}, { restart: { advised: false, reason: null } }, { restart: null }]) {
+    assert.ok(!rows(buildBriefing(stateAt(day("07:12"), { status }), "good-morning")).some((row) => row.startsWith("Mirror:")));
+  }
 });

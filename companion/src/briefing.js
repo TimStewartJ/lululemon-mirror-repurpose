@@ -103,6 +103,9 @@ export function buildBriefing(state, kind) {
     if (idle) add("Next", "Nothing on your list.");
   }
 
+  // Not at night: nobody gets up again for it, and the morning will say so.
+  if (kind !== "good-night") add("Mirror", restartLine(state));
+
   const details = fitRows(rows);
   return {
     reply: briefingHeadline(kind),
@@ -184,6 +187,16 @@ export function createBriefingMemory(clock) {
       last = null;
     },
   };
+}
+
+/**
+ * What a mirror that asks to be restarted says of itself. It cannot restart
+ * by itself, and it gets slower until someone does it.
+ */
+function restartLine(state) {
+  if (!state.restart) return "";
+  const days = state.restart.days;
+  return `Short of memory${days >= 2 ? ` after ${days} days` : ""}. Please switch me off and on.`;
 }
 
 /**

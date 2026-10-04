@@ -183,7 +183,9 @@ served. If the mirror cannot be read, the answer is the greeting alone.
 | Home | Welcome home | Weather now, what is due later, what was missed, the open to-dos. |
 
 A row with nothing to say is left out, and so is weather that the mirror
-could not refresh. A list names three items and counts the rest. Times are
+could not refresh. A mirror whose status says that it should be restarted
+(`restart.advised`) gets a last row, "Mirror: Short of memory after 9 days.
+Please switch me off and on.", in every briefing but the one at night. A list names three items and counts the rest. Times are
 written as the mirror's clock shows them. An item is missed when its time has
 passed and it is not done, and it is named in every briefing until it is
 marked done or leaves the board.

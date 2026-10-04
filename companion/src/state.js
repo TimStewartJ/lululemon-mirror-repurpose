@@ -19,6 +19,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * @property {boolean} boardRead False when the board could not be read, so that `items` says nothing.
  * @property {boolean} clock24Hour Whether the mirror's clock shows 15:00 and not 3:00 PM.
  * @property {object|null} weather The weather as the mirror's status has it: its state, whether it is stale, and its data.
+ * @property {{ days: number } | null} restart Set when the mirror asks to be switched off and on, with the days it has been up.
  */
 
 /**
@@ -83,6 +84,8 @@ export function buildState({ status, layout, board, films, now }) {
     boardRead: board !== null,
     clock24Hour: Boolean(status.clock24Hour),
     weather: status.weather ?? null,
+    // A mirror that runs short of memory says so in its status; only a person can help it.
+    restart: status.restart?.advised ? { days: Math.round((Number(status.deviceUptimeSeconds) || 0) / 86_400) } : null,
   };
 }
 
