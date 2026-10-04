@@ -102,6 +102,21 @@ All four act the same things out, each with the body it has:
 | The companion did not answer | draws its brows together. |
 | Good night | shuts its eyes and sleeps. |
 
+### Where the answers appear
+
+The Mirror's answers stand low and in the middle of the glass unless you
+choose otherwise. Under **Settings > Assistant > Answers appear** they can
+be set at one of five heights, from the top of the glass to the bottom, and
+to the left, in the middle or to the right. A line on the glass shows the
+place when you change it. The character, if there is one, comes along, and
+so does what the Mirror's own voice commands show.
+
+With the assistant on you can also ask: "Mirror, put your answers at the
+top", "Mirror, answer further to the left", "Mirror, a bit lower", "Mirror,
+back to the bottom". The answers are not a widget: they lie over whatever is
+behind them, on a black backing, so high up they cover the clock for as long
+as they show.
+
 A character takes up a new part in the frame in which the Mirror learns of
 it, whatever it was in the middle of, and leaves with the panel. It is drawn
 only while the panel shows, so it costs nothing the rest of the time. It

@@ -147,7 +147,7 @@ test("a greeting may only speak and a tending run may only tidy, once", async (t
   assert.deepEqual(toolsFor("greeting", tools).map((tool) => tool.name), ["say"]);
   assert.deepEqual(toolsFor("tend", tools).map((tool) => tool.name), ["get_state", "set_background", "arrange_widgets", "board_remove"]);
   // In a conversation the answer is the line on the glass; a say tool beside it showed the line twice.
-  assert.equal(toolsFor("conversation", tools).length, 15);
+  assert.equal(toolsFor("conversation", tools).length, 16);
   assert.ok(!toolsFor("conversation", tools).some((tool) => tool.name === "say"));
 
   const turn = newTurn("tend");

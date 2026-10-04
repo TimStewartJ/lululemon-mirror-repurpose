@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+// How the mirror shows itself when it answers: as which character, and where on the glass.
+
 /**
  * What each character of Mirror Home is, in the words a person would ask for
  * it by: the mirror lists its characters by name only, and nobody says
@@ -29,6 +31,21 @@ export function describeCharacter(assistant) {
   if (!Array.isArray(known) || known.length === 0) return null;
   const chosen = known.find((character) => character.id === assistant.mascot);
   return { now: chosen ? chosen.name : NONE, choices: known.map((character) => character.name) };
+}
+
+/** The heights at which the answers can stand, from the upper edge of the glass down, and the sides. */
+const HEIGHTS = ["top", "upper", "middle", "lower", "bottom"];
+const SIDES = ["left", "center", "right"];
+
+/**
+ * Where on the glass the mirror's answers stand, as "bottom center", for the
+ * snapshot; null for a Mirror Home whose answers cannot be moved.
+ *
+ * @param {object|null} assistant The mirror's answer to GET /api/v1/assistant.
+ */
+export function describePlace(assistant) {
+  const place = assistant?.place;
+  return typeof place?.height === "string" && typeof place?.side === "string" ? `${place.height} ${place.side}` : null;
 }
 
 /** The words by which a character may be asked for, in lower case. */
@@ -76,6 +93,51 @@ export function characterTools({ mirror }) {
         // The mirror shows the new one with its name and a wave by itself.
         await mirror.call("PUT", "/api/v1/assistant", { body: { mascot: chosen?.id ?? NONE } });
         return { character: now, was: was ? label(was) : NONE, changed: true };
+      },
+    },
+    {
+      name: "set_answer_place",
+      description:
+        "Moves where on the glass your words appear: the panel with your answer and your character. " +
+        "height is top, upper, middle, lower or bottom, or \"up\" or \"down\" for one step from where it is; " +
+        "side is left, center or right. Give height, side or both; what you leave out stays as it is. " +
+        "answersAt in the state is the present place. The mirror shows a line at the new place by itself.",
+      schema: z.object({
+        height: z.enum([...HEIGHTS, "up", "down"]).optional(),
+        side: z.enum(SIDES).optional(),
+      }),
+      changes: true,
+      async handler({ height, side }) {
+        if (height === undefined && side === undefined) return { error: "Give height, side or both." };
+        const before = await mirror.get("/api/v1/assistant");
+        const was = describePlace(before);
+        if (!was) {
+          return { error: "This mirror's software cannot move its answers yet. That comes with a later version of Mirror Home." };
+        }
+        // The mirror says which places it has; the order of its heights is from the top down.
+        const heights = Array.isArray(before.places?.heights) ? before.places.heights : HEIGHTS;
+        const sides = Array.isArray(before.places?.sides) ? before.places.sides : SIDES;
+        let wantedHeight = height ?? before.place.height;
+        if (height === "up" || height === "down") {
+          const step = heights.indexOf(before.place.height) + (height === "up" ? -1 : 1);
+          if (step < 0 || step >= heights.length) {
+            const end = height === "up" ? "as high as they go" : "as low as they go";
+            if (side === undefined || side === before.place.side) {
+              return { answersAt: was, changed: false, note: `Your answers are ${end}.` };
+            }
+            wantedHeight = before.place.height;
+          } else {
+            wantedHeight = heights[step];
+          }
+        }
+        const wantedSide = side ?? before.place.side;
+        if (!heights.includes(wantedHeight) || !sides.includes(wantedSide)) {
+          return { error: `This mirror has no such place. Its heights are ${heights.join(", ")}; its sides are ${sides.join(", ")}.` };
+        }
+        const now = `${wantedHeight} ${wantedSide}`;
+        if (now === was) return { answersAt: was, changed: false, note: "Your answers were already there." };
+        await mirror.call("PUT", "/api/v1/assistant", { body: { place: { height: wantedHeight, side: wantedSide } } });
+        return { answersAt: now, was, changed: true };
       },
     },
   ];

@@ -58,7 +58,8 @@ test("every tool has a description and a schema the harness can pass on", async 
     tools.map((tool) => tool.name).sort(),
     [
       "arrange_widgets", "board_add", "board_remove", "board_update", "briefing", "forget", "get_state", "ignore",
-      "look", "present", "remember", "say", "set_background", "set_brightness", "set_character", "set_power",
+      "look", "present", "remember", "say", "set_answer_place", "set_background", "set_brightness", "set_character",
+      "set_power",
     ],
   );
   for (const tool of tools) {

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Let the place of the Mirror's answers be chosen. They stood low and in the
+  middle of the glass for everyone; now they can stand at one of five
+  heights (top, upper, middle, lower, bottom) and to the left, in the middle
+  or to the right, under **Settings > Assistant > Answers appear** or with
+  `place` in `PUT /api/v1/assistant`. A line on the glass shows the place
+  when it changes, and a panel that was showing leaves where it was and
+  arrives at its new place instead of travelling across the glass. High up
+  it hangs from its upper edge and grows downwards; low down it stands on
+  its lower edge, as before. With the assistant on, the Mirror can be asked
+  ("Mirror, put your answers at the top", "answer further left", "a bit
+  lower"): the companion's model is told where its answers stand and has a
+  tool, `set_answer_place`, to move them. A Mirror on which nobody chooses
+  is unchanged.
 - Stop the memory growth that made a Mirror need a restart after about nine
   days, where its owner asks for it. The cause was found on one Mirror by
   stopping it and starting it again: Android 6 goes on scanning for other Wi-Fi

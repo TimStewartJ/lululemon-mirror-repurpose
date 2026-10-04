@@ -290,7 +290,11 @@ was looking; "Mirror, I'm home" brings what came up while you were out; and
 and under the switch where it stands: **Connected**, or what is missing.
 **Character** gives the Mirror a small figure that stands above its answers
 and listens, thinks and answers along; there are four, and none unless you
-choose one. The field below takes a typed request, which is the quickest way
+choose one. **Answers appear** and **To the side** set where on the glass
+the answers stand: low and in the middle unless you move them, which suits a
+Mirror that hangs high or is read from the side. With the assistant on you
+can ask for either: "Mirror, be the cat", "Mirror, put your answers at the
+top". The field below takes a typed request, which is the quickest way
 to try it, and **Asked lately** lists what was asked and answered since the Mirror
 last started.
 

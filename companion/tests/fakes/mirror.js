@@ -64,6 +64,9 @@ export async function startFakeMirror({
     mascots: [
       { id: "blink", name: "Blink" }, { id: "wisp", name: "Wisp" }, { id: "mochi", name: "Mochi" }, { id: "lune", name: "Lune" },
     ],
+    /** Where the mirror's answers stand, and where they can; null for a Mirror Home that cannot move them. */
+    place: { height: "bottom", side: "center" },
+    places: { heights: ["top", "upper", "middle", "lower", "bottom"], sides: ["left", "center", "right"] },
     /** Captions shown or asked for, oldest first: { text, kind, seconds, shown }, and details when rows came along. */
     said: [],
     /** Every request received: { method, path, body }. */
@@ -236,15 +239,26 @@ export async function startFakeMirror({
     if (is("GET", "/api/v1/status")) return [200, status()];
     if (is("GET", "/api/v1/assistant")) {
       const characters = state.mascots ? { mascot: state.mascot, mascots: state.mascots } : {};
-      return [200, { enabled: true, state: "connected", ...characters }];
+      const placed = state.place ? { place: { ...state.place }, places: state.places } : {};
+      return [200, { enabled: true, state: "connected", ...characters, ...placed }];
     }
     if (is("PUT", "/api/v1/assistant")) {
       // As on the mirror: a character it does not know is refused with the ones it does.
       const known = ["none", ...(state.mascots ?? []).map((character) => character.id)];
-      if (typeof body.mascot !== "string") return [400, { error: "mascot must be text" }];
-      if (!known.includes(body.mascot)) return [400, { error: `mascot must be one of: ${known.join(", ")}` }];
-      state.mascot = body.mascot;
-      return [200, { enabled: true, state: "connected", mascot: state.mascot, mascots: state.mascots }];
+      if (body.mascot !== undefined) {
+        if (typeof body.mascot !== "string") return [400, { error: "mascot must be text" }];
+        if (!known.includes(body.mascot)) return [400, { error: `mascot must be one of: ${known.join(", ")}` }];
+      }
+      if (body.place !== undefined) {
+        // As on the mirror: either part may be left out, and one it does not know is refused with the ones it does.
+        if (body.place === null || typeof body.place !== "object") return [400, { error: "place must be an object with height, side or both" }];
+        const wanted = { ...state.place, ...body.place };
+        if (!state.places.heights.includes(wanted.height)) return [400, { error: `place.height must be one of: ${state.places.heights.join(", ")}` }];
+        if (!state.places.sides.includes(wanted.side)) return [400, { error: `place.side must be one of: ${state.places.sides.join(", ")}` }];
+        state.place = { height: wanted.height, side: wanted.side };
+      }
+      if (body.mascot !== undefined) state.mascot = body.mascot;
+      return [200, { enabled: true, state: "connected", mascot: state.mascot, mascots: state.mascots, place: state.place, places: state.places }];
     }
     if (is("POST", "/api/v1/assistant/say")) return say(body);
     if (is("GET", "/api/v1/screenshot")) {

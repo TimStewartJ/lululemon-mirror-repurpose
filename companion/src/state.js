@@ -1,7 +1,7 @@
 import { COORDINATES, describeWidget } from "./layout.js";
 import { MirrorUnreachable } from "./mirror.js";
 import { formatOffset, localIso, localTime, weekday } from "./time.js";
-import { describeCharacter } from "./tools/character.js";
+import { describeCharacter, describePlace } from "./tools/character.js";
 
 const MAX_BOARD_ITEMS = 25;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -30,7 +30,7 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * @param {{ now: () => number }} clock
  * @param {{ brief?: boolean }} [options] With `brief`, only the status and the board are read: all that a
  *   briefing is built from, and three requests fewer for an answer that has to be fast. The snapshot then
- *   lacks the layout, the films and the character.
+ *   lacks the layout, the films, the character and the place of the answers.
  * @returns {Promise<MirrorState>}
  * @throws {MirrorUnreachable} when the mirror's status cannot be read
  */
@@ -79,6 +79,8 @@ export function buildState({ status, layout, board, films, assistant = null, now
   // Only a Mirror Home that has characters is asked about them.
   const character = describeCharacter(assistant);
   if (character) snapshot.character = character;
+  const answersAt = describePlace(assistant);
+  if (answersAt) snapshot.answersAt = answersAt;
   if (!layout) snapshot.widgets = "The layout could not be read.";
   return {
     snapshot,

@@ -48,6 +48,7 @@ test("the snapshot has the display, the widgets, the background, the board, the 
   assert.equal(snapshot.weather.nextHours[0].at, "08:00");
   assert.equal(snapshot.voice, "listening");
   assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
+  assert.equal(snapshot.answersAt, "bottom center");
   assert.equal(boardVersion, fake.state.board.version);
   assert.equal(sleeping, false);
   assert.equal(items[0].title, "Buy milk");
@@ -59,7 +60,9 @@ test("the snapshot is small enough to read in one go", async (t) => {
   await use("board_add", { kind: "reminder", title: "Take out the trash", due: "2026-10-04T07:00:00-07:00" });
   const { snapshot } = await fetchState(mirror, clock);
   const size = Buffer.byteLength(JSON.stringify(snapshot));
-  assert.ok(size < 3072, `the snapshot is ${size} bytes`);
+  // It goes along with every message. With four items on the board it comes to 3072 bytes, now
+  // that the mirror also tells of its character and of where its answers stand.
+  assert.ok(size < 3200, `the snapshot is ${size} bytes`);
 });
 
 test("a dark display says why, and a due time is on the mirror's wall clock", async (t) => {
@@ -125,6 +128,11 @@ test("the snapshot names the character the mirror answers as, where the mirror h
   // A Mirror Home from before there were characters says nothing of them, and neither does the snapshot.
   fake.state.mascots = null;
   assert.equal("character" in (await fetchState(mirror, clock)).snapshot, false);
+  // The same for where the answers stand.
+  fake.state.place = { height: "upper", side: "left" };
+  assert.equal((await fetchState(mirror, clock)).snapshot.answersAt, "upper left");
+  fake.state.place = null;
+  assert.equal("answersAt" in (await fetchState(mirror, clock)).snapshot, false);
   fake.state.failing.set("/api/v1/assistant", 500);
   assert.equal("character" in (await fetchState(mirror, clock)).snapshot, false);
 });

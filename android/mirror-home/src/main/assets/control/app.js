@@ -1892,6 +1892,23 @@
       mascot.disabled = !report.mascots;
     }
 
+    /* Where the answers stand: how high, and to which side. */
+    [['height', 'heights'], ['side', 'sides']].forEach(function (part) {
+      var select = byId('assistant-place-' + part[0]);
+      if (document.activeElement === select) return;
+      var choices = (report.places || {})[part[1]] || [];
+      select.textContent = '';
+      choices.forEach(function (name) {
+        var option = document.createElement('option');
+        option.value = name;
+        option.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+        select.appendChild(option);
+      });
+      select.value = (report.place || {})[part[0]] || '';
+      /* A Mirror Home from before answers could be moved lists no places. */
+      select.disabled = choices.length === 0;
+    });
+
     var recent = report.recent || [];
     var list = byId('assistant-recent');
     list.textContent = '';
@@ -3326,6 +3343,25 @@
       select.disabled = false;
       select.value = before;
       setMessage('assistant-message', error.message, true);
+    });
+  });
+
+  ['height', 'side'].forEach(function (part) {
+    byId('assistant-place-' + part).addEventListener('change', function () {
+      var select = byId('assistant-place-' + part);
+      var before = assistantReport && assistantReport.place ? assistantReport.place[part] : '';
+      var place = {};
+      place[part] = select.value;
+      select.disabled = true;
+      setMessage('assistant-message', '');
+      request('/api/v1/assistant', json('PUT', { place: place })).then(function (report) {
+        select.blur();
+        renderAssistant(report);
+      }).catch(function (error) {
+        select.disabled = false;
+        select.value = before;
+        setMessage('assistant-message', error.message, true);
+      });
     });
   });
 

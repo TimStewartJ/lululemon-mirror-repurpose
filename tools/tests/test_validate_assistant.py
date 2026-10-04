@@ -50,6 +50,7 @@ class AssistingMirror(SpeakingMirror):
         self.sleep_at = None
         self.greeted = None
         self.mascot = "wisp" if "mascot-from-the-start" in self.faults else "none"
+        self.place = {"height": "top" if "placed-from-the-start" in self.faults else "bottom", "side": "center"}
         with wave.open(str(validate.VOICE_CLIPS / validate.ASSISTANT_CLIP), "rb") as clip:
             self.request_sound = clip.readframes(clip.getnframes())
         self.request_clip = (validate.VOICE_CLIPS / validate.ASSISTANT_CLIP).read_bytes()
@@ -116,6 +117,11 @@ class AssistingMirror(SpeakingMirror):
             "mascots": [] if "no-mascots" in self.faults else [
                 {"id": "blink", "name": "Blink"}, {"id": "wisp", "name": "Wisp"}, {"id": "mochi", "name": "Mochi"},
             ],
+            "place": dict(self.place),
+            "places": {
+                "heights": ["top", "upper", "middle", "lower", "bottom"],
+                "sides": ["center"] if "one-side-only" in self.faults else ["left", "center", "right"],
+            },
             "busy": False,
             "lastAnswerAt": None,
             "counts": dict(self.asked),
@@ -254,6 +260,18 @@ class AssistingMirror(SpeakingMirror):
         key = body.get("key")
         if key is not None and (" " in key or len(key) > 256) and "takes-any-key" not in self.faults:
             return Reply(400, {"error": "The companion's key has no spaces"}, {})
+        wanted = None
+        if "place" in body:
+            place = body["place"]
+            wanted = {**self.place, **place} if isinstance(place, dict) else None
+            known = wanted is not None and all(isinstance(value, str) for value in wanted.values()) and (
+                wanted["height"] in ("top", "upper", "middle", "lower", "bottom")
+                and wanted["side"] in ("left", "center", "right")
+            )
+            if not known:
+                if "takes-any-place" not in self.faults:
+                    return Reply(400, {"error": "place.height must be one of: top, upper, middle, lower, bottom"}, {})
+                wanted = None
         if "mascot" in body:
             names = {"none": "", "blink": "Blink", "wisp": "Wisp", "mochi": "Mochi"}
             if body["mascot"] not in names if isinstance(body["mascot"], str) else True:
@@ -266,10 +284,22 @@ class AssistingMirror(SpeakingMirror):
                     self.figure = "" if "mascot-out-of-sight" in self.faults else names[self.mascot]
                 if changed and names[self.mascot] and not self.sleeping and "mascot-without-a-word" not in self.faults:
                     self.show(names[self.mascot], 4.5)
-            if not {"enabled", "address", "key"} & set(body):
-                if "loses-its-companion" in self.faults:
-                    self.answered, self.failed = 0, 0
-                return Reply(200, self.assistant(), {})
+        if wanted is not None:
+            changed = wanted != self.place
+            if "forgets-the-height" in self.faults:
+                wanted["height"] = self.place["height"]
+            self.place = wanted
+            if "stays-put" not in self.faults:
+                self.spot = (
+                    {"left": 300, "center": 540, "right": 780}[wanted["side"]],
+                    {"top": 360, "upper": 680, "middle": 1040, "lower": 1400, "bottom": 1700}[wanted["height"]],
+                )
+            if changed and not self.sleeping and "place-without-a-word" not in self.faults:
+                self.show(validate.PLACE_NOTICE, 4)
+        if ("mascot" in body or "place" in body) and not {"enabled", "address", "key"} & set(body):
+            if "loses-its-companion" in self.faults:
+                self.answered, self.failed = 0, 0
+            return Reply(200, self.assistant(), {})
         if address is not None:
             self.address = str(address).rstrip("/")
         if key is not None:
@@ -432,10 +462,15 @@ class AssistantVerdictTest(unittest.TestCase):
         self.fails(check, "takes-any-mascot", "A character that there is none of answered 200, expected 400")
         self.fails(check, "mascot-from-the-start", "answers as a character before anyone chose one")
         self.fails(check, "no-mascots", "or offers none")
+        self.fails(check, "placed-from-the-start", "answers do not start low and in the middle")
+        self.fails(check, "one-side-only", "or cannot be moved")
+        self.fails(check, "takes-any-place", "A place that is one word answered 200, expected 400")
 
     def test_a_typed_request_must_reach_the_companion_and_its_answer_the_glass(self):
         mirror, ctx = self.run_check(validate.check_assistant_asks)
         self.assertEqual(18_000, ctx.details["pictureBytes"])
+        self.assertEqual({"topLeft": (300, 360), "bottomCenter": (540, 1700)}, ctx.details["answersMoved"])
+        self.assertEqual(validate.FIRST_PLACE, mirror.place)
         self.assertIn("cannot be reached", ctx.details["gone"])
         self.assertFalse(mirror.sleeping)
         check = validate.check_assistant_asks
@@ -452,6 +487,9 @@ class AssistantVerdictTest(unittest.TestCase):
         self.fails(check, "mascot-without-a-word", "The glass did not show the hello of the character that was chosen")
         self.fails(check, "mascot-out-of-sight", "A character says hello without being on the glass")
         self.fails(check, "keeps-its-mascot", "A character that was sent away is still on the glass")
+        self.fails(check, "place-without-a-word", "The glass did not show the line that shows where the answers went")
+        self.fails(check, "forgets-the-height", "Moving the answers left the assistant connected with them at")
+        self.fails(check, "stays-put", r"Moved to the top left, a line stood at \(540, 1700\); moved back, the next stood at \(540, 1700\)")
         self.fails(check, "pictures-nothing", "A picture of 900 bytes holds nothing of the dashboard")
         self.fails(check, "squashed", "The picture is 540 by 2740 for a screen of 10 by 50")
         self.fails(check, "one-size-only", "A picture of another width was not made")
@@ -491,6 +529,7 @@ class AssistantVerdictTest(unittest.TestCase):
             self.assertEqual((False, "", ""), (mirror.assistant_on, mirror.address, mirror.key))
             self.assertFalse(mirror.sleeping)
             self.assertEqual("none", mirror.mascot)
+            self.assertEqual(validate.FIRST_PLACE, mirror.place)
 
     def test_what_is_said_must_reach_the_companion_as_it_was_said(self):
         mirror, ctx = self.run_check(validate.check_assistant_voice)

@@ -1253,12 +1253,28 @@ public final class ControlServer extends NanoHTTPD {
         if (body.has("mascot") && !(body.opt("mascot") instanceof String)) {
             return error(Response.Status.BAD_REQUEST, "mascot must be text");
         }
+        JSONObject place = body.optJSONObject("place");
+        if (body.has("place") && place == null) {
+            return error(Response.Status.BAD_REQUEST, "place must be an object with height, side or both");
+        }
+        for (String name : new String[]{"height", "side"}) {
+            if (place != null && place.has(name) && !(place.opt(name) instanceof String)) {
+                return error(Response.Status.BAD_REQUEST, "place." + name + " must be text");
+            }
+        }
         try {
+            // Worked out before anything is changed, so that a request is taken whole or not at all.
+            PanelPlace wanted = place == null ? null : configStore.getPanelPlace().with(
+                    place.has("height") ? place.getString("height") : null,
+                    place.has("side") ? place.getString("side") : null);
             if (body.has("mascot")) {
                 assistant.chooseMascot(body.getString("mascot"));
             }
+            if (wanted != null) {
+                assistant.choosePlace(wanted);
+            }
             if (!body.has("enabled") && !body.has("address") && !body.has("key")) {
-                // Choosing a character is no reason to look for the companion afresh.
+                // Choosing a character or a place is no reason to look for the companion afresh.
                 return response(Response.Status.OK, assistant.snapshot());
             }
             assistant.configure(

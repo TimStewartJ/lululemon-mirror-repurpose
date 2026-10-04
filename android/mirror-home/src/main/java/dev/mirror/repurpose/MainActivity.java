@@ -143,6 +143,7 @@ public final class MainActivity extends Activity {
     private final GlassCaption.Glass captionGlass = caption -> {
         if (this.conversation != null) {
             this.conversation.setMascot(this.configStore.getMascot());
+            this.conversation.place(this.configStore.getPanelPlace());
             this.conversation.show(caption);
         }
     };
@@ -251,15 +252,9 @@ public final class MainActivity extends Activity {
 
         // Where the Mirror answers, in place of a voice.
         conversation = new ConversationPanel(this);
-        FrameLayout.LayoutParams conversationLayout = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        conversationLayout.bottomMargin = dp(96);
-        int side = getResources().getDisplayMetrics().widthPixels * 6 / 100;
-        conversationLayout.leftMargin = side;
-        conversationLayout.rightMargin = side;
-        root.addView(conversation, conversationLayout);
+        root.addView(conversation, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        conversation.place(configStore.getPanelPlace());
 
         sleepOverlay = new View(this);
         sleepOverlay.setBackgroundColor(Color.BLACK);

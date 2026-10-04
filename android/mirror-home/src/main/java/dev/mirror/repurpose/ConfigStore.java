@@ -35,6 +35,7 @@ public final class ConfigStore {
     private static final String KEY_ASSISTANT_ADDRESS = "assistant_address";
     private static final String KEY_ASSISTANT_KEY = "assistant_key";
     private static final String KEY_MASCOT = "glass_mascot";
+    private static final String KEY_PANEL_PLACE = "glass_panel_place";
     private static final String KEY_SCAN_GUARD = "wifi_scan_guard";
     private static final String KEY_SCAN_GUARD_BEFORE = "wifi_scan_guard_before";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
@@ -307,6 +308,15 @@ public final class ConfigStore {
 
     public void setMascot(String id) {
         preferences.edit().putString(KEY_MASCOT, id).apply();
+    }
+
+    /** Where on the glass the Mirror's answers stand; low and in the middle unless chosen. */
+    public PanelPlace getPanelPlace() {
+        return PanelPlace.parse(preferences.getString(KEY_PANEL_PLACE, ""));
+    }
+
+    public void setPanelPlace(PanelPlace place) {
+        preferences.edit().putString(KEY_PANEL_PLACE, place.stored()).apply();
     }
 
     /** Whether Android is kept from scanning for Wi-Fi while connected; see {@link ScanGuard}. */

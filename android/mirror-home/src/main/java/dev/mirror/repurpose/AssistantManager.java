@@ -43,6 +43,8 @@ public final class AssistantManager {
     static final String KIND_REPLY = "reply";
     static final String KIND_NOTICE = "notice";
     static final String KIND_CLEAR = "clear";
+    /** What the glass shows at the place its answers were moved to. */
+    static final String PLACE_NOTICE = "Answers appear here";
 
     private static final String TAG = "AssistantManager";
     private static final int CONNECT_TIMEOUT_MS = 4_000;
@@ -349,6 +351,19 @@ public final class AssistantManager {
         }
     }
 
+    /**
+     * Moves the Mirror's answers to another place on the glass, and shows a
+     * line there, so that whoever moved them sees where they went.
+     */
+    public void choosePlace(PanelPlace place) {
+        boolean changed = !place.equals(configStore.getPanelPlace());
+        configStore.setPanelPlace(place);
+        if (changed && !AutomationManager.getInstance(context).isSleeping()) {
+            GlassCaption.show(new GlassCaption.Caption(KIND_NOTICE, PLACE_NOTICE, "", null, 4_000L));
+        }
+    }
+
+    /** Where the assistant stands, in brief: for the status, which the controls ask for every few seconds. */
     public JSONObject summary() throws JSONException {
         return new JSONObject().put("enabled", configStore.isAssistantEnabled()).put("state", state());
     }
@@ -364,6 +379,8 @@ public final class AssistantManager {
                 .put("model", companionModel)
                 .put("mascot", configStore.getMascot())
                 .put("mascots", mascots())
+                .put("place", configStore.getPanelPlace().toJson())
+                .put("places", PanelPlace.choices())
                 .put("busy", waiting > 0)
                 .put("lastAnswerAt", lastAnswerAt == 0 ? JSONObject.NULL : lastAnswerAt)
                 .put("counts", new JSONObject()

@@ -11,10 +11,12 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -24,8 +26,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Where the Mirror answers: a small panel low on the glass, in place of a
- * voice. Nobody wants a mirror to talk back.
+ * Where the Mirror answers: a small panel on the glass, in place of a
+ * voice. Nobody wants a mirror to talk back. It stands low and in the
+ * middle unless its owner chose another place ({@link PanelPlace}).
  *
  * <p>It is read from across a room, in passing, so it shows one thing at a
  * time and says which: dots that breathe while the Mirror listens and that
@@ -55,6 +58,12 @@ final class ConversationPanel extends LinearLayout {
     /** A word or two is set large; a sentence that has to fit, smaller. */
     private static final int SHORT_TEXT = 32;
     private static final int LABEL_GAP_DP = 16;
+    /** How far the panel keeps from the upper or lower edge of the glass when it is as near as it goes. */
+    private static final int EDGE_DP = 96;
+    /** Where it hangs or stands when it is not at an edge: this far in, in hundredths of the glass's height. */
+    private static final int INNER_PERCENT = 24;
+    /** What it keeps clear of at either side, in hundredths of the glass's width. */
+    private static final int SIDE_PERCENT = 6;
     /** The box of a mascot, of which the mascot itself fills the middle two thirds. */
     private static final int MASCOT_DP = 112;
 
@@ -68,6 +77,9 @@ final class ConversationPanel extends LinearLayout {
     private final LinearLayout rows;
     private final Runnable leave = this::fadeOut;
     private boolean showing;
+    private PanelPlace place;
+    /** Set when the panel was given another place while it showed; the next layout is that move. */
+    private boolean moved;
     /** Counts what was shown, so that a fade that ends late leaves newer words alone. */
     private int generation;
 
@@ -128,10 +140,15 @@ final class ConversationPanel extends LinearLayout {
         rows.setVisibility(GONE);
         addView(rows, wrapped(0, dp(14), 0, dp(2)));
 
-        // The panel stands on its lower edge, so more words push its upper edge
-        // up at once. Carried back to where they were and let rise from there,
-        // the words that stay glide to their new place instead of jumping.
+        // Where the panel stands on its lower edge, more words push its upper
+        // edge up at once. Carried back to where they were and let rise from
+        // there, the words that stay glide to their new place instead of jumping.
         addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (moved) {
+                // Given another place, it arrives there; it does not travel across the glass.
+                moved = false;
+                return;
+            }
             if (showing && getAlpha() > 0f && oldBottom > oldTop && top != oldTop) {
                 setTranslationY(getTranslationY() + oldTop - top);
                 animate().translationY(0f).setDuration(SWAP_IN_MS + 80L)
@@ -141,6 +158,38 @@ final class ConversationPanel extends LinearLayout {
 
         setAlpha(0f);
         setVisibility(GONE);
+    }
+
+    /**
+     * Stands the panel where its owner wants the answers: hanging from the
+     * upper edge of the glass and growing downwards, standing on the lower
+     * edge and growing upwards, or in the middle; and at the left, in the
+     * middle or at the right. A panel that is showing leaves where it was
+     * and arrives at its new place with the words that come next.
+     */
+    void place(PanelPlace wanted) {
+        if (wanted.equals(place) || !(getLayoutParams() instanceof FrameLayout.LayoutParams)) {
+            return;
+        }
+        place = wanted;
+        FrameLayout.LayoutParams layout = (FrameLayout.LayoutParams) getLayoutParams();
+        DisplayMetrics glass = getResources().getDisplayMetrics();
+        int edge = wanted.outermost() ? dp(EDGE_DP) : glass.heightPixels * INNER_PERCENT / 100;
+        int vertical = wanted.fromTop() ? Gravity.TOP : wanted.fromBottom() ? Gravity.BOTTOM : Gravity.CENTER_VERTICAL;
+        int horizontal = "left".equals(wanted.side) ? Gravity.LEFT
+                : "right".equals(wanted.side) ? Gravity.RIGHT : Gravity.CENTER_HORIZONTAL;
+        layout.gravity = vertical | horizontal;
+        layout.topMargin = wanted.fromTop() ? edge : 0;
+        layout.bottomMargin = wanted.fromBottom() ? edge : 0;
+        layout.leftMargin = glass.widthPixels * SIDE_PERCENT / 100;
+        layout.rightMargin = layout.leftMargin;
+        setLayoutParams(layout);
+        if (getVisibility() == VISIBLE) {
+            animate().cancel();
+            setAlpha(0f);
+            setTranslationY(dp(14));
+            moved = true;
+        }
     }
 
     /** Chooses the character that stands above the words, by its id; none for an id that names none. */

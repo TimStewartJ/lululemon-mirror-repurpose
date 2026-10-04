@@ -145,6 +145,7 @@ access.
 | `set_brightness` | Sets how bright the display is when awake. |
 | `set_background` | Chooses a film, or a black or photo background. |
 | `set_character` | Chooses the character the mirror answers as, or none: "be the cat", "next character", "just the words". |
+| `set_answer_place` | Moves where on the glass the answers appear: "put your answers at the top", "further left", "a bit lower". |
 | `arrange_widgets` | Shows, hides, moves and resizes widgets. |
 | `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. A hidden board is shown for a new item, at a free place if another widget has taken its own. |
 | `present` | Answers with a card when the answer is a list or has several parts: "what's on my list?", "what's the forecast?". |

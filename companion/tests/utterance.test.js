@@ -57,11 +57,14 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   assert.match(system, /Never say you did something that a tool refused/);
   assert.match(system, /What you remember about this household\n- Nothing yet\./);
   assert.match(system, /When you are unsure whether words were meant for you, they were/);
-  assert.equal(tools.length, 15);
+  assert.equal(tools.length, 16);
   assert.ok(!tools.includes("say"), "the answer is the line; there is no second way to show one");
   // Who the mirror is on the glass is part of how it stands, and it can be asked to be another.
   assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
   assert.match(system, /"be the cat".*use set_character/);
+  // So is where its words stand.
+  assert.equal(snapshot.answersAt, "bottom center");
+  assert.match(system, /"put your answers at the top".*use set_answer_place/);
 });
 
 test("a due time worked out by the model lands on the board at the right instant", async (t) => {

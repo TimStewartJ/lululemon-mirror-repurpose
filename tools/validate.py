@@ -171,6 +171,9 @@ ASSISTANT_CLIP_SILENCE = (4_800, 6_400)
 ASSISTANT_SHOWN_SECONDS = 12
 # A picture of a black screen at this size is a third of this.
 ASSISTANT_PICTURE_BYTES = 6_000
+# What the glass shows at the place its answers were moved to, and where a Mirror's answers start.
+PLACE_NOTICE = "Answers appear here"
+FIRST_PLACE = {"height": "bottom", "side": "center"}
 NO_SPEECH_MODEL = "no speech model on this computer; fetch it with: python tools/voice.py fetch-model"
 NO_TEST_SPEECH = "a release build cannot be given test speech"
 
@@ -2147,9 +2150,13 @@ def jpeg_size(picture: bytes) -> tuple[int, int]:
     raise CheckFailed("The picture is not a JPEG with a frame header")
 
 
-def on_glass(ctx: Context, words: str, what: str, timeout: float = ASSISTANT_SHOWN_SECONDS) -> None:
+def on_glass(ctx: Context, words: str, what: str, timeout: float = ASSISTANT_SHOWN_SECONDS) -> str:
+    """Waits for words to stand on the glass; gives the view hierarchy that had them, for where they stood."""
     try:
-        wait_for(what, lambda: words in ctx.native_text(), timeout=timeout, interval=0.1)
+        return wait_for(
+            what, lambda: (lambda glass: glass if words in glass else None)(ctx.native_text()),
+            timeout=timeout, interval=0.1,
+        )
     except CheckFailed:
         raise CheckFailed(f"The glass did not show {what}: {words!r}") from None
 
@@ -2165,6 +2172,14 @@ def check_assistant_off(ctx: Context) -> None:
         and all(each["id"] and each["name"] for each in state["mascots"]),
         f"A Mirror answers as a character before anyone chose one, or offers none: {describe(state.get('mascot'))} "
         f"of {describe(state.get('mascots'))}",
+    )
+    places = state.get("places") or {}
+    require(
+        state.get("place") == FIRST_PLACE
+        and (places.get("heights") or [])[:1] == ["top"] and FIRST_PLACE["height"] in places["heights"]
+        and {"left", "center", "right"} <= set(places.get("sides") or []),
+        f"A Mirror's answers do not start low and in the middle, or cannot be moved: "
+        f"{describe(state.get('place'))} of {describe(places)}",
     )
     require(ctx.status()["assistant"] == {"enabled": False, "state": "off"}, "The status does not say that the assistant is off")
     health = ctx.health()["assistant"]
@@ -2184,6 +2199,10 @@ def check_assistant_off(ctx: Context) -> None:
         ({"key": "k" * 257}, "A key of 257 characters"),
         ({"mascot": "dragon"}, "A character that there is none of"),
         ({"mascot": 3}, "A character that is no text"),
+        ({"place": "top"}, "A place that is one word"),
+        ({"place": {"height": "ceiling"}}, "A height that there is none of"),
+        ({"place": {"side": 3}}, "A side that is no text"),
+        ({"mascot": "blink", "place": {"side": "middle"}}, "A character together with a side that there is none of"),
     ):
         expect_refused(ctx.api.call("PUT", "/api/v1/assistant", body), 400, what)
     require(assistant_state(ctx) == state, "A refused setting changed something")
@@ -2296,6 +2315,30 @@ def check_assistant_asks(ctx: Context) -> None:
         ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 4})
         on_glass(ctx, "The washing is done", "a line without the character")
         require(there not in ctx.native_text(), "A character that was sent away is still on the glass")
+
+        # The answers can be moved. A line shows the new place, and what the Mirror says next stands there.
+        try:
+            moved = ctx.api.expect("PUT", "/api/v1/assistant", {"place": {"height": "top", "side": "left"}})
+            require(
+                moved["place"] == {"height": "top", "side": "left"} and moved["state"] == "connected",
+                f"Moving the answers left the assistant {moved['state']} with them at {describe(moved['place'])}",
+            )
+            shown = on_glass(ctx, PLACE_NOTICE, "the line that shows where the answers went")
+            above = node_center(shown, "text", PLACE_NOTICE)
+            time.sleep(1)
+            ctx.screenshot("assistant-place")
+        finally:
+            back = ctx.api.expect("PUT", "/api/v1/assistant", {"place": {"side": "center", "height": "bottom"}})
+        require(back["place"] == FIRST_PLACE, f"Moved back, the answers are at {describe(back['place'])}")
+        ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 4})
+        shown = on_glass(ctx, "The washing is done", "a line where the answers went back to")
+        below = node_center(shown, "text", "The washing is done")
+        require(
+            above is not None and below is not None and above[0] < below[0] and above[1] < below[1],
+            f"Moved to the top left, a line stood at {above}; moved back, the next stood at {below}, "
+            "which is not below it and to its right",
+        )
+        ctx.note("answersMoved", {"topLeft": above, "bottomCenter": below})
 
         picture = ctx.api.call("GET", "/api/v1/screenshot")
         require(
