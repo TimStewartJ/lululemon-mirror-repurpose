@@ -56,6 +56,14 @@ final class HealthReport {
                 .put("power", ForegroundKeeper.power(context))
                 .put("webView", webView(context));
 
+        JSONObject memory = result.optJSONObject("memory");
+        if (memory == null) {
+            memory = new JSONObject();
+            result.put("memory", memory);
+        }
+        RestartAdvice.describe(memory);
+        JSONObject supervisor = SupervisorProbe.check(context);
+
         UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
         JSONArray nextChange = clock.changesJson(now, 1);
         return result
@@ -86,7 +94,8 @@ final class HealthReport {
                 .put("pairing", pairing.securitySnapshot())
                 .put("voice", VoiceManager.getInstance(context).snapshot())
                 .put("assistant", AssistantManager.getInstance(context).diagnostics())
-                .put("otaSupervisor", SupervisorProbe.check(context));
+                .put("otaSupervisor", supervisor)
+                .put("restart", RestartAdvice.snapshot());
     }
 
     private static JSONObject display(Context context) throws JSONException {

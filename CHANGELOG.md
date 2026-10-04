@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Say when the Mirror needs to be switched off and on. On one Mirror, nine
+  days after its last restart and with voice commands on, a daemon of the
+  factory software had grown to 217 MB and four fifths of the compressed swap
+  were in use. The kernel then ended a background process every six seconds,
+  among them the OTA supervisor, which could not install or roll back
+  anything for hours, while Android went on reporting 300 MB as available.
+  Only a restart gives that memory back, and an app cannot restart a Mirror.
+  Mirror Home now reads what the kernel itself says of memory, looks for the
+  supervisor every five minutes, and advises a restart when the supervisor
+  has been silent for half an hour or three quarters of the swap are in use
+  after three days or more. It says so in `status` and the health report
+  (`restart`), under **Uptime** in the controls, and, with an assistant, as a
+  row in the answer to a greeting. The health report also carries the
+  kernel's figures and the five processes that hold most memory, and
+  `tools/validate.ps1 mirror` reports a Mirror that asks to be restarted.
 - Answer greetings. "Mirror, good morning", "good afternoon", "good evening",
   "I'm home" and "good night" are commands of the Mirror's own: it wakes, or
   for "good night" goes dark, and the glass returns the greeting. With the

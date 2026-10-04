@@ -43,7 +43,16 @@ def healthy_report():
             "pssKb": 180_000, "javaHeapUsedKb": 9_000, "javaHeapMaxKb": 131_072, "nativeHeapKb": 60_000,
             "openFiles": 140, "threads": 40, "systemAvailableKb": 900_000, "trimEvents": 0,
             "systemLow": False,
+            "kernel": {"freeKb": 120_000, "cachedKb": 210_000, "swapTotalKb": 524_284, "swapFreeKb": 400_000},
+            "largest": [
+                {"name": "dev.mirror.repurpose", "rssKb": 150_000, "swapKb": 4_000},
+                {"name": "dev.mirror.repurpose:voice", "rssKb": 130_000, "swapKb": 9_000},
+                {"name": "system_server", "rssKb": 60_000, "swapKb": 10_000},
+                {"name": "lowi-server", "rssKb": 2_500, "swapKb": 40_000},
+                {"name": "com.android.systemui", "rssKb": 30_000, "swapKb": 9_000},
+            ],
         },
+        "restart": {"advised": False, "reason": None},
         "storage": {"dataFreeBytes": 4 << 30},
         "device": {
             "display": {"densityDpi": 240, "on": True}, "webView": {"versionName": "44.0.2403.119"},
@@ -2002,6 +2011,7 @@ class EmulatorHealthTest(unittest.TestCase):
         api = FakeApi({
             ("GET", "/api/v1/clients"): Reply(401, {"error": "Unauthorized"}, {}),
             ("GET", "/api/v1/health"): report,
+            ("GET", "/api/v1/status"): {"restart": report.get("status restart", report["restart"])},
         })
         with tempfile.TemporaryDirectory() as directory:
             ctx = validate.Context(FakeAdb(), api, pathlib.Path(directory))
@@ -2027,6 +2037,14 @@ class EmulatorHealthTest(unittest.TestCase):
             # What the emulator gives a panel this size unless it is told otherwise.
             "gives an app a 256 MB heap, not a Mirror's 128 MB": lambda report: report["memory"].update(
                 javaHeapMaxKb=262_144
+            ),
+            "What the kernel says of memory was not read": lambda report: report["memory"].update(kernel=None),
+            "The processes that hold most memory are listed as": lambda report: report["memory"]["largest"].reverse(),
+            "has just started asks to be restarted": lambda report: report["restart"].update(
+                advised=True, reason="Memory is running short"
+            ),
+            "An emulator that has just started asks": lambda report: report.update(
+                {"status restart": {"advised": True, "reason": "Memory is running short"}}
             ),
         }
         for message, break_it in faults.items():
@@ -3125,6 +3143,9 @@ class MirrorHealthTest(unittest.TestCase):
             r"3 dashboard script error\(s\)": lambda report: report["dashboard"].update(consoleErrors=3),
             r"1 unhandled API error\(s\)": lambda report: report["api"].update(unhandledErrors=1),
             "Android reports low memory": lambda report: report["memory"].update(systemLow=True),
+            "the Mirror asks to be switched off and on: Memory is running short after 9 days": lambda report: report.update(
+                restart={"advised": True, "reason": "Memory is running short after 9 days without a restart"}
+            ),
             "less than 256 MiB of storage is free": lambda report: report["storage"].update(dataFreeBytes=100 << 20),
             "OTA supervisor is installed but has not accepted connections for 30 s": lambda report: report[
                 "otaSupervisor"

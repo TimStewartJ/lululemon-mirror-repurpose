@@ -531,6 +531,7 @@ public final class ControlServer extends NanoHTTPD {
         result.put("apiVersion", 1);
         result.put("appVersion", BuildConfig.VERSION_NAME);
         result.put("deviceUptimeSeconds", SystemClock.elapsedRealtime() / 1000L);
+        result.put("restart", RestartAdvice.snapshot());
         result.put("paired", pairing.isPaired());
         result.put("displayName", configStore.getDisplayName());
         result.put("timeZone", configStore.getTimeZoneId());

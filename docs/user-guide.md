@@ -344,6 +344,14 @@ found without standing in front of it:
   last seconds; **brought back** says how often it has had to since it
   started. Script errors on the dashboard page are counted here.
 - **Memory** and **Storage**: what Mirror Home uses and what is left.
+- Under **Uptime**, a line appears when the Mirror asks to be restarted. A
+  Mirror has less than a gigabyte of memory, and its factory software leaks
+  some of it every day. After a week or more, sooner with voice commands on,
+  memory runs short: the Mirror gets slower and Android keeps stopping
+  background programs, the updater among them. Nothing but a restart gives
+  that memory back, and the Mirror cannot restart by itself, so it says so
+  here, and with an assistant also when you greet it. Switch its power off
+  and on; everything comes back by itself within a minute or two.
 - **Updater**: whether the optional OTA supervisor is ready. Android restarts
   the supervisor now and then when memory is short, so **Not answering right
   now** for a moment is normal; **Not answering since** a time is not.

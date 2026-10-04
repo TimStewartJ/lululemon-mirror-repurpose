@@ -55,6 +55,15 @@ public final class ControlServerService extends Service {
         }
     };
 
+    private final Runnable watchForRestart = new Runnable() {
+        @Override
+        public void run() {
+            // Looking for the supervisor blocks for a moment.
+            new Thread(() -> RestartAdvice.sample(ControlServerService.this), "restart-advice").start();
+            handler.postDelayed(this, RestartAdvice.SAMPLE_INTERVAL_MS);
+        }
+    };
+
     private ControlServer server;
     private FCastServer fcastServer;
     private LocalDiscovery localDiscovery;
@@ -79,6 +88,7 @@ public final class ControlServerService extends Service {
                 handler.post(ensureHomeActivity);
             }
             handler.postDelayed(keepDashboardInFront, ForegroundKeeper.CHECK_INTERVAL_MS);
+            handler.postDelayed(watchForRestart, RestartAdvice.SAMPLE_INTERVAL_MS);
         } catch (IOException error) {
             Log.e(TAG, "Unable to start control server", error);
             stopSelf();
@@ -109,6 +119,7 @@ public final class ControlServerService extends Service {
     public void onDestroy() {
         handler.removeCallbacks(ensureHomeActivity);
         handler.removeCallbacks(keepDashboardInFront);
+        handler.removeCallbacks(watchForRestart);
         if (server != null) {
             server.stop();
             server = null;

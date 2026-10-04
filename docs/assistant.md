@@ -60,6 +60,10 @@ was said, so it is there in well under a second:
 | "I'm home" | What came due while you were out, and what is next. |
 | "good night" | What tomorrow holds, and what was left open today. The display goes dark when it has been read. |
 
+A Mirror that is running short of memory and wants to be switched off and
+on adds a row saying so, labelled **MIRROR**, to every such answer except
+the one to "good night"; see [Health](user-guide.md#health).
+
 A reminder counts as missed from the moment it was due until it is marked
 done or dismissed, or until the board drops it a day later. After a
 greeting, "Mirror, dismiss those" marks the ones it has just listed as done.

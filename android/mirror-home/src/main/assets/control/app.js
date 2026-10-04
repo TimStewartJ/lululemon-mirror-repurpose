@@ -609,6 +609,11 @@
         byId('about-binder').textContent = next.mirrorBinderConnected ? 'Connected' : 'Reconnecting';
         byId('about-helper').textContent = next.systemHelperConnected ? 'Temporary helper active' : 'Factory service';
         byId('about-uptime').textContent = formatUptime(next.deviceUptimeSeconds);
+        var restart = next.restart || {};
+        byId('about-restart').classList.toggle('hidden', !restart.advised);
+        byId('about-restart').textContent = restart.advised
+          ? restart.reason + '. Switch the Mirror off and on when convenient; only that gives the memory back.'
+          : '';
         if (next.weather) {
           weatherSnapshot = next.weather;
           renderWeatherStatus(next.weather);

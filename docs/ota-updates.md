@@ -275,6 +275,14 @@ reports that in its own health report as `otaSupervisor`, so a stopped
 supervisor is noticed before an update is attempted. See
 [Control protocol](protocol.md#health).
 
+A supervisor that stays silent is most often kept from running by the
+kernel. On a Mirror that has not been restarted for more than a week, memory
+can run so short that the kernel ends every background process seconds after
+Android starts it, the supervisor included; updates and rollbacks are then
+refused with a connection error. Mirror Home reports this as `restart` in
+its status and health report. Switch the Mirror off and on, and the
+supervisor answers again.
+
 ## Failure-injection build
 
 Maintainers can build a signed Home APK that intentionally withholds its health

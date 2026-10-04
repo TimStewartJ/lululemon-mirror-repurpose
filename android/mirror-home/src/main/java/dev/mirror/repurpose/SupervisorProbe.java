@@ -67,6 +67,14 @@ final class SupervisorProbe {
                         unreachableSince == 0L ? JSONObject.NULL : unreachableSince);
     }
 
+    /**
+     * For how long an installed supervisor has not been answering, as of the
+     * last look; 0 if it answered then, is not installed, or was never looked for.
+     */
+    static synchronized long silentForMs(long now) {
+        return unreachableSince == 0L ? 0L : Math.max(0L, now - unreachableSince);
+    }
+
     private static boolean accepting() {
         try (Socket socket = new Socket()) {
             socket.connect(

@@ -1429,6 +1429,24 @@ def check_health(ctx: Context) -> None:
         heap_mb == android_emulator.HEAP_MB,
         f"This emulator gives an app a {heap_mb} MB heap, not a Mirror's {android_emulator.HEAP_MB} MB",
     )
+    kernel = health["memory"]["kernel"]
+    largest = health["memory"]["largest"]
+    require(
+        isinstance(kernel, dict) and kernel["cachedKb"] > 0 and kernel["freeKb"] > 0
+        and all(key in kernel for key in ("swapTotalKb", "swapFreeKb")),
+        f"What the kernel says of memory was not read: {describe(kernel)}",
+    )
+    held = [entry["rssKb"] + entry["swapKb"] for entry in largest]
+    require(
+        # Android 6 lets an app read this of every process, so the list is full.
+        len(largest) == 5 and all(entry["name"] for entry in largest) and held == sorted(held, reverse=True) and held[-1] > 0,
+        f"The processes that hold most memory are listed as {describe(largest)}",
+    )
+    nothing = {"advised": False, "reason": None}
+    require(
+        health["restart"] == nothing and ctx.status()["restart"] == nothing,
+        f"An emulator that has just started asks to be restarted: {describe(health['restart'])}",
+    )
     open_files = health["memory"]["openFiles"]
     require(open_files and open_files > 0, f"Open files were not counted: {open_files!r}")
     if ctx.inspectable():
@@ -1446,6 +1464,8 @@ def check_health(ctx: Context) -> None:
     require(health["clock"]["bundledTzdata"], "The bundled zone table did not load")
     require(health["otaSupervisor"] == {"installed": False}, f"Supervisor: {health['otaSupervisor']}")
     ctx.note("pssKb", health["memory"]["pssKb"])
+    ctx.note("kernelMemory", kernel)
+    ctx.note("largestProcess", largest[0])
     ctx.note("javaHeapMaxKb", health["memory"]["javaHeapMaxKb"])
     ctx.note("openFiles", health["memory"]["openFiles"])
     ctx.note("densityDpi", display["densityDpi"])
@@ -3398,6 +3418,9 @@ def mirror_health(ctx: MirrorContext) -> None:
         "earlyStops": early_stops,
     })
     ctx.note("memory", {key: memory.get(key) for key in ("pssKb", "javaHeapUsedKb", "nativeHeapKb", "openFiles", "threads", "systemAvailableKb", "trimEvents")})
+    if memory.get("kernel"):
+        ctx.note("kernelMemory", memory["kernel"])
+        ctx.note("largestProcesses", memory.get("largest"))
     ctx.note("display", health["device"]["display"])
     ctx.note("power", health["device"].get("power"))
     ctx.note("front", activity.get("front"))
@@ -3429,6 +3452,8 @@ def mirror_health(ctx: MirrorContext) -> None:
         problems.append(f"{health['api']['unhandledErrors']} unhandled API error(s)")
     if memory.get("systemLow"):
         problems.append("Android reports low memory")
+    if (health.get("restart") or {}).get("advised"):
+        problems.append(f"the Mirror asks to be switched off and on: {health['restart']['reason']}")
     if health["storage"].get("dataFreeBytes", 1 << 40) < 256 * 1024 * 1024:
         problems.append("less than 256 MiB of storage is free")
     if supervisor.get("installed") and not supervisor.get("listening"):
