@@ -34,6 +34,7 @@ public final class ConfigStore {
     private static final String KEY_ASSISTANT_ENABLED = "assistant_enabled";
     private static final String KEY_ASSISTANT_ADDRESS = "assistant_address";
     private static final String KEY_ASSISTANT_KEY = "assistant_key";
+    private static final String KEY_MASCOT = "glass_mascot";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
        to the built-in dashboard instead of the offline page. */
     private static final String[] RETIRED_DASHBOARD_URLS = {
@@ -293,5 +294,16 @@ public final class ConfigStore {
 
     public void setAssistantKey(String key) {
         preferences.edit().putString(KEY_ASSISTANT_KEY, key).apply();
+    }
+
+    /** The character that the Mirror answers as, by its id; {@link Mascot#NONE} for none. */
+    public String getMascot() {
+        String stored = preferences.getString(KEY_MASCOT, Mascot.NONE);
+        // One that a later build knew and this one does not is none.
+        return Mascot.byId(stored) == null ? Mascot.NONE : stored;
+    }
+
+    public void setMascot(String id) {
+        preferences.edit().putString(KEY_MASCOT, id).apply();
     }
 }

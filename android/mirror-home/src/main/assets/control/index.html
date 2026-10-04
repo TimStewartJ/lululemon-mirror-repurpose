@@ -506,6 +506,9 @@
           <p class="hint inset">While the assistant is on, the sound of a request leaves the mirror for the companion, which may pass its words on to the service that answers. The key is the one the companion printed when it was set up. The mirror does not show it again; type a new one to replace it.</p>
         </form>
         <div class="group">
+          <label class="row"><div class="row-main"><span class="row-label">Character</span><span class="row-sub">A small figure above the mirror’s answers that listens, thinks and answers along. It says hello on the glass when you choose it.</span></div><select id="assistant-mascot" class="select" disabled></select></label>
+        </div>
+        <div class="group">
           <form id="assistant-ask-form" class="row"><input id="assistant-ask" class="row-input ask-input" maxlength="500" placeholder="Ask in your own words" aria-label="Request for the assistant" autocomplete="off" disabled><button id="assistant-ask-send" type="submit" class="btn small" disabled>Ask</button></form>
           <p id="assistant-answer" class="status inset" role="status"></p>
           <details class="disclosure">

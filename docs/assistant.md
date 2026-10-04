@@ -68,6 +68,41 @@ A reminder counts as missed from the moment it was due until it is marked
 done or dismissed, or until the board drops it a day later. After a
 greeting, "Mirror, dismiss those" marks the ones it has just listed as done.
 
+### A character
+
+The Mirror can answer as a small character that stands above its words.
+Choose one under **Settings > Assistant > Character** in the controls; it
+says hello on the glass when you do. With **None**, which is how a Mirror
+starts, the panel shows its dots as before.
+
+| Character | What it is |
+|---|---|
+| **Blink** | Two eyes and nothing else; the one that reads from farthest away. |
+| **Wisp** | The small ghost that lives in the mirror. It floats, and waves with an arm it otherwise keeps to itself. |
+| **Mochi** | A cat's head. Its ears go up when it listens and flat when it is sorry. |
+| **Lune** | A moon. Full when it attends, a sliver when it sleeps, and its phases pass over it while it thinks. |
+
+All four act the same things out, each with the body it has:
+
+| When | The character |
+|---|---|
+| The Mirror heard its name | comes up, all eyes, and sound reaches it in small arcs. |
+| It works on a request | looks up and about, and three dots rise from it. |
+| The companion understood the words | nods. |
+| The answer arrives | says it, and then stays beside it, blinking now and then. |
+| The answer is a question | tilts its head and waits. |
+| A command was carried out | smiles, with a small hop. |
+| You greeted it | waves. |
+| It did not follow | tilts its head the other way, under a question mark. |
+| The companion did not answer | draws its brows together. |
+| Good night | shuts its eyes and sleeps. |
+
+A character takes up a new part in the frame in which the Mirror learns of
+it, whatever it was in the middle of, and leaves with the panel. It is drawn
+only while the panel shows, so it costs nothing the rest of the time. It
+also stands above what the Mirror's own voice commands show, with or
+without an assistant.
+
 What changes on the glass changes gently. A widget that the assistant adds
 fades in, one it removes fades out, one it moves glides to its place, and
 one whose size changes goes dark for a moment and comes back. A new item on
@@ -272,6 +307,15 @@ The Mirror's side is `GET` and `PUT /api/v1/assistant` and `POST
 /api/v1/assistant/ask`; see [Control protocol](protocol.md#assistant).
 
 ## For developers
+
+The characters are `Mascot*.java`. They know nothing of Android: each
+draws itself with a pen (`MascotPen`) from a pose that `MascotRig` works
+out, which pulls every part of a face toward where its mood wants it with a
+spring. `MascotView` is the pen on the glass. On a computer,
+`python tools/mascots.py sheet` paints every character in every mood and
+`python tools/mascots.py film` has them act out a conversation as a GIF,
+from the same code and without a Mirror; it needs a JDK and Pillow. A new
+character is a class beside the four and a line in `Mascot.ALL`.
 
 `AssistantManager.java` keeps the settings, talks to the companion and
 decides what the glass shows; `ConversationPanel.java` is the panel that

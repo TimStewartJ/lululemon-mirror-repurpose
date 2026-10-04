@@ -1831,6 +1831,20 @@
     if (document.activeElement !== address && !assistantEdited) address.value = report.address || '';
     byId('assistant-key').placeholder = report.keySet ? 'Saved' : 'Not set';
 
+    var mascot = byId('assistant-mascot');
+    if (document.activeElement !== mascot) {
+      mascot.textContent = '';
+      [{ id: 'none', name: 'None' }].concat(report.mascots || []).forEach(function (each) {
+        var option = document.createElement('option');
+        option.value = each.id;
+        option.textContent = each.name;
+        mascot.appendChild(option);
+      });
+      mascot.value = report.mascot || 'none';
+      /* A Mirror Home that knows no characters lists none. */
+      mascot.disabled = !report.mascots;
+    }
+
     var recent = report.recent || [];
     var list = byId('assistant-recent');
     list.textContent = '';
@@ -3232,6 +3246,21 @@
       assistantBusy = false;
       toggle.disabled = false;
       toggle.checked = !wanted;
+      setMessage('assistant-message', error.message, true);
+    });
+  });
+
+  byId('assistant-mascot').addEventListener('change', function () {
+    var select = byId('assistant-mascot');
+    var before = assistantReport ? assistantReport.mascot : 'none';
+    select.disabled = true;
+    setMessage('assistant-message', '');
+    request('/api/v1/assistant', json('PUT', { mascot: select.value })).then(function (report) {
+      select.blur();
+      renderAssistant(report);
+    }).catch(function (error) {
+      select.disabled = false;
+      select.value = before;
       setMessage('assistant-message', error.message, true);
     });
   });

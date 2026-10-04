@@ -1217,6 +1217,8 @@ class SpeakingMirror:
         self.caption = ""
         self.caption_until = 0.0
         self.rows = []
+        # The character above what the glass shows, by name; none unless an owner chose one.
+        self.figure = ""
         self.clips = {
             (validate.VOICE_CLIPS / name).read_bytes(): sentences
             for name, sentences in CLIP_SENTENCES.items()
@@ -1462,7 +1464,10 @@ class SpeakingMirror:
             shown = [self.caption] if self.captioned() else [""]
             for label, text in self.rows if self.captioned() else ():
                 shown += [label.upper(), text]
-            return "".join(f'<node text="{text}" bounds="[0,0][1,1]" />' for text in shown)
+            nodes = "".join(f'<node text="{text}" content-desc="" bounds="[0,0][1,1]" />' for text in shown)
+            if self.figure and self.captioned():
+                nodes = f'<node text="" content-desc="{self.figure}" bounds="[0,0][1,1]" />' + nodes
+            return nodes
         return ""
 
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Give the Mirror a character to answer as, if its owner wants one: Blink
+  (two eyes), Wisp (a ghost), Mochi (a cat) or Lune (a moon), chosen under
+  **Settings > Assistant > Character** or with `mascot` in `PUT
+  /api/v1/assistant`. It stands above the words in place of the dots and acts
+  out what the Mirror does: it comes up when it hears its name, looks about
+  while it thinks, nods when the words were understood, says its answer,
+  tilts its head at what it did not follow, waves back at a greeting and
+  sleeps at good night. Each part of its face is moved by a spring, so a new
+  mood takes hold in the same frame and arrives with a little bounce. None is
+  chosen unless an owner chooses, and a Mirror without one is unchanged.
+  `tools/mascots.py` paints the characters on a computer, from the code that
+  draws them on the glass.
 - Say when the Mirror needs to be switched off and on. On one Mirror, nine
   days after its last restart and with voice commands on, a daemon of the
   factory software had grown to 217 MB and four fifths of the compressed swap

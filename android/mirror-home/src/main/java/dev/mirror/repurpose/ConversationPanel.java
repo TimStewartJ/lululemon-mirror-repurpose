@@ -18,6 +18,8 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import dev.mirror.repurpose.MascotRig.Mood;
+
 import java.util.List;
 import java.util.Locale;
 
@@ -30,7 +32,10 @@ import java.util.Locale;
  * run while it works; what it understood, small and in quotation marks,
  * which stays above the answer so that a mishearing can be seen for what it
  * is; the answer, large; and under an answer that has several parts, a row
- * for each with a label before it. Everything arrives and leaves by fading,
+ * for each with a label before it. If the owner chose a character, it
+ * stands above the words in place of the dots and acts all of this out: it
+ * listens, thinks, nods when it has understood, and says its answer.
+ * Everything arrives and leaves by fading,
  * and the panel grows and shrinks around its words instead of jumping. Its
  * backing is black, which on the glass is plain mirror and keeps a film or
  * a widget behind the words from tangling with them.
@@ -50,8 +55,11 @@ final class ConversationPanel extends LinearLayout {
     /** A word or two is set large; a sentence that has to fit, smaller. */
     private static final int SHORT_TEXT = 32;
     private static final int LABEL_GAP_DP = 16;
+    /** The box of a mascot, of which the mascot itself fills the middle two thirds. */
+    private static final int MASCOT_DP = 112;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final MascotView mascot;
     private final TextView heard;
     private final LinearLayout status;
     private final Dots dots;
@@ -81,6 +89,12 @@ final class ConversationPanel extends LinearLayout {
         // Only what is inside: the panel's own place is seen to below.
         growing.setAnimateParentHierarchy(false);
         setLayoutTransition(growing);
+
+        mascot = new MascotView(context);
+        mascot.setVisibility(GONE);
+        LayoutParams mascotLayout = new LayoutParams(dp(MASCOT_DP), dp(MASCOT_DP));
+        mascotLayout.gravity = Gravity.CENTER_HORIZONTAL;
+        addView(mascot, mascotLayout);
 
         heard = text(context, 20, "sans-serif-light", HEARD_COLOR);
         heard.setTypeface(Typeface.create("sans-serif-light", Typeface.ITALIC));
@@ -129,6 +143,49 @@ final class ConversationPanel extends LinearLayout {
         setVisibility(GONE);
     }
 
+    /** Chooses the character that stands above the words, by its id; none for an id that names none. */
+    void setMascot(String id) {
+        Mascot chosen = Mascot.byId(id);
+        if (chosen == mascot.chosen()) {
+            return;
+        }
+        mascot.choose(chosen);
+        mascot.setVisibility(chosen == null ? GONE : VISIBLE);
+    }
+
+    /** Has the mascot, if there is one, act a caption out. */
+    private void act(String kind, GlassCaption.Caption caption, String text) {
+        if (mascot.chosen() == null) {
+            return;
+        }
+        if (VoiceManager.KIND_LISTENING.equals(kind)) {
+            mascot.show(Mood.LISTENING);
+        } else if (AssistantManager.KIND_THINKING.equals(kind)) {
+            mascot.show(Mood.THINKING);
+        } else if (AssistantManager.KIND_HEARD.equals(kind)) {
+            mascot.show(Mood.THINKING);
+            mascot.nod();
+        } else if (VoiceManager.KIND_NOT_UNDERSTOOD.equals(kind)) {
+            mascot.show(Mood.CONFUSED);
+        } else if (GlassCaption.MOOD_SLEEP.equals(caption.mood)) {
+            mascot.show(Mood.SLEEPY);
+        } else if (GlassCaption.MOOD_SORRY.equals(caption.mood)) {
+            mascot.show(Mood.SORRY);
+        } else if (GlassCaption.MOOD_GREET.equals(caption.mood)) {
+            // The greeting came first and its answer follows: it goes on waving through both.
+            if (mascot.mood() != Mood.GREETING) {
+                mascot.show(Mood.GREETING);
+            }
+        } else if (VoiceManager.KIND_COMMAND.equals(kind)) {
+            mascot.show(Mood.HAPPY);
+        } else {
+            // It says its answer for about as long as the first words take to read.
+            float seconds = Math.min(2.4f, 0.9f + 0.012f * text.length());
+            boolean asks = GlassCaption.MOOD_CURIOUS.equals(caption.mood) || text.endsWith("?");
+            mascot.speak(seconds, asks ? Mood.CURIOUS : Mood.IDLE);
+        }
+    }
+
     /** Shows what a caption holds, in the way of its kind. Call on the main thread. */
     void show(GlassCaption.Caption caption) {
         String kind = caption.kind == null ? "" : caption.kind;
@@ -172,6 +229,7 @@ final class ConversationPanel extends LinearLayout {
             setMain(text);
             setRows(caption.details);
         }
+        act(kind, caption, caption.text);
         appear();
         handler.removeCallbacks(leave);
         handler.postDelayed(leave, showFor);
@@ -207,6 +265,7 @@ final class ConversationPanel extends LinearLayout {
             return;
         }
         showing = false;
+        mascot.show(Mood.HIDDEN);
         int leaving = generation;
         animate().cancel();
         animate().alpha(0f).translationY(dp(6)).setDuration(LEAVE_MS).withEndAction(() -> {
@@ -244,13 +303,26 @@ final class ConversationPanel extends LinearLayout {
     }
 
     private void setStatus(int motion, String label) {
-        dots.set(motion);
-        if (motion == Dots.STILL) {
-            status.setVisibility(GONE);
-            return;
+        if (mascot.chosen() != null) {
+            // The mascot shows that the Mirror listens or works; the dots would say it twice.
+            dots.set(Dots.STILL);
+            dots.setVisibility(GONE);
+            if (label.isEmpty()) {
+                status.setVisibility(GONE);
+                return;
+            }
+        } else {
+            dots.setVisibility(VISIBLE);
+            dots.set(motion);
+            if (motion == Dots.STILL) {
+                status.setVisibility(GONE);
+                return;
+            }
         }
         statusLabel.setText(label);
         statusLabel.setVisibility(label.isEmpty() ? GONE : VISIBLE);
+        // Beside the dots the label keeps its distance; alone it stands in the middle.
+        ((LayoutParams) statusLabel.getLayoutParams()).leftMargin = mascot.chosen() == null ? dp(12) : 0;
         if (status.getVisibility() != VISIBLE) {
             status.setVisibility(VISIBLE);
             status.setAlpha(0f);
@@ -348,6 +420,11 @@ final class ConversationPanel extends LinearLayout {
      */
     private void setColumn(float indent) {
         boolean listed = indent >= 0;
+        // The mascot stands over the first word of a list, as the one who says it.
+        LayoutParams stand = (LayoutParams) mascot.getLayoutParams();
+        stand.gravity = listed ? Gravity.START : Gravity.CENTER_HORIZONTAL;
+        stand.leftMargin = listed ? Math.round(indent) - dp(MASCOT_DP) / 6 : 0;
+        mascot.setLayoutParams(stand);
         for (TextView line : new TextView[]{heard, main}) {
             LayoutParams layout = (LayoutParams) line.getLayoutParams();
             layout.gravity = listed ? Gravity.START : Gravity.CENTER_HORIZONTAL;

@@ -672,7 +672,7 @@ public final class VoiceManager {
                         lastCommand = null;
                     }
                 }
-                show(KIND_COMMAND, caption);
+                GlassCaption.show(KIND_COMMAND, caption, 0L, moodOf(outcome.command));
                 break;
             case WAKE:
                 synchronized (this) {
@@ -770,6 +770,14 @@ public final class VoiceManager {
                 }
                 return command.caption;
         }
+    }
+
+    /** How the caption of a command is meant: a greeting is returned, and sleep is sleep. */
+    private static String moodOf(VoiceCommands.Command command) {
+        if (command == VoiceCommands.Command.SLEEP || command == VoiceCommands.Command.GOOD_NIGHT) {
+            return GlassCaption.MOOD_SLEEP;
+        }
+        return command.greets() ? GlassCaption.MOOD_GREET : "";
     }
 
     /** A sentence without the Mirror's name before it: the words of the command themselves. */

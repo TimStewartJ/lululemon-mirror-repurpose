@@ -222,12 +222,15 @@ that stands. Times are epoch milliseconds.
 | `address`, `keySet` | Where the companion is, as `http://host:port`; and whether the Mirror has a key to send it. The key itself is never reported. |
 | `state`, `detail` | `off`, `unconfigured` (switched on, but the address or the key is missing), `connecting`, `connected`, `trouble` (the companion answers and reports that a part of it is not ready) or `unreachable` (no answer, a late one, or a key that is not accepted); and a sentence about it for the controls. |
 | `model` | What the companion says answers its requests. |
+| `mascot`, `mascots` | The character that the Mirror answers as, by its id, or `none`; and the characters there are, each with `id` and `name`. |
 | `busy`, `lastAnswerAt` | Whether a request is waiting for its answer, and when the companion last answered anything. |
 | `counts` | Since Mirror Home started: `requests`, of which `ignored` (the companion took them for talk) and `failures` (no answer). |
 | `recent` | Up to twelve requests: the time `at`, the `source` (`voice`, `controls`, or `shortcut` for a greeting that the Mirror recognised itself), what the companion `heard`, its `reply` and how many `rows` it had under it, whether it was `ignored`, what the companion `did`, how many `millis` the answer took, and the `error` if there was none. |
 
-`PUT /api/v1/assistant` takes any of `enabled`, `address` and `key`, and
-answers with the same report. An address may be given without `http://`; it
+`PUT /api/v1/assistant` takes any of `enabled`, `address`, `key` and
+`mascot`, and answers with the same report. A `mascot` that is not `none`
+or one of `mascots` is refused with `400`; a newly chosen one shows its name
+on the glass for a few seconds. An address may be given without `http://`; it
 ends after its port. A key is up to 256 characters without spaces. An empty
 address or key removes it. `400` says what is wrong with either. `status`
 carries `assistant` with `enabled` and `state`.

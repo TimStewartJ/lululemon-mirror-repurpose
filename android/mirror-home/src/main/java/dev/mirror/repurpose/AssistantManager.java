@@ -228,7 +228,9 @@ public final class AssistantManager {
                 long shown = 1_200L;
                 if (reply != null && !reply.ignored && !reply.reply.isEmpty()) {
                     shown = reply.millis();
-                    GlassCaption.show(new GlassCaption.Caption(KIND_NOTICE, reply.reply, "", reply.details, shown));
+                    GlassCaption.show(new GlassCaption.Caption(
+                            KIND_NOTICE, reply.reply, "", reply.details, shown,
+                            "good-night".equals(id) ? GlassCaption.MOOD_SLEEP : GlassCaption.MOOD_GREET));
                 }
                 if (then != null) {
                     afterShown = then;
@@ -323,6 +325,30 @@ public final class AssistantManager {
     }
 
     /** Where the assistant stands, in brief: for the status, which the controls ask for every few seconds. */
+    /**
+     * Chooses the character that the Mirror answers as, and has a new one
+     * say hello on the glass, so that whoever chose it sees what they chose.
+     *
+     * @param id a mascot's id, or {@link Mascot#NONE}
+     * @throws IllegalArgumentException if there is no such mascot
+     */
+    public void chooseMascot(String id) {
+        if (!Mascot.known(id)) {
+            StringBuilder known = new StringBuilder(Mascot.NONE);
+            for (Mascot mascot : Mascot.all()) {
+                known.append(", ").append(mascot.id);
+            }
+            throw new IllegalArgumentException("mascot must be one of: " + known);
+        }
+        boolean changed = !id.equals(configStore.getMascot());
+        configStore.setMascot(id);
+        Mascot chosen = Mascot.byId(id);
+        if (changed && chosen != null && !AutomationManager.getInstance(context).isSleeping()) {
+            GlassCaption.show(new GlassCaption.Caption(
+                    KIND_NOTICE, chosen.name, "", null, 4_500L, GlassCaption.MOOD_GREET));
+        }
+    }
+
     public JSONObject summary() throws JSONException {
         return new JSONObject().put("enabled", configStore.isAssistantEnabled()).put("state", state());
     }
@@ -336,6 +362,8 @@ public final class AssistantManager {
                 .put("state", state)
                 .put("detail", describe(state))
                 .put("model", companionModel)
+                .put("mascot", configStore.getMascot())
+                .put("mascots", mascots())
                 .put("busy", waiting > 0)
                 .put("lastAnswerAt", lastAnswerAt == 0 ? JSONObject.NULL : lastAnswerAt)
                 .put("counts", new JSONObject()
@@ -346,6 +374,14 @@ public final class AssistantManager {
     }
 
     /** The same for the health report, without what was said: that report is passed around. */
+    private static JSONArray mascots() throws JSONException {
+        JSONArray list = new JSONArray();
+        for (Mascot mascot : Mascot.all()) {
+            list.put(new JSONObject().put("id", mascot.id).put("name", mascot.name));
+        }
+        return list;
+    }
+
     public JSONObject diagnostics() throws JSONException {
         JSONObject report = snapshot();
         report.remove("recent");
@@ -434,7 +470,8 @@ public final class AssistantManager {
         record(source, typed, result);
         handler.post(() -> {
             if (reply == null) {
-                show(KIND_NOTICE, "The assistant isn\u2019t answering", 5_000L);
+                GlassCaption.show(
+                        KIND_NOTICE, "The assistant isn\u2019t answering", 5_000L, GlassCaption.MOOD_SORRY);
                 return;
             }
             if (reply.ignored || reply.reply.isEmpty()) {
@@ -452,7 +489,8 @@ public final class AssistantManager {
                     reply.reply,
                     reply.heard.isEmpty() ? typed : reply.heard,
                     reply.details,
-                    reply.millis()));
+                    reply.millis(),
+                    reply.listen ? GlassCaption.MOOD_CURIOUS : ""));
             if (reply.listen && voice != null) {
                 voice.awaitAnswer();
             }

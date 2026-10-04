@@ -1994,6 +1994,12 @@ def check_assistant_off(ctx: Context) -> None:
         state["enabled"] is False and state["state"] == "off" and state["address"] == "" and not state["keySet"],
         f"The assistant is set up before anyone did so: {describe(state)}",
     )
+    require(
+        state.get("mascot") == "none" and len(state.get("mascots") or []) >= 3
+        and all(each["id"] and each["name"] for each in state["mascots"]),
+        f"A Mirror answers as a character before anyone chose one, or offers none: {describe(state.get('mascot'))} "
+        f"of {describe(state.get('mascots'))}",
+    )
     require(ctx.status()["assistant"] == {"enabled": False, "state": "off"}, "The status does not say that the assistant is off")
     health = ctx.health()["assistant"]
     require(health["state"] == "off" and "recent" not in health, f"The health report says of the assistant: {describe(health)}")
@@ -2010,6 +2016,8 @@ def check_assistant_off(ctx: Context) -> None:
         ({"address": "http://someone:secret@10.0.2.2:8790"}, "An address with a password in it"),
         ({"key": "two words"}, "A key with a space in it"),
         ({"key": "k" * 257}, "A key of 257 characters"),
+        ({"mascot": "dragon"}, "A character that there is none of"),
+        ({"mascot": 3}, "A character that is no text"),
     ):
         expect_refused(ctx.api.call("PUT", "/api/v1/assistant", body), 400, what)
     require(assistant_state(ctx) == state, "A refused setting changed something")
@@ -2100,6 +2108,28 @@ def check_assistant_asks(ctx: Context) -> None:
         ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 8})
         on_glass(ctx, "The washing is done", "the line that followed the rows")
         require("Water the plants" not in ctx.native_text(), "The rows of one line stayed under the next")
+
+        # A character, once chosen, says hello and then stands above whatever the Mirror says.
+        figure = state["mascots"][1]
+        there = f'content-desc="{figure["name"]}"'
+        try:
+            chosen = ctx.api.expect("PUT", "/api/v1/assistant", {"mascot": figure["id"]})
+            require(
+                chosen["mascot"] == figure["id"] and chosen["state"] == "connected",
+                f"Choosing a character left the assistant {chosen['state']} with {describe(chosen['mascot'])}",
+            )
+            on_glass(ctx, f'text="{figure["name"]}"', "the hello of the character that was chosen")
+            require(there in ctx.native_text(), "A character says hello without being on the glass")
+            time.sleep(1)
+            ctx.screenshot("assistant-mascot")
+            ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 4})
+            on_glass(ctx, "The washing is done", "a line under the character")
+            require(there in ctx.native_text(), "The character left when the next line came")
+        finally:
+            ctx.api.expect("PUT", "/api/v1/assistant", {"mascot": "none"})
+        ctx.api.expect("POST", "/api/v1/assistant/say", {"text": "The washing is done", "kind": "notice", "seconds": 4})
+        on_glass(ctx, "The washing is done", "a line without the character")
+        require(there not in ctx.native_text(), "A character that was sent away is still on the glass")
 
         picture = ctx.api.call("GET", "/api/v1/screenshot")
         require(

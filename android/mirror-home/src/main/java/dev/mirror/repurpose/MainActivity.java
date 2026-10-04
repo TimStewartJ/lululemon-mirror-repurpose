@@ -142,6 +142,7 @@ public final class MainActivity extends Activity {
     };
     private final GlassCaption.Glass captionGlass = caption -> {
         if (this.conversation != null) {
+            this.conversation.setMascot(this.configStore.getMascot());
             this.conversation.show(caption);
         }
     };

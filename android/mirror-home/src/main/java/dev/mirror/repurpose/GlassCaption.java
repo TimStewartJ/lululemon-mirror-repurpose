@@ -23,6 +23,12 @@ final class GlassCaption {
     static final int MAX_LABEL = 14;
     static final int MAX_ROW_TEXT = 90;
 
+    /** How a caption is meant, for a mascot to act out; a Mirror without one ignores it. */
+    static final String MOOD_GREET = "greet";
+    static final String MOOD_SLEEP = "sleep";
+    static final String MOOD_SORRY = "sorry";
+    static final String MOOD_CURIOUS = "curious";
+
     /** One part of an answer that has several: what it is, and the words. */
     static final class Row {
         final String label;
@@ -44,13 +50,20 @@ final class GlassCaption {
         final List<Row> details;
         /** For how long; 0 for as long as its kind is shown. */
         final long millis;
+        /** How it is meant, as one of the MOOD constants; empty for plainly. */
+        final String mood;
 
         Caption(String kind, String text, String heard, List<Row> details, long millis) {
+            this(kind, text, heard, details, millis, "");
+        }
+
+        Caption(String kind, String text, String heard, List<Row> details, long millis, String mood) {
             this.kind = kind;
             this.text = text == null ? "" : text;
             this.heard = heard == null ? "" : heard;
             this.details = details == null ? Collections.<Row>emptyList() : details;
             this.millis = millis;
+            this.mood = mood == null ? "" : mood;
         }
     }
 
@@ -109,6 +122,10 @@ final class GlassCaption {
      */
     static void show(String kind, String text, long millis) {
         show(new Caption(kind, text, "", null, millis));
+    }
+
+    static void show(String kind, String text, long millis, String mood) {
+        show(new Caption(kind, text, "", null, millis, mood));
     }
 
     static void show(Caption caption) {

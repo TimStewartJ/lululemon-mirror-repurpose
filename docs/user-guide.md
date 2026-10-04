@@ -288,8 +288,10 @@ was looking; "Mirror, I'm home" brings what came up while you were out; and
 
 **Settings > Assistant** has the switch, the companion's address and key,
 and under the switch where it stands: **Connected**, or what is missing.
-The field below takes a typed request, which is the quickest way to try
-it, and **Asked lately** lists what was asked and answered since the Mirror
+**Character** gives the Mirror a small figure that stands above its answers
+and listens, thinks and answers along; there are four, and none unless you
+choose one. The field below takes a typed request, which is the quickest way
+to try it, and **Asked lately** lists what was asked and answered since the Mirror
 last started.
 
 While the assistant is on, the sound of what you ask it leaves the Mirror

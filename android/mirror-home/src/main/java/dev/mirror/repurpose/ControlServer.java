@@ -1226,7 +1226,17 @@ public final class ControlServer extends NanoHTTPD {
         if (body.has("enabled") && !(body.opt("enabled") instanceof Boolean)) {
             return error(Response.Status.BAD_REQUEST, "enabled must be true or false");
         }
+        if (body.has("mascot") && !(body.opt("mascot") instanceof String)) {
+            return error(Response.Status.BAD_REQUEST, "mascot must be text");
+        }
         try {
+            if (body.has("mascot")) {
+                assistant.chooseMascot(body.getString("mascot"));
+            }
+            if (!body.has("enabled") && !body.has("address") && !body.has("key")) {
+                // Choosing a character is no reason to look for the companion afresh.
+                return response(Response.Status.OK, assistant.snapshot());
+            }
             assistant.configure(
                     body.has("enabled") ? body.getBoolean("enabled") : null,
                     body.has("address") ? body.getString("address") : null,
