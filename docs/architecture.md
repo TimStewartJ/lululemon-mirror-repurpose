@@ -135,6 +135,13 @@ newer Home APKs matching its own signing certificate and the exact device
 fingerprint. It remains alive across Home replacement and reboot, allowing it to
 health-check the loopback Home API and perform an in-place rollback.
 
+From 1.3.0 it also offers one bindable service, to apps signed with its own
+key only. Mirror Home binds to it so that Android ranks the supervisor with
+what the display needs and does not end it when memory runs short; nothing
+but a question about that ranking passes over the connection, and the
+supervisor does not depend on it. See
+[LAN OTA updates](ota-updates.md#kept-running-by-mirror-home).
+
 Requests use HMAC-SHA256 with monotonic replay counters. The active token and
 independent bootstrap secret remain in ignored local files. See
 [LAN OTA updates](ota-updates.md).

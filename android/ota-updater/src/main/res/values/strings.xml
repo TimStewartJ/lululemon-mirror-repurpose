@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Mirror OTA Supervisor</string>
     <string name="device_admin_description">Installs signed Mirror Home updates and restores the last known-good release.</string>
+    <string name="hold_permission_label">Keep the Mirror OTA Supervisor running</string>
 </resources>

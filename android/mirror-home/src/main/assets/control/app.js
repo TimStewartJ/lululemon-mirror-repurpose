@@ -32,6 +32,7 @@
   var noteList = [];
   var voiceReport = null;
   var voiceBusy = false;
+  var scanGuardBusy = false;
   var assistantReport = null;
   var assistantBusy = false;
   var assistantEdited = false;
@@ -621,6 +622,7 @@
         if (next.automation) renderMotionStatus(next.automation);
         renderVoiceSummary(next.voice);
         renderAssistantSummary(next.assistant);
+        renderScanGuard(next.wifi && next.wifi.scanGuard);
         renderHomeStatus();
         renderNowPlaying();
         renderHomePreview();
@@ -1653,10 +1655,55 @@
     // Android restarts the supervisor now and then; a short silence is normal.
     var silentFor = Number(health.now || 0) - Number(updater.unreachableSince || 0);
     byId('health-updater').textContent = !updater.installed ? 'Not installed'
-      : updater.listening ? 'Ready'
+      : updater.listening ? 'Ready' + updaterHoldText(updater)
         : silentFor < 60000 ? 'Not answering right now'
           : 'Not answering since ' + formatDate(updater.unreachableSince);
     byId('health-report').textContent = JSON.stringify(health, null, 2);
+  }
+
+  /* Whether Android would end the updater when memory runs short. */
+  function updaterHoldText(updater) {
+    switch ((updater.hold || {}).state) {
+      case 'held':
+        return ', kept running by Mirror Home';
+      case 'unsupported':
+        return '. Version ' + (updater.versionName || '?')
+          + ' can be ended when memory runs short; 1.3.0 is kept running.';
+      case 'refused':
+        return '. It is signed with another key, so it cannot be kept running.';
+      default:
+        return '';
+    }
+  }
+
+  /* ---------- Wi-Fi scans ---------- */
+
+  function scanGuardText(guard) {
+    if (!guard.supported) return 'Not available: this Android has no such switch.';
+    switch (guard.state) {
+      case 'applied':
+        return 'On. Android looks for networks only when it is not connected.';
+      case 'waiting':
+        return 'On. Wi\u2011Fi has no network right now, so Android is looking for one.';
+      case 'error':
+        return 'Android did not take the change' + (guard.detail ? ': ' + guard.detail : '.');
+      default:
+        return 'Off. Android looks for other networks every few minutes.';
+    }
+  }
+
+  /* The switch and whether Android took it; the status carries this much every few seconds. */
+  function renderScanGuard(guard) {
+    if (!guard) return;
+    var toggle = byId('scan-guard-enabled');
+    if (!scanGuardBusy) {
+      toggle.disabled = !guard.supported;
+      toggle.checked = Boolean(guard.enabled);
+    }
+    var element = byId('scan-guard-status');
+    element.textContent = scanGuardText(guard);
+    element.classList.toggle('error', guard.state === 'error');
+    element.classList.toggle('quiet', !guard.enabled);
   }
 
   /* ---------- Voice ---------- */
@@ -3142,6 +3189,23 @@
   });
 
   /* ---------- Voice ---------- */
+
+  byId('scan-guard-enabled').addEventListener('change', function () {
+    var toggle = byId('scan-guard-enabled');
+    var wanted = toggle.checked;
+    scanGuardBusy = true;
+    toggle.disabled = true;
+    setMessage('scan-guard-message', '');
+    request('/api/v1/wifi/scan-guard', json('PUT', { enabled: wanted })).then(function (guard) {
+      scanGuardBusy = false;
+      renderScanGuard(guard);
+    }).catch(function (error) {
+      scanGuardBusy = false;
+      toggle.disabled = false;
+      toggle.checked = !wanted;
+      setMessage('scan-guard-message', error.message, true);
+    });
+  });
 
   byId('voice-enabled').addEventListener('change', function () {
     var toggle = byId('voice-enabled');

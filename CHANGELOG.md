@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Stop the memory growth that made a Mirror need a restart after about nine
+  days, where its owner asks for it. The cause was found on one Mirror by
+  stopping it and starting it again: Android 6 goes on scanning for other Wi-Fi
+  networks while it is connected, and a daemon of the factory software,
+  `lowi-server`, keeps a little more memory for every scan, about twenty
+  megabytes a day, which the kernel may not take back. With those scans
+  stopped for an hour the daemon neither grew nor used the processor; with
+  them back it grew as before. **Settings > Wi-Fi > Look for networks only
+  when disconnected** (`PUT /api/v1/wifi/scan-guard`) uses a switch of
+  Android 6 for exactly this. Mirror Home sets it again after every start,
+  looks every five minutes whether it still holds, says in `status` and the
+  health report whether Android took it, and puts back what Android did
+  before when it is turned off. Android's switch does not govern what
+  happens without a connection, and so that nothing rests on that, the guard
+  hands the switch back for as long as Wi-Fi has no network: a Mirror that
+  loses its network looks for it with Android exactly as it came. What it
+  gives up is moving to another saved network while the one it has still
+  works. It is off unless turned on, and
+  offered only on Android 6. A Mirror does not let an app look at the
+  daemon, so Mirror Home counts the scans themselves as Android finishes
+  them (`wifi.scanGuard.scans` in the health report): with the guard on,
+  none arrive while connected, and `tools/validate.ps1 mirror` fails if they
+  do. Memory that the daemon already holds comes back only with a restart.
+- Keep the OTA supervisor from being among the first that the kernel ends.
+  When memory ran short on that Mirror the supervisor, a background service
+  like any other, was ended twelve times in five minutes, and for three
+  hours nothing could have been installed or rolled back. Mirror Home now
+  holds a connection to the supervisor for as long as it runs, so Android
+  ranks the supervisor with what the display needs (58 where a background
+  service has 294; the health report gives the number as
+  `otaSupervisor.hold.oomScoreAdj`), as it ranks the recogniser of voice
+  commands, which stayed. This needs **OTA supervisor 1.3.0**, which offers
+  that connection to an app signed with its own key and to no other, and
+  which, like every supervisor, is installed over USB. An earlier supervisor
+  works as before and is reported as one that cannot be held. The
+  supervisor still starts by itself and needs Mirror Home for nothing: it
+  carries on while Mirror Home is replaced, rolled back or does not start.
+
 - Give the Mirror a character to answer as, if its owner wants one: Blink
   (two eyes), Wisp (a ghost), Mochi (a cat) or Lune (a moon), chosen under
   **Settings > Assistant > Character** or with `mascot` in `PUT
@@ -27,7 +65,8 @@
   after three days or more. It says so in `status` and the health report
   (`restart`), under **Uptime** in the controls, and, with an assistant, as a
   row in the answer to a greeting. The health report also carries the
-  kernel's figures and the five processes that hold most memory, and
+  kernel's figures and, of the processes Android lets an app see (on a
+  Mirror, apps and not the factory daemons), the five that hold most, and
   `tools/validate.ps1 mirror` reports a Mirror that asks to be restarted.
 - Answer greetings. "Mirror, good morning", "good afternoon", "good evening",
   "I'm home" and "good night" are commands of the Mirror's own: it wakes, or

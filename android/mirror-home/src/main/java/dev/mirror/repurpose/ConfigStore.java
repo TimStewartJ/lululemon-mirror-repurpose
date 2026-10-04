@@ -35,6 +35,8 @@ public final class ConfigStore {
     private static final String KEY_ASSISTANT_ADDRESS = "assistant_address";
     private static final String KEY_ASSISTANT_KEY = "assistant_key";
     private static final String KEY_MASCOT = "glass_mascot";
+    private static final String KEY_SCAN_GUARD = "wifi_scan_guard";
+    private static final String KEY_SCAN_GUARD_BEFORE = "wifi_scan_guard_before";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
        to the built-in dashboard instead of the offline page. */
     private static final String[] RETIRED_DASHBOARD_URLS = {
@@ -305,5 +307,24 @@ public final class ConfigStore {
 
     public void setMascot(String id) {
         preferences.edit().putString(KEY_MASCOT, id).apply();
+    }
+
+    /** Whether Android is kept from scanning for Wi-Fi while connected; see {@link ScanGuard}. */
+    public boolean isScanGuardEnabled() {
+        return preferences.getBoolean(KEY_SCAN_GUARD, false);
+    }
+
+    public void setScanGuardEnabled(boolean enabled) {
+        // At once: the guard acts on it straight away, and the two must not come apart.
+        preferences.edit().putBoolean(KEY_SCAN_GUARD, enabled).commit();
+    }
+
+    /** What Android did before the guard first touched it since it started; empty if untouched. */
+    public String getScanGuardBefore() {
+        return preferences.getString(KEY_SCAN_GUARD_BEFORE, "");
+    }
+
+    public void setScanGuardBefore(String before) {
+        preferences.edit().putString(KEY_SCAN_GUARD_BEFORE, before).commit();
     }
 }

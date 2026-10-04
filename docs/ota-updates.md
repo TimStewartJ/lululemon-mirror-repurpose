@@ -283,6 +283,57 @@ refused with a connection error. Mirror Home reports this as `restart` in
 its status and health report. Switch the Mirror off and on, and the
 supervisor answers again.
 
+### Kept running by Mirror Home
+
+From supervisor 1.3.0 and Mirror Home 2.3.0 that no longer happens to the
+supervisor. The kernel ends processes in the order of a number that Android
+gives each: 0 for what is on the display, 58 for what that needs, 294 for a
+background service, more for what is merely kept around. Alone, the
+supervisor is a background service. Mirror Home, which is on the display,
+now holds a connection to it for as long as it runs, and Android then ranks
+the supervisor at 58, with the recogniser of voice commands, which was never
+ended on the Mirror where the supervisor was ended every half minute.
+
+- The supervisor offers the connection (`HoldService`) only to an app that
+  holds the permission `dev.mirror.repurpose.updater.permission.HOLD`, which
+  Android gives only to apps signed with the supervisor's own key. Over it
+  Mirror Home can ask one thing: the supervisor's process and that number.
+- The supervisor needs Mirror Home for nothing. It starts with Android and
+  by itself as before, and while Mirror Home is being replaced, is rolled
+  back or does not start, it runs as a background service, as it always did.
+  For those seconds it has no more protection than before 1.3.0.
+- Mirror Home takes hold again when Android has restarted the supervisor,
+  when the supervisor was replaced, and whenever it looks, every five
+  minutes.
+
+`otaSupervisor.hold` in Mirror Home's health report says where this stands:
+`held` with the number Android gave (`oomScoreAdj`), `unsupported` for a
+supervisor older than 1.3.0, `refused` for one signed with another key, and
+`waiting` while Android starts it. `.\tools\ota.ps1 status` carries
+`heldByHome`.
+
+The better cure is not to run short of memory in the first place; see
+[Staying up for weeks](user-guide.md#staying-up-for-weeks).
+
+## Updating the supervisor
+
+A newer supervisor is installed over the one in place, through ADB, with the
+same key and the same bootstrap file. It stays the device owner and keeps
+its credential and its saved known-good Home:
+
+```powershell
+.\tools\ota.ps1 build-supervisor
+adb -s DEVICE_SERIAL install -r `
+  .\android\ota-updater\build\outputs\apk\release\ota-updater-release.apk
+.\tools\ota.ps1 status
+```
+
+**Expected:** `Success`, then a status with the new `updaterVersion`, the
+same `deviceOwner: true` and, within a few seconds, `heldByHome: true`. Do
+not uninstall the supervisor to get past a certificate mismatch: that would
+end its ownership and remove the saved Home. Do not update it while an
+update of Mirror Home is in progress.
+
 ## Failure-injection build
 
 Maintainers can build a signed Home APK that intentionally withholds its health

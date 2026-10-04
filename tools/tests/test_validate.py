@@ -481,7 +481,8 @@ class RequireEmulatorTest(unittest.TestCase):
             apk = pathlib.Path(directory) / "mirror-home-debug.apk"
             apk.write_bytes(b"apk")
             options = argparse.Namespace(
-                output=pathlib.Path(directory) / "out", apk=apk, skip_build=True, serial="10.0.0.196:5555",
+                output=pathlib.Path(directory) / "out", apk=apk, supervisor_apk=None, skip_build=True,
+                serial="10.0.0.196:5555",
                 keep_running=False, window=False, quick=False, only=None, density=160, upgrade_from=None,
                 voice_model=apk,
             )

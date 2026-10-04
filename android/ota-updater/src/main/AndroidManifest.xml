@@ -4,6 +4,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Only an app signed with the supervisor's own key may hold on to it; see HoldService. -->
+    <permission
+        android:name="dev.mirror.repurpose.updater.permission.HOLD"
+        android:label="@string/hold_permission_label"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".OtaApplication"
         android:allowBackup="false"
@@ -36,5 +42,10 @@
         <service
             android:name=".OtaService"
             android:exported="false" />
+
+        <service
+            android:name=".HoldService"
+            android:exported="true"
+            android:permission="dev.mirror.repurpose.updater.permission.HOLD" />
     </application>
 </manifest>

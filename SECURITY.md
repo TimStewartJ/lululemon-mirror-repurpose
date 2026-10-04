@@ -45,6 +45,13 @@ HMAC-SHA256 authenticated over method, path, content hash, monotonic counter,
 and nonce. Replayed and unauthenticated requests are rejected before request
 bodies are parsed.
 
+From 1.3.0 the supervisor has one component that another app can reach: a
+service that Mirror Home binds to so that Android does not end the
+supervisor when memory runs short. It is guarded by a permission of
+protection level `signature`, so only an app signed with the supervisor's
+own key can bind, and the connection answers one read-only question, the
+supervisor's process and its kernel ranking. It carries no command.
+
 Initial token issuance requires an independent random bootstrap capability whose
 SHA-256 hash is injected at build time. Recovery token rotation additionally
 requires an ADB-forwarded loopback request. The supervisor preserves a private,

@@ -157,9 +157,11 @@ final class RestartAdvice {
     }
 
     /**
-     * The processes that hold most memory, in RAM and in swap together.
-     * Android 6 lets an app read this of every process; later versions only
-     * of its own, and the list is then that short.
+     * The processes that hold most memory, in RAM and in swap together,
+     * among those an app may look at. Stock Android 6 shows it every
+     * process; a Mirror's shows it apps and none of the factory software's
+     * daemons; later versions show an app only itself. The list is as short
+     * as that makes it.
      */
     static JSONArray largest(File proc, int count) throws JSONException {
         List<long[]> sizes = new ArrayList<>();

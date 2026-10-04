@@ -30,6 +30,8 @@ public final class MirrorHomeApplication extends Application {
         }
         wifiProvisioner = new WifiProvisioner(this);
         ensureWifiConnection();
+        ScanGuard.getInstance(this).start(this);
+        SupervisorHold.getInstance(this).start();
         MirrorBinderClient.getInstance(this).connect();
         SystemHelperClient.getInstance(this).connect();
         MediaPlaybackManager.getInstance(this);

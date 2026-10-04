@@ -60,6 +60,9 @@ public final class ControlServerService extends Service {
         public void run() {
             // Looking for the supervisor blocks for a moment.
             new Thread(() -> RestartAdvice.sample(ControlServerService.this), "restart-advice").start();
+            // Android forgets the scan guard when it restarts Wi-Fi, and a hold when the supervisor is replaced.
+            ScanGuard.getInstance(ControlServerService.this).checkSoon();
+            SupervisorHold.getInstance(ControlServerService.this).check();
             handler.postDelayed(this, RestartAdvice.SAMPLE_INTERVAL_MS);
         }
     };

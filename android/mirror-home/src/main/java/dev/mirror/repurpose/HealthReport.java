@@ -17,6 +17,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+
+import dev.mirror.repurpose.health.HoldLink;
 import dev.mirror.repurpose.health.ProcessHealth;
 
 /**
@@ -62,6 +65,8 @@ final class HealthReport {
             result.put("memory", memory);
         }
         RestartAdvice.describe(memory);
+        int score = HoldLink.score(new File("/proc/self/oom_score_adj"));
+        memory.put("oomScoreAdj", score == HoldLink.UNKNOWN ? JSONObject.NULL : (Object) score);
         JSONObject supervisor = SupervisorProbe.check(context);
 
         UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
@@ -81,7 +86,8 @@ final class HealthReport {
                         .put("recovery", ForegroundKeeper.snapshot(context)))
                 .put("dashboard", DashboardDiagnostics.snapshot())
                 .put("api", ApiDiagnostics.snapshot())
-                .put("wifi", wifi(context))
+                .put("wifi", wifi(context)
+                        .put("scanGuard", ScanGuard.getInstance(context).snapshot()))
                 .put("clock", new JSONObject()
                         .put("timeZone", configStore.getTimeZoneId())
                         .put("utcOffsetMinutes", clock.offsetMinutesAt(now))

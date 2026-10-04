@@ -267,6 +267,7 @@ final class OtaManager {
             result.put("apiVersion", 1);
             result.put("updaterVersion", BuildConfig.VERSION_NAME);
             result.put("deviceOwner", isDeviceOwner());
+            result.put("heldByHome", HoldService.held());
             result.put("runtimePermissionControl", new JSONObject()
                     .put("packageName", OtaConstants.HOME_PACKAGE)
                     .put("allowlist", new JSONArray(RuntimePermissions.ALLOWLIST)));

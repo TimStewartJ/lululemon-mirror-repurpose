@@ -39,6 +39,8 @@ final class SupervisorProbe {
         try {
             info = context.getPackageManager().getPackageInfo(PACKAGE_NAME, 0);
         } catch (PackageManager.NameNotFoundException absent) {
+            // A supervisor that was removed is not one that has fallen silent.
+            unreachableSince = 0L;
             return result.put("installed", false);
         }
         long now = System.currentTimeMillis();
@@ -57,6 +59,7 @@ final class SupervisorProbe {
         return result
                 .put("installed", true)
                 .put("versionName", info.versionName == null ? "" : info.versionName)
+                .put("hold", SupervisorHold.getInstance(context).snapshot())
                 .put("listening", listening)
                 .put("checks", checks)
                 .put("failures", failures)

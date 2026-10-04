@@ -49,6 +49,7 @@ public final class ControlServer extends NanoHTTPD {
     private final WeatherProvider weather;
     private final WifiProvisioner wifi;
     private final WifiDirectOnboarding wifiDirect;
+    private final ScanGuard scanGuard;
 
     public ControlServer(Context context, int port) {
         super(port);
@@ -69,6 +70,7 @@ public final class ControlServer extends NanoHTTPD {
         weather = WeatherProvider.getInstance(context);
         wifi = new WifiProvisioner(context);
         wifiDirect = WifiDirectOnboarding.getInstance(context);
+        scanGuard = ScanGuard.getInstance(context);
     }
 
     @Override
@@ -388,6 +390,14 @@ public final class ControlServer extends NanoHTTPD {
                 return configureWifi(readJson(session));
             }
             if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/wifi/scan-guard".equals(uri)) {
+                return response(Response.Status.OK, scanGuard.snapshot());
+            }
+            if (Method.PUT.equals(session.getMethod())
+                    && "/api/v1/wifi/scan-guard".equals(uri)) {
+                return updateScanGuard(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod())
                     && "/api/v1/onboarding".equals(uri)) {
                 return response(Response.Status.OK, onboardingStatus());
             }
@@ -524,6 +534,7 @@ public final class ControlServer extends NanoHTTPD {
         } else {
             wifiStatus.put("connected", false);
         }
+        wifiStatus.put("scanGuard", scanGuard.summary());
 
         long now = System.currentTimeMillis();
         UtcOffsetTimeline clock = configStore.getUtcOffsetTimeline();
@@ -977,6 +988,19 @@ public final class ControlServer extends NanoHTTPD {
                                 "ipAddress",
                                 ipAddress.isEmpty() ? JSONObject.NULL : ipAddress)
                         .put("apiPort", ControlServerService.PORT));
+    }
+
+    /** Whether Android may scan for other networks while connected; see {@link ScanGuard}. */
+    private Response updateScanGuard(JSONObject body) throws JSONException {
+        if (!(body.opt("enabled") instanceof Boolean)) {
+            return error(Response.Status.BAD_REQUEST, "enabled must be true or false");
+        }
+        try {
+            scanGuard.setEnabled(body.getBoolean("enabled"), System.currentTimeMillis());
+        } catch (IllegalStateException unsupported) {
+            return error(Response.Status.CONFLICT, unsupported.getMessage());
+        }
+        return response(Response.Status.OK, scanGuard.snapshot());
     }
 
     private JSONObject onboardingStatus() throws JSONException {

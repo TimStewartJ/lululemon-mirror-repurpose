@@ -354,9 +354,12 @@ found without standing in front of it:
   that memory back, and the Mirror cannot restart by itself, so it says so
   here, and with an assistant also when you greet it. Switch its power off
   and on; everything comes back by itself within a minute or two.
-- **Updater**: whether the optional OTA supervisor is ready. Android restarts
-  the supervisor now and then when memory is short, so **Not answering right
-  now** for a moment is normal; **Not answering since** a time is not.
+  [Staying up for weeks](#staying-up-for-weeks) stops most of that leak.
+- **Updater**: whether the optional OTA supervisor is ready. **Kept running
+  by Mirror Home** means Android will not end it when memory is short, which
+  needs supervisor 1.3.0. An earlier one is restarted by Android now and
+  then, so **Not answering right now** for a moment is normal with it; **Not
+  answering since** a time is not.
 
 **Full report** holds every detail and is what to attach to a bug report. It
 contains no credential, pairing code or Wi-Fi name, but it does include the
@@ -364,6 +367,36 @@ address of a web dashboard if you use one.
 
 From a computer, `.\tools\validate.ps1 mirror` reads the same report and lists
 anything that needs attention. See [Validation](validation.md).
+
+## Staying up for weeks
+
+Left alone, a Mirror runs short of memory after about nine days, sooner with
+voice commands on, and then needs its power switched off and on. Most of
+that is one leak: Android keeps looking for other Wi-Fi networks while it is
+connected to yours, every few minutes, and a program of the Mirror's factory
+software keeps a little more memory with every look and never returns it.
+
+**Settings > Wi-Fi > Look for networks only when disconnected** stops those
+looks. It is off until you turn it on. What changes:
+
+- The Mirror stays on the network it has. If you have saved several, it no
+  longer moves to a better one while the first still works.
+- A Mirror that loses its network looks for it and joins it again, as before.
+  For as long as it has none, Mirror Home hands the switch back to Android,
+  and the line under it says that Android is looking for a network.
+- Setting up Wi-Fi from the controls works as before.
+
+The line under the switch says whether Android took it. Android forgets the
+switch when it restarts, so Mirror Home sets it again by itself every time.
+Memory that was already lost comes back only with one restart; from then on
+it should not be lost again. `.\tools\validate.ps1 mirror` prints how many
+looks have still arrived while connected (`scanGuard.scans.sinceApplied`),
+which should stay at none, and fails if there are more than two.
+
+If you use [LAN updates](ota-updates.md), install OTA supervisor 1.3.0 as
+well, once, over USB. Mirror Home then keeps the supervisor running even
+when memory is short, so an update or a rollback is never refused for that
+reason. See [Updating the supervisor](ota-updates.md#updating-the-supervisor).
 
 ## Recovery
 

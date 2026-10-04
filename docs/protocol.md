@@ -33,6 +33,8 @@ POST /api/v1/pair/revoke
 GET  /api/v1/clients
 POST /api/v1/clients/revoke
 POST /api/v1/wifi/configure
+GET  /api/v1/wifi/scan-guard
+PUT  /api/v1/wifi/scan-guard
 GET  /api/v1/dashboard
 PUT  /api/v1/dashboard
 GET  /api/v1/dashboard/layout
@@ -114,6 +116,22 @@ and `null` when it has neither. The Wi-Fi Direct setup network does not count.
 
 A request that fails unexpectedly answers 500 with a generic error rather
 than dropping the connection, and is counted in the health report.
+
+`PUT /api/v1/wifi/scan-guard` takes `{enabled}` and decides whether Android
+may scan for other Wi-Fi networks while it is connected to one; see
+[Staying up for weeks](user-guide.md#staying-up-for-weeks). It answers, as
+`GET` does, with `enabled`, `supported` (only Android 6 has the switch),
+`state` (`off`, `applied`, `waiting` while Wi-Fi has no network and the
+switch is handed back to Android, or `error` with the reason in `detail`),
+`scanningWhileConnected` as Android reports it (`null` if it cannot be
+asked), `appliedAt`, `applied` (how often Mirror Home had to set the switch
+since it started; Android forgets it when it restarts), `checks`,
+`checkedAt`, and `scans`: how many scans Android has finished while connected
+since Mirror Home started (`whileConnected`), how many of them from a minute
+after the guard was applied (`sinceApplied`, which stays 0 where the guard
+works), and when the last one was (`lastAt`).
+Turning it on where `supported` is false answers 409. `status.wifi.scanGuard`
+carries `enabled`, `supported`, `state` and `detail`.
 
 Background video list, upload, activation, rollback, schedule, deletion, and poster routes
 require an ordinary bearer credential. The bootstrap availability route is
@@ -255,16 +273,16 @@ a monitor that cannot see the glass. Times are epoch milliseconds.
 |---|---|
 | `process` | `pid`, `runId` (counts starts since Mirror Home's data was created), `startedAt`, `uptimeSeconds`, and `previousRun`: when the last run started and was last known alive, its version, and how it ended: `update`, `reboot`, `crash` or `killed`. `earlyStops` counts processes that Android stopped within ten seconds of starting before this run began. They are not reported as the previous run. One is normal after an update, because Android 6 starts a HOME app while it is still replacing it; several mean Home could not stay up. |
 | `crashes` | `count` and `last`: the exception, message, thread, time, version and the first lines of the stack trace of the most recent uncaught exception. |
-| `memory` | The app's `pssKb`, Java and native heap, `threads` and `openFiles` (`null` if it cannot be counted); Android's `systemAvailableKb`, `systemTotalKb` and `systemLow`; and how often Android asked the app to trim memory. `kernel` holds what the kernel itself says, in kilobytes: `freeKb`, `cachedKb`, `swapTotalKb` and `swapFreeKb` (each `null` if it says nothing). Android's figure counts memory that the kernel cannot use for everything, so a Mirror can be short of memory while `systemLow` is false; little `cachedKb` together with a nearly used-up swap is the sign. `largest` lists the five processes that hold most, in memory (`rssKb`) and in swap (`swapKb`) together, by `name`. |
+| `memory` | The app's `pssKb`, Java and native heap, `threads`, `openFiles` (`null` if it cannot be counted) and `oomScoreAdj`, how readily the kernel would end Mirror Home (0 while it is on the display); Android's `systemAvailableKb`, `systemTotalKb` and `systemLow`; and how often Android asked the app to trim memory. `kernel` holds what the kernel itself says, in kilobytes: `freeKb`, `cachedKb`, `swapTotalKb` and `swapFreeKb` (each `null` if it says nothing). Android's figure counts memory that the kernel cannot use for everything, so a Mirror can be short of memory while `systemLow` is false; little `cachedKb` together with a nearly used-up swap is the sign. `largest` lists the five processes that hold most, in memory (`rssKb`) and in swap (`swapKb`) together, by `name`, among those Android lets an app see: on a Mirror those are apps, and not the factory software's daemons. |
 | `storage` | `dataFreeBytes` and `dataTotalBytes` of the app's storage volume. |
 | `device` | Boot time, `bootId` (different for every boot, or `null`), Android release and SDK, model, build fingerprint, `display` (pixel size, density, refresh rate, and whether the panel is `on`), `input` (whether Android sees a touchscreen, keyboard or navigation keys; stock Android 6 shows crash dialogs only if it sees one), `power` and the `webView` package and version. `power` is what decides whether Android turns the display off: whether it is `interactive` (awake), `keyguardLocked`, `screenOffTimeoutSeconds`, the `stayOnWhilePluggedIn` setting, how Android believes it is `plugged` (0 is not at all, which is what a Mirror reports), and whether its USB port is `usbConnected` and `usbConfigured` by a computer. |
 | `activity` | Whether the dashboard is `created`, `resumed`, `focused` and `visible`; `showing` is true only when nothing is drawn over it. `pausedForSeconds` and `unfocusedForSeconds` say for how long it has not been, `pauses` and `stops` count how often it was covered and wholly hidden, and `sleeping` says whether Mirror Home has darkened the display. `selectedHome` says whether Mirror Home is the HOME app Android would start. `front` lists the screens Android will name to an ordinary app, front first: Mirror Home's own and other HOME apps'. `recovery` is what Mirror Home did to stay in front (see [Architecture](architecture.md#staying-in-front)): `attended`, `wakeUps`, `relaunches`, the time, reason (`asleep` or `covered`) and `front` of the last one, and `otherHomeEnds`, how often it asked Android to end the idle processes of other HOME apps. |
 | `dashboard` | The dashboard page's load state and last failure, plus `consoleErrors`, `consoleWarnings` and `recentConsoleErrors` from its scripts. |
 | `api` | `unhandledErrors` and the last one's method, path and exception. |
-| `wifi` | `connected`, and when it is: `rssi`, `signalLevel` (0 to 4), `linkSpeedMbps` and `frequencyMhz`. |
+| `wifi` | `connected`, and when it is: `rssi`, `signalLevel` (0 to 4), `linkSpeedMbps` and `frequencyMhz`. `scanGuard` is the whole answer of `GET /api/v1/wifi/scan-guard`. |
 | `clock` | `timeZone`, `utcOffsetMinutes`, `source`, `knownChanges`, `nextChange` and the IANA release of the bundled table. |
 | `pairing` | `open`, `lockedForSeconds`, `wrongCodes` and the number of paired `clients`. |
-| `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. Mirror Home looks every five minutes and whenever this report is read. |
+| `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. Mirror Home looks every five minutes and whenever this report is read. `hold` says whether Mirror Home keeps the supervisor from being ended when memory is short: `state` is `held`, `waiting` (Android is starting it), `unsupported` (older than 1.3.0) or `refused` (signed with another key), with `since`, how often Mirror Home took hold (`binds`) and lost it (`losses`), and while held the supervisor's `pid` and its `oomScoreAdj` as the supervisor itself reads it: 58 when held, 294 or more when not. See [LAN OTA updates](ota-updates.md#kept-running-by-mirror-home). |
 | `restart` | `advised`, and the `reason` as a sentence when it is. A restart is advised when an installed OTA supervisor has not answered for half an hour, or when three quarters of the swap are in use on a Mirror that has been up for three days or more. Once advised it stays so until Mirror Home starts again. `status` carries the same object. |
 | `voice` | The whole [voice report](#voice). |
 | `assistant` | The [assistant's report](#assistant) without `recent`: what people asked is not part of a health report. |
@@ -317,6 +335,7 @@ lowercase-body-sha256
 ```
 
 See [LAN OTA updates](ota-updates.md) for lifecycle and recovery behavior.
+From supervisor 1.3.0, `status` carries `heldByHome`.
 
 From supervisor 1.2.0, a permission change accepts only this shape:
 

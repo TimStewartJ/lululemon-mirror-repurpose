@@ -83,6 +83,7 @@ left out fails here and not on a Mirror.
 | `--only NAMES` | Run only these checks, comma-separated. `install` and `first-pairing` always run, because the others need the pairing they make. |
 | `--skip-build` | Install the debug APK that is already built. |
 | `--apk PATH` | Install this APK instead. It may be a release build: `clock-switch`, `pairing-widget`, `notes` and `board-glass` are then skipped, because only debug builds let their page be read, and the other checks judge the screen and the API. The two voice checks that speak to the Mirror are skipped as well; see [How the suite speaks](#how-the-suite-speaks). |
+| `--supervisor-apk PATH` | With `--apk`: an OTA supervisor signed with the same key, for `updater-held`. Without it that check is skipped for such a build; the debug build brings the debug supervisor. |
 | `--voice-model PATH` | Use this speech model archive for the voice checks, and fail if it is missing. By default the one in `build/voice/` is used if it is there. |
 | `--window` | Show the emulator's screen while it runs. |
 | `--keep-running` | Leave the emulator running afterwards, to look around. |
@@ -119,6 +120,8 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `offline-fallback` | An unreachable web dashboard falls back to the offline clock, and clearing the address brings the built-in dashboard back. |
 | `control-page` | The control page, everything it references and the dashboard's files are served, with a content security policy and no framing; the bundled zone table is not served. |
 | `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, a 128 MB app heap, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. It carries what the kernel says of memory and the five processes that hold most, and a device that has just started does not ask to be restarted. |
+| `scan-guard` | Android 6 has the switch for scanning while connected and scans as it came. A scan guard that is neither on nor off is refused. Turned on, Android reports that it no longer scans while connected, the status says so, and the scans that still arrive are counted; after Mirror Home starts again it finds the switch as it left it and does not set it again. Turned off, Android scans as before. |
+| `updater-held` | With the OTA supervisor installed, Mirror Home takes hold of it and the kernel ranks its process with what the display needs (58, not a background service's 294). Ended as the kernel ends it, it is started and held again; replaced, it is held again; and while Mirror Home itself is stopped and started, the supervisor's process carries on. Removed again, Mirror Home reports no supervisor. |
 | `voice-off` | On a fresh installation voice commands are off, no speech model is installed and no recogniser runs. The controls are told what can be said, and the status and the health report say that voice is off. Switched on without a model, voice waits for one and still nothing runs. |
 | `voice-model` | An upload that is not a zip archive, holds no speech model, names a file outside itself or differs from its checksum is refused and leaves nothing behind. An archive with the right files and nothing in them installs; the recogniser then reports that it cannot load it, and Mirror Home carries on as the same process. |
 | `voice-listens` | The speech model installs with its checksum, and with voice switched on a process of its own loads it and listens, holding less than 250 MB and keeping up with the microphone. |
@@ -261,7 +264,11 @@ still need the real unit:
 - camera presence sensing;
 - Wi-Fi, the Wi-Fi Direct setup network and its QR codes (the emulator has
   only a wired network, and Mirror Home shows that address instead);
-- the OTA supervisor, which accepts only the Mirror's firmware fingerprint;
+- installing and rolling back through the OTA supervisor, which accepts only
+  the Mirror's firmware fingerprint; that Mirror Home holds it is checked;
+- what stopping the scans does to a Wi-Fi connection and to the factory
+  daemon that grows with them: the emulator has neither, and never scans.
+  `scan-guard` checks that Android takes the switch and gives it back;
 - the system helper;
 - the factory launcher itself. The emulator's launcher takes its place as
   the second HOME app, but does nothing of its own accord, where the factory
@@ -333,7 +340,7 @@ with `host`, `port` and `token`.
 |---|---|
 | `reachable` | The Mirror does not answer on the network. |
 | `status` | Wi-Fi is disconnected, the background video reports an error or dropped 1% or more of its frames, presence sensing is on but not monitoring, or the weather shown is stale. |
-| `health` | A crash is recorded, Home was stopped more than twice while starting, the dashboard stays covered by another screen for 30 seconds, Mirror Home is not Android's HOME app, Android has put the display to sleep, the dashboard logged script errors, the API hit an unhandled error, Android reports low memory, the Mirror asks to be switched off and on, less than 256 MiB of storage is free, the OTA supervisor is installed but silent for 30 seconds, the clock keeps a fixed offset, or pairing is locked. |
+| `health` | A crash is recorded, Home was stopped more than twice while starting, the dashboard stays covered by another screen for 30 seconds, Mirror Home is not Android's HOME app, Android has put the display to sleep, the dashboard logged script errors, the API hit an unhandled error, Android reports low memory, the Mirror asks to be switched off and on, less than 256 MiB of storage is free, the OTA supervisor is installed but silent for 30 seconds, the scan guard is on and Android still scans while connected (by its own word, or because more than two scans arrived since; a guard that stands aside because Wi-Fi has no network is not that), the supervisor is signed with another key than Mirror Home or is held and still ranked as a background service, the clock keeps a fixed offset, or pairing is locked. |
 | `updater` | The OTA supervisor does not answer a signed request, is not the device owner, does not support the firmware, needs recovery, disagrees with Home about the installed version, or reports a crash of its own. Skipped when this computer has no `.secrets/mirror-ota.json`. |
 
 Mirror Home releases before 2.2.0 have no health report; `health` is then

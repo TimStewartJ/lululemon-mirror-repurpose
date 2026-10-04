@@ -540,6 +540,11 @@
           <div class="row"><div class="row-main"><span class="row-label">Setup network</span><span id="onboarding-status" class="row-sub">—</span></div><span class="icon-row"><button id="start-setup-network" type="button" class="btn small">Start</button><button id="stop-setup-network" type="button" class="btn small">Stop</button></span></div>
           <p id="onboarding-message" class="status inset" role="status"></p>
         </div>
+        <div class="group">
+          <label class="row"><div class="row-main"><span class="row-label">Look for networks only when disconnected</span><span class="row-sub">Android keeps looking for other networks while it is connected. On a mirror, a program of the factory software keeps a little more memory with every look, and after about nine days the mirror runs short. With this on, the mirror looks only when it has lost its network.</span></div><input id="scan-guard-enabled" class="switch" type="checkbox" disabled></label>
+          <p id="scan-guard-status" class="status inset voice-status" role="status"></p>
+          <p id="scan-guard-message" class="status inset" role="status"></p>
+        </div>
 
         <h2 class="section-title">Paired devices</h2>
         <div class="group">

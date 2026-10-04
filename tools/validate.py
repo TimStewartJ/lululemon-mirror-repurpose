@@ -50,6 +50,19 @@ DEBUG_APK = (
     REPO / "android" / "mirror-home" / "build" / "outputs" / "apk" / "debug"
     / "mirror-home-debug.apk"
 )
+DEBUG_SUPERVISOR_APK = (
+    REPO / "android" / "ota-updater" / "build" / "outputs" / "apk" / "debug" / "ota-updater-debug.apk"
+)
+SUPERVISOR = "dev.mirror.repurpose.updater"
+SCAN_GUARD = "/api/v1/wifi/scan-guard"
+# How readily the kernel of Android 6 ends a process ("oom_score_adj"): what the display
+# needs, and a background service. A supervisor that Mirror Home holds is ranked as the first.
+HELD_SCORE = 58
+SERVICE_SCORE = 294
+# A scan can end as the Mirror joins its network again; more than these with the guard on are not that.
+SCANS_DESPITE_GUARD = 2
+# Android starts an ended supervisor again within a second; a replaced one is looked for after two.
+HOLD_SECONDS = 40
 ZONE_TABLE = REPO / "android" / "mirror-home" / "src" / "main" / "assets" / "zone-offsets.json"
 DEFAULT_MIRROR_CONFIG = REPO / ".secrets" / "mirror-background-video.json"
 DEFAULT_OTA_CONFIG = REPO / ".secrets" / "mirror-ota.json"
@@ -417,6 +430,8 @@ class Context:
         self.awake_peak = 0
         self.debuggable: bool | None = None
         self.apk: pathlib.Path | None = None
+        # An OTA supervisor signed with the same key as that APK, if there is one.
+        self.supervisor_apk: pathlib.Path | None = None
         # The speech model on this computer, if it has one; and its checksum.
         self.voice_model: pathlib.Path | None = None
         self.voice_checksum = ""
@@ -1438,7 +1453,8 @@ def check_health(ctx: Context) -> None:
     )
     held = [entry["rssKb"] + entry["swapKb"] for entry in largest]
     require(
-        # Android 6 lets an app read this of every process, so the list is full.
+        # The emulator's Android 6 lets an app read this of every process, so the list is full.
+        # (A Mirror's shows an app only other apps.)
         len(largest) == 5 and all(entry["name"] for entry in largest) and held == sorted(held, reverse=True) and held[-1] > 0,
         f"The processes that hold most memory are listed as {describe(largest)}",
     )
@@ -1471,6 +1487,156 @@ def check_health(ctx: Context) -> None:
     ctx.note("densityDpi", display["densityDpi"])
     ctx.note("bundledTzdata", health["clock"]["bundledTzdata"])
     ctx.note("power", health["device"]["power"])
+
+
+# ---------------------------------------------------------------------------
+# What keeps a Mirror running for longer than nine days: Android does not
+# scan for Wi-Fi while connected, and the OTA supervisor is not among the
+# first that the kernel ends.
+# ---------------------------------------------------------------------------
+
+
+def check_scan_guard(ctx: Context) -> None:
+    guard = ctx.api.expect("GET", SCAN_GUARD)
+    require(
+        guard["supported"],
+        "Android 6 has a switch for scanning while connected, and Mirror Home did not find it",
+    )
+    require(
+        not guard["enabled"] and guard["state"] == "off" and guard["scanningWhileConnected"] is True,
+        f"Before anyone asked for it, the scan guard stands at {describe(guard)}",
+    )
+    expect_refused(
+        ctx.api.call("PUT", SCAN_GUARD, {"enabled": "yes"}), 400, "A scan guard that is neither on nor off"
+    )
+    try:
+        on = ctx.api.expect("PUT", SCAN_GUARD, {"enabled": True})
+        require(
+            on["enabled"] and on["state"] == "applied" and on["scanningWhileConnected"] is False
+            and on["appliedAt"] and on["applied"] == 1,
+            f"Turned on, the scan guard reports {describe(on)}",
+        )
+        brief = ctx.status()["wifi"]["scanGuard"]
+        require(
+            brief == {"enabled": True, "supported": True, "state": "applied", "detail": ""},
+            f"The status says of the scan guard: {describe(brief)}",
+        )
+        # Mirror Home starts again, as after an update; Android does not, and has not forgotten.
+        before = wait_past_start(ctx)
+        ctx.restart_home()
+        wait_for_run(ctx, before["process"]["runId"] + 1)
+        kept = wait_for(
+            "the scan guard to look again after Mirror Home started",
+            lambda: (lambda seen: seen if seen["checks"] else None)(ctx.health()["wifi"]["scanGuard"]),
+            timeout=30,
+        )
+        require(
+            kept["enabled"] and kept["state"] == "applied" and kept["scanningWhileConnected"] is False,
+            f"After Mirror Home started again the scan guard reports {describe(kept)}",
+        )
+        require(
+            kept["applied"] == 0,
+            f"Mirror Home set a switch again that still stood: {describe(kept)}",
+        )
+        ctx.wait_dashboard()
+        ctx.wait_lit("scan-guard")
+    finally:
+        off = ctx.api.call("PUT", SCAN_GUARD, {"enabled": False})
+    require(off.status == 200, f"The scan guard could not be turned off: {describe(off.body)}")
+    require(
+        not off.body["enabled"] and off.body["state"] == "off" and off.body["scanningWhileConnected"] is True,
+        f"Turned off, Android was not put back to scanning as before: {describe(off.body)}",
+    )
+    require(
+        isinstance(on.get("scans"), dict) and all(key in on["scans"] for key in ("whileConnected", "sinceApplied", "lastAt")),
+        f"The scan guard does not count the scans that arrive: {describe(on)}",
+    )
+    ctx.note("scanGuard", {key: on[key] for key in ("state", "scanningWhileConnected", "scans")})
+
+
+def supervisor_held(ctx: Context, other_than: int | None = None) -> dict | None:
+    """What health says of a supervisor that is held and answering, in a process other than that one."""
+    seen = ctx.health()["otaSupervisor"]
+    hold = seen.get("hold") or {}
+    held = hold.get("state") == "held" and hold.get("pid") not in (None, other_than) and seen.get("listening")
+    return seen if held else None
+
+
+def require_ranked_as_needed(seen: dict, when: str) -> int:
+    score = seen["hold"]["oomScoreAdj"]
+    require(
+        score is not None and score <= HELD_SCORE,
+        f"{when}, the kernel ranks the supervisor at {score}; what the display needs is at "
+        f"{HELD_SCORE} or under, a background service at {SERVICE_SCORE}",
+    )
+    return score
+
+
+def check_updater_held(ctx: Context) -> None:
+    if ctx.supervisor_apk is None:
+        raise CheckSkipped(
+            "no OTA supervisor signed like this Mirror Home was named; see --supervisor-apk"
+        )
+    require(
+        ctx.health()["otaSupervisor"] == {"installed": False},
+        f"A supervisor is already installed: {describe(ctx.health()['otaSupervisor'])}",
+    )
+    scores = {}
+    try:
+        installed = ctx.adb.run("install", "-r", str(ctx.supervisor_apk), timeout=300)
+        require("Success" in installed, f"The supervisor was not installed: {installed.strip()}")
+        first = wait_for(
+            "Mirror Home to take hold of the OTA supervisor",
+            lambda: supervisor_held(ctx),
+            timeout=HOLD_SECONDS,
+        )
+        scores["held"] = require_ranked_as_needed(first, "Held by Mirror Home")
+        # What the kernel does to it when memory runs short.
+        ctx.adb.shell("kill", "-9", str(first["hold"]["pid"]))
+        second = wait_for(
+            "an ended supervisor to be started and held again",
+            lambda: supervisor_held(ctx, first["hold"]["pid"]),
+            timeout=HOLD_SECONDS,
+        )
+        scores["afterBeingEnded"] = require_ranked_as_needed(second, "Started again")
+        # Replaced, as its owner updates it; Android drops the hold with the old one.
+        replaced = ctx.adb.run("install", "-r", str(ctx.supervisor_apk), timeout=300)
+        require("Success" in replaced, f"The supervisor was not replaced: {replaced.strip()}")
+        third = wait_for(
+            "a replaced supervisor to be held again",
+            lambda: supervisor_held(ctx, second["hold"]["pid"]),
+            timeout=HOLD_SECONDS,
+        )
+        scores["afterBeingReplaced"] = require_ranked_as_needed(third, "Replaced")
+        # The supervisor must not need Mirror Home: it is what puts a Mirror Home that fails right.
+        before = wait_past_start(ctx)
+        ctx.restart_home()
+        require(
+            process_running(ctx, SUPERVISOR),
+            "The supervisor ended when Mirror Home was stopped",
+        )
+        wait_for_run(ctx, before["process"]["runId"] + 1)
+        fourth = wait_for(
+            "Mirror Home to take hold of the supervisor after starting again",
+            lambda: supervisor_held(ctx),
+            timeout=HOLD_SECONDS,
+        )
+        require(
+            fourth["hold"]["pid"] == third["hold"]["pid"],
+            f"The supervisor did not carry on while Mirror Home was away: process {third['hold']['pid']} "
+            f"became {fourth['hold']['pid']}",
+        )
+        ctx.wait_dashboard()
+        ctx.wait_lit("updater-held")
+    finally:
+        ctx.adb.run("uninstall", SUPERVISOR, check=False)
+    wait_for(
+        "Mirror Home to notice that the supervisor was removed",
+        lambda: ctx.health()["otaSupervisor"] == {"installed": False},
+        timeout=HOLD_SECONDS,
+    )
+    ctx.note("supervisorVersion", first.get("versionName"))
+    ctx.note("oomScoreAdj", scores)
 
 
 # ---------------------------------------------------------------------------
@@ -2830,6 +2996,8 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("offline-fallback", "An unreachable web page falls back to the offline clock", check_offline_fallback, False),
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),
+    ("scan-guard", "Asked to, Android stops scanning for Wi-Fi while connected; asked again, it scans as before", check_scan_guard, False),
+    ("updater-held", "Mirror Home keeps the OTA supervisor from being ended first, and the supervisor does not need it to", check_updater_held, False),
     ("voice-off", "Voice commands are off until switched on, and nothing listens", check_voice_off, False),
     ("voice-model", "What is no speech model is refused; one that cannot be loaded harms nothing", check_voice_model, False),
     ("voice-listens", "With the speech model installed and voice on, a process of its own listens", check_voice_listens, False),
@@ -3217,9 +3385,12 @@ def save_logs(adb: Adb, output: pathlib.Path) -> bool:
 
 def build_debug_apk() -> None:
     wrapper = REPO / ("gradlew.bat" if os.name == "nt" else "gradlew")
-    print("Building the Mirror Home debug APK", flush=True)
+    print("Building the debug APKs of Mirror Home and the OTA supervisor", flush=True)
     subprocess.run(
-        [str(wrapper), "-p", str(REPO), ":android:mirror-home:assembleDebug", "--no-daemon", "-q"],
+        [
+            str(wrapper), "-p", str(REPO),
+            ":android:mirror-home:assembleDebug", ":android:ota-updater:assembleDebug", "--no-daemon", "-q",
+        ],
         check=True,
     )
 
@@ -3279,6 +3450,13 @@ def run_emulator(options: argparse.Namespace) -> int:
         build_debug_apk()
     if not apk.is_file():
         raise CheckFailed(f"APK not found: {apk}")
+    # Only a supervisor signed like Mirror Home lets itself be held: the debug one goes with
+    # the debug build, and another build has to bring its own.
+    supervisor_apk = options.supervisor_apk or (None if options.apk else DEBUG_SUPERVISOR_APK)
+    if options.supervisor_apk and not supervisor_apk.is_file():
+        raise CheckFailed(f"APK not found: {supervisor_apk}")
+    if supervisor_apk is not None and not supervisor_apk.is_file():
+        supervisor_apk = None
 
     emulator = None
     emulator_version = None
@@ -3317,6 +3495,7 @@ def run_emulator(options: argparse.Namespace) -> int:
         context = Context(adb, Api("127.0.0.1", port), output)
         context.forwards.append(port)
         context.apk = apk
+        context.supervisor_apk = supervisor_apk
         context.voice_model = voice_model
         context.emulator = emulator
         if earlier is not None:
@@ -3330,6 +3509,7 @@ def run_emulator(options: argparse.Namespace) -> int:
             "emulator": emulator_version,
             "emulatorStoppedAnswering": not answering,
             "apk": str(apk),
+            "supervisorApk": str(supervisor_apk) if supervisor_apk else None,
             "voiceModel": str(voice_model) if voice_model else None,
             "systemDialogsClosed": context.dismissed,
             **({"upgradeFrom": str(earlier)} if earlier is not None else {}),
@@ -3460,7 +3640,31 @@ def mirror_health(ctx: MirrorContext) -> None:
     ctx.note("nextClockChange", health["clock"]["nextChange"])
     ctx.note("pairing", health["pairing"])
     ctx.note("otaSupervisor", supervisor)
+    guard = (health.get("wifi") or {}).get("scanGuard")
+    hold = supervisor.get("hold")
+    if guard is not None:
+        ctx.note("scanGuard", guard)
     problems = []
+    # Without a network the guard stands aside, so that Android finds one as it came.
+    standing_aside = guard and guard.get("state") == "waiting" and not (health.get("wifi") or {}).get("connected")
+    if guard and guard.get("enabled") and guard.get("state") != "applied" and not standing_aside:
+        problems.append(
+            "the scan guard is on, but Android still scans for Wi-Fi while connected"
+            + (f": {guard['detail']}" if guard.get("detail") else "")
+        )
+    if guard and guard.get("state") == "applied" and (guard.get("scans") or {}).get("sinceApplied", 0) > SCANS_DESPITE_GUARD:
+        problems.append(
+            f"the scan guard is applied, yet {guard['scans']['sinceApplied']} scans have arrived while "
+            "connected since"
+        )
+    if hold and hold.get("state") == "refused":
+        problems.append("the OTA supervisor is signed with another key than Mirror Home, which cannot hold it")
+    if hold and hold.get("state") == "held" and (hold.get("oomScoreAdj") or 0) > HELD_SCORE \
+            and activity["showing"]:
+        problems.append(
+            f"Mirror Home holds the OTA supervisor, yet the kernel ranks it at {hold['oomScoreAdj']}, "
+            f"not at {HELD_SCORE} or under"
+        )
     if early_stops > MAX_EARLY_STOPS:
         problems.append(f"Home was stopped {early_stops} times while starting before this run")
     if health["crashes"]["count"]:
@@ -3886,6 +4090,12 @@ def main(arguments: list[str] | None = None) -> int:
     emulator = targets.add_parser("emulator", help="run the full suite on an Android 6 emulator")
     emulator.add_argument("--apk", type=pathlib.Path, help="APK to install instead of building a debug one")
     emulator.add_argument("--skip-build", action="store_true", help="use the debug APK already built")
+    emulator.add_argument(
+        "--supervisor-apk",
+        type=pathlib.Path,
+        help="OTA supervisor signed with the same key as --apk, for the check that Mirror Home holds it "
+        "(default: the debug one, with the debug build)",
+    )
     emulator.add_argument(
         "--upgrade-from",
         type=pathlib.Path,
