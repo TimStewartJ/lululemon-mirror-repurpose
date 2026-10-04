@@ -1,3 +1,4 @@
+import importlib.util
 import pathlib
 import shutil
 import sys
@@ -8,8 +9,12 @@ from unittest import mock
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
 
-import mascots
-from PIL import Image
+# The preview paints with Pillow, which the rest of the tools do without.
+HAS_PILLOW = importlib.util.find_spec("PIL") is not None
+if HAS_PILLOW:
+    import mascots
+    from PIL import Image
+needs_pillow = unittest.skipUnless(HAS_PILLOW, "Pillow is not installed")
 
 INK = 0xF5F2EC
 
@@ -19,6 +24,7 @@ def lit(image):
     return sum(image.convert("L").histogram()[41:])
 
 
+@needs_pillow
 class PaintTest(unittest.TestCase):
     def test_a_frame_without_shapes_is_plain_mirror(self):
         image = mascots.paint([], 60)
@@ -62,6 +68,7 @@ class PaintTest(unittest.TestCase):
         self.assertIn(list(mascots.BLUSH), [colors[index:index + 3] for index in range(0, 96, 3)])
 
 
+@needs_pillow
 class SceneTest(unittest.TestCase):
     def test_the_scene_is_made_of_steps_the_player_knows(self):
         for step, seconds, says, happening in mascots.SCENE:
@@ -81,6 +88,7 @@ class SceneTest(unittest.TestCase):
                 self.assertEqual(1, mascots.main(["sheet", "--out", directory]))
 
 
+@needs_pillow
 @unittest.skipUnless(shutil.which("javac") and shutil.which("java"), "needs a JDK")
 class PicturesTest(unittest.TestCase):
     """The whole way: the mascots' own code, compiled and played, and painted."""

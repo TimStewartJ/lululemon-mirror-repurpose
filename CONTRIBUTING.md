@@ -22,7 +22,10 @@ GitHub CI runs this same gate. SDK setup requests `platform-tools`, then
 explicitly installs Android SDK Platform 35 and Build Tools 35.0.0. The legacy
 SDK `tools` package is not needed and must not be part of the bootstrap request.
 Optional artwork tests skip when their Python or GPU dependencies are absent;
-validate renderer changes locally with those dependencies installed.
+validate renderer changes locally with those dependencies installed. The
+tests of the character preview (`tools/mascots.py`) skip without Pillow, which
+CI does not install; run them locally after changing a character or the
+preview.
 
 Changes to the dashboard, the control API or app start-up should also pass the
 [Android 6 emulator suite](docs/validation.md), which runs the real app in the
