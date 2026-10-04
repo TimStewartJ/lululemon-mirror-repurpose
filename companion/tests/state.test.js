@@ -47,6 +47,7 @@ test("the snapshot has the display, the widgets, the background, the board, the 
   assert.equal(snapshot.weather.nextHours.length, 6);
   assert.equal(snapshot.weather.nextHours[0].at, "08:00");
   assert.equal(snapshot.voice, "listening");
+  assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
   assert.equal(boardVersion, fake.state.board.version);
   assert.equal(sleeping, false);
   assert.equal(items[0].title, "Buy milk");
@@ -111,6 +112,21 @@ test("the state carries what a briefing is built from: the clock's form, the wea
   assert.deepEqual([partial.boardRead, partial.items], [false, []]);
   const bare = buildState({ status: { utcOffsetMinutes: 60, clock24Hour: true, automation: {} }, layout: null, board: { items: [] }, films: null, now: 0 });
   assert.deepEqual([bare.clock24Hour, bare.weather, bare.boardRead], [true, null, true]);
+});
+
+test("the snapshot names the character the mirror answers as, where the mirror has any", async (t) => {
+  const { mirror, clock, fake } = await startTools(t);
+  fake.state.mascot = "mochi";
+  assert.deepEqual((await fetchState(mirror, clock)).snapshot.character, { now: "Mochi", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
+  // One that this companion has never heard of is still the one that is chosen.
+  fake.state.mascots.push({ id: "pip", name: "Pip" });
+  fake.state.mascot = "pip";
+  assert.equal((await fetchState(mirror, clock)).snapshot.character.now, "Pip");
+  // A Mirror Home from before there were characters says nothing of them, and neither does the snapshot.
+  fake.state.mascots = null;
+  assert.equal("character" in (await fetchState(mirror, clock)).snapshot, false);
+  fake.state.failing.set("/api/v1/assistant", 500);
+  assert.equal("character" in (await fetchState(mirror, clock)).snapshot, false);
 });
 
 test("a brief read asks only for the status and the board", async (t) => {

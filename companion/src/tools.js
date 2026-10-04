@@ -2,6 +2,7 @@ import { describeError } from "./log.js";
 import { MirrorRefused, MirrorUnreachable } from "./mirror.js";
 import { boardTools } from "./tools/board.js";
 import { cardTools } from "./tools/card.js";
+import { characterTools } from "./tools/character.js";
 import { displayTools } from "./tools/display.js";
 import { layoutTools } from "./tools/layout.js";
 import { talkTools } from "./tools/talk.js";
@@ -66,7 +67,14 @@ const FOR_KIND = {
  * @returns {Tool[]}
  */
 export function createTools(context) {
-  return [...displayTools(context), ...layoutTools(context), ...boardTools(context), ...cardTools(context), ...talkTools(context)];
+  return [
+    ...displayTools(context),
+    ...characterTools(context),
+    ...layoutTools(context),
+    ...boardTools(context),
+    ...cardTools(context),
+    ...talkTools(context),
+  ];
 }
 
 /** The tools a kind of run may use: a greeting may only speak, a tending run may only tidy. */

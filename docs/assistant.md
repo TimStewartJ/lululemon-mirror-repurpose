@@ -75,6 +75,11 @@ Choose one under **Settings > Assistant > Character** in the controls; it
 says hello on the glass when you do. With **None**, which is how a Mirror
 starts, the panel shows its dots as before.
 
+With the assistant on you can also ask for one: "Mirror, be the cat",
+"Mirror, can you be a ghost?", "Mirror, next character", "Mirror, no
+character", or "Mirror, which characters do you have?". The assistant knows
+which one it is at the moment, and the choice stays until it is changed.
+
 | Character | What it is |
 |---|---|
 | **Blink** | Two eyes and nothing else; the one that reads from farthest away. |

@@ -1,6 +1,7 @@
 import { COORDINATES, describeWidget } from "./layout.js";
 import { MirrorUnreachable } from "./mirror.js";
 import { formatOffset, localIso, localTime, weekday } from "./time.js";
+import { describeCharacter } from "./tools/character.js";
 
 const MAX_BOARD_ITEMS = 25;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -28,18 +29,19 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * @param {import("./mirror.js").Mirror} mirror
  * @param {{ now: () => number }} clock
  * @param {{ brief?: boolean }} [options] With `brief`, only the status and the board are read: all that a
- *   briefing is built from, and two requests fewer for an answer that has to be fast. The snapshot then
- *   lacks the layout and the films.
+ *   briefing is built from, and three requests fewer for an answer that has to be fast. The snapshot then
+ *   lacks the layout, the films and the character.
  * @returns {Promise<MirrorState>}
  * @throws {MirrorUnreachable} when the mirror's status cannot be read
  */
 export async function fetchState(mirror, clock, { brief = false } = {}) {
   const asked = clock.now();
-  const [status, layout, board, films] = await Promise.allSettled([
+  const [status, layout, board, films, assistant] = await Promise.allSettled([
     mirror.get("/api/v1/status"),
     brief ? null : mirror.get("/api/v1/dashboard/layout"),
     mirror.get("/api/v1/board/items?limit=100"),
     brief ? null : mirror.get("/api/v1/background-videos"),
+    brief ? null : mirror.get("/api/v1/assistant"),
   ]);
   if (status.status === "rejected") {
     if (status.reason instanceof MirrorUnreachable) throw status.reason;
@@ -53,12 +55,13 @@ export async function fetchState(mirror, clock, { brief = false } = {}) {
     layout: layout.value ?? null,
     board: board.value ?? null,
     films: films.value ?? null,
+    assistant: assistant.value ?? null,
     now,
   });
 }
 
 /** Builds the state from the mirror's answers; kept apart from the fetching so it can be tested by itself. */
-export function buildState({ status, layout, board, films, now }) {
+export function buildState({ status, layout, board, films, assistant = null, now }) {
   const offsetMinutes = Number(status.utcOffsetMinutes) || 0;
   const automation = status.automation ?? {};
   const widgets = Array.isArray(layout?.widgets) ? layout.widgets : [];
@@ -73,6 +76,9 @@ export function buildState({ status, layout, board, films, now }) {
     weather: describeWeather(status.weather, now, offsetMinutes),
     voice: status.voice?.state ?? "unknown",
   };
+  // Only a Mirror Home that has characters is asked about them.
+  const character = describeCharacter(assistant);
+  if (character) snapshot.character = character;
   if (!layout) snapshot.widgets = "The layout could not be read.";
   return {
     snapshot,

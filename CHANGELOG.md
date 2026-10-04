@@ -50,6 +50,9 @@
   sleeps at good night. Each part of its face is moved by a spring, so a new
   mood takes hold in the same frame and arrives with a little bounce. None is
   chosen unless an owner chooses, and a Mirror without one is unchanged.
+  With the assistant on, the Mirror can be asked for one ("Mirror, be the
+  cat", "next character", "no character"): the companion's model is told
+  which character it is and has a tool, `set_character`, to become another.
   `tools/mascots.py` paints the characters on a computer, from the code that
   draws them on the glass.
 - Say when the Mirror needs to be switched off and on. On one Mirror, nine

@@ -59,6 +59,11 @@ export async function startFakeMirror({
     },
     brightness: 180,
     weather: true,
+    /** The character the mirror answers as, and the ones it has; null for a Mirror Home without any. */
+    mascot: "none",
+    mascots: [
+      { id: "blink", name: "Blink" }, { id: "wisp", name: "Wisp" }, { id: "mochi", name: "Mochi" }, { id: "lune", name: "Lune" },
+    ],
     /** Captions shown or asked for, oldest first: { text, kind, seconds, shown }, and details when rows came along. */
     said: [],
     /** Every request received: { method, path, body }. */
@@ -229,7 +234,18 @@ export async function startFakeMirror({
     const is = (wantedMethod, wantedPath) => method === wantedMethod && path === wantedPath;
     if (path === "/api/v1/board" || path.startsWith("/api/v1/board/")) return board(method, path, query, body);
     if (is("GET", "/api/v1/status")) return [200, status()];
-    if (is("GET", "/api/v1/assistant")) return [200, { enabled: true, state: "connected" }];
+    if (is("GET", "/api/v1/assistant")) {
+      const characters = state.mascots ? { mascot: state.mascot, mascots: state.mascots } : {};
+      return [200, { enabled: true, state: "connected", ...characters }];
+    }
+    if (is("PUT", "/api/v1/assistant")) {
+      // As on the mirror: a character it does not know is refused with the ones it does.
+      const known = ["none", ...(state.mascots ?? []).map((character) => character.id)];
+      if (typeof body.mascot !== "string") return [400, { error: "mascot must be text" }];
+      if (!known.includes(body.mascot)) return [400, { error: `mascot must be one of: ${known.join(", ")}` }];
+      state.mascot = body.mascot;
+      return [200, { enabled: true, state: "connected", mascot: state.mascot, mascots: state.mascots }];
+    }
     if (is("POST", "/api/v1/assistant/say")) return say(body);
     if (is("GET", "/api/v1/screenshot")) {
       const width = query.get("width");
