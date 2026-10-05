@@ -8,7 +8,7 @@
 //                              [--only WORD] [--calls] [--verbose]
 //
 // --only runs the requests that contain one of the words, given with commas between them, or that belong to a group
-// of that name (settings); --calls adds one line per call to the model; --verbose prints the companion's whole log.
+// of that name (settings, moments); --calls adds one line per call to the model; --verbose prints the companion's whole log.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -103,6 +103,19 @@ const openItems = () => mirror.state.board.items.filter((candidate) => !candidat
 const names = (answer, entry) => entry.title.toLowerCase().split(/\W+/).some((word) => word.length >= 4 && shown(answer).toLowerCase().includes(word));
 /** Puts an item on the fake mirror's board directly, as another program would. */
 const post = (id, entry) => mirror.state.board.put(id, entry, "try-brain").item;
+/** The moments of a kind that are on the fake mirror's glass now. */
+const moments = (kind) => mirror.state.moments.filter((moment) => moment.until > Date.now() && (!kind || moment.kind === kind));
+const describeMoment = (moment) =>
+  `${moment.kind}${moment.title ? ` "${moment.title}"` : ""}` +
+  (moment.text ? ` "${moment.text.replace(/\n/g, " / ")}"` : "") +
+  (moment.rows ? ` [${moment.rows.map((row) => row.text).join(" | ")}]` : "") +
+  (moment.values ? ` ${moment.chart} [${moment.values.map((entry) => `${entry.label} ${entry.value}`).join(", ")}]` : "") +
+  (moment.shapes ? ` of ${moment.shapes.length} shapes (${[...new Set(moment.shapes.map((shape) => shape.shape))].join(", ")})` : "") +
+  (moment.endsAt ? ` running out in ${Math.round((moment.endsAt - Date.now()) / 1000)} s` : "") +
+  `, ${moment.size}${moment.height ? ` ${moment.height}` : ""}${moment.side ? ` ${moment.side}` : ""}, for ${Math.round((moment.until - moment.createdAt) / 1000)} s` +
+  (moment.color ? `, ${moment.color}` : "") + (moment.motion !== "none" ? `, ${moment.motion}` : "");
+const momentsNote = () => moments().map(describeMoment).join("; ") || "no moment";
+
 /** A complaint when a tool had to be called more than once: every further call is seconds the person waits. */
 const once = (answer, tool) => {
   const calls = answer.acted.filter((name) => name === tool).length;
@@ -482,6 +495,104 @@ const steps = [
     words: "Mirror, change the wifi password.",
     check: (answer) => (/phone|controls|can't|cannot/i.test(answer.reply) && !answer.acted.some((name) => name.startsWith("set_")) ? "" : "it did not say that this is not its to change"),
   },
+  // Moments: what the mirror puts on the glass for a while, beside its line.
+  {
+    group: "moments",
+    words: "Mirror, set a timer for five minutes.",
+    before: () => {
+      mirror.state.moments = [];
+    },
+    // Both: the reminder that is announced when due, and a countdown that can be watched.
+    check: (answer) => {
+      const [running] = moments("countdown");
+      if (!running) return "no countdown is on the glass";
+      const minutes = (running.endsAt - Date.now()) / 60_000;
+      if (minutes < 4.6 || minutes > 5.1) return `the countdown runs out in ${minutes.toFixed(1)} minutes`;
+      const reminder = mirror.state.board.items.find((candidate) => candidate.kind === "reminder" && Math.abs(candidate.due - running.endsAt) < 20_000);
+      if (!reminder) return "no reminder on the board falls due when the countdown ends";
+      const more = answer.acted.filter((name) => !["show_moment", "board_add"].includes(name));
+      return more.length > 0 ? `it also called ${more.join(", ")}` : "";
+    },
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, what time is it?",
+    before: () => ({ showing: moments().length }),
+    // A plain answer needs nothing beside it.
+    check: (answer, before) => (moments().length === before.showing && !answer.acted.includes("show_moment") ? "" : "a moment was shown for a plain answer"),
+  },
+  {
+    group: "moments",
+    words: "Mirror, stop the timer.",
+    before: () => ({ ends: moments("countdown")[0]?.endsAt }),
+    check: (answer, before) => {
+      if (moments("countdown").length > 0) return "the countdown is still on the glass";
+      const reminder = mirror.state.board.items.find((candidate) => candidate.kind === "reminder" && !candidate.done && Math.abs(candidate.due - before.ends) < 20_000);
+      return reminder ? "its reminder is still on the board" : "";
+    },
+  },
+  {
+    group: "moments",
+    words: "Mirror, write happy birthday Sam really big.",
+    check: () => {
+      const [words] = moments("text");
+      if (!words || !/birthday/i.test(words.text)) return "no words about a birthday are on the glass";
+      return words.size === "large" ? "" : `they are ${words.size}`;
+    },
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, show me how to make pour-over coffee, step by step.",
+    check: () => (moments("list")[0]?.rows.length >= 3 ? "" : "no list of steps is on the glass"),
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, show me how the temperature goes over the next hours.",
+    check: () => {
+      const [chart] = moments("chart");
+      if (!chart || chart.values.length < 3) return "no chart of the hours ahead is on the glass";
+      // The numbers of the state, not made up: the stand-in's hours rise by half a degree.
+      return chart.values.every((entry) => entry.value >= 12 && entry.value <= 17) ? "" : "the values are not those of the state";
+    },
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, draw me a heart.",
+    check: () => {
+      const [drawing] = moments("drawing");
+      if (!(drawing?.shapes.length >= 1)) return "no drawing is on the glass";
+      // The glass of 2015 has no glyph for a pictograph.
+      return /[^\x20-\x7e\u00a0-\u024f]/.test(drawing.title ?? "") ? `its title is "${drawing.title}"` : "";
+    },
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, make it red and put it at the top.",
+    before: () => ({ id: moments("drawing")[0]?.id }),
+    check: (answer, before) => {
+      const drawings = moments("drawing");
+      if (drawings.length !== 1 || drawings[0].id !== before.id) return "the drawing was not replaced under its id";
+      const [red, green] = [1, 3].map((at) => parseInt((drawings[0].color ?? drawings[0].shapes[0].stroke ?? drawings[0].shapes[0].fill ?? "#000000").slice(at, at + 2), 16));
+      if (!(red > 150 && red > green + 60)) return "it is not red";
+      return drawings[0].height === "top" ? "" : `it is at ${drawings[0].height ?? "no named height"}`;
+    },
+    note: momentsNote,
+  },
+  {
+    group: "moments",
+    words: "Mirror, take all of those down again.",
+    before: () => ({ widgets: boxes() }),
+    // What it put there goes; the widgets and the board were not asked about.
+    check: (answer, before) => {
+      if (moments().length > 0 || !answer.acted.includes("end_moment")) return `still showing: ${momentsNote()}`;
+      return boxes() === before.widgets ? "" : `the widgets were changed too: ${changedWidgets(before.widgets)}`;
+    },
+  },
   {
     group: "settings",
     words: "Mirror, we moved to Denver, fix the clock.",
@@ -544,6 +655,7 @@ for (const step of steps) {
 Object.assign(mirror.state, { timeZone: options.zone, utcOffsetMinutes: offset, clock24Hour: false, displayName: "Mirror" });
 Object.assign(mirror.state.automation, { enabled: true, wakeTime: "06:30", sleepTime: "23:00", motionEnabled: true, sleeping: false });
 mirror.state.schedule = { enabled: false, slots: [] };
+mirror.state.moments = [];
 mirror.state.layout.background.mode = "video";
 running.habits.change({ greet: true, tend: true, quietHours: null });
 

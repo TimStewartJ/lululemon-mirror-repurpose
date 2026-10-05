@@ -133,6 +133,36 @@ look for changes every few seconds.
 A request that someone made is answered where they can see it: a Mirror
 that is dark wakes for the answer, unless the answer was to go dark.
 
+### More than a line: moments
+
+The assistant can also put something on the glass for a while, beside its
+answer, and the Mirror takes it away again by itself:
+
+| Say | What appears |
+|---|---|
+| "Mirror, set a timer for five minutes", "how long until seven?" | A countdown that runs on the glass, with a line under it that shortens. A timer is also a reminder on the board, so it is announced when due. |
+| "Mirror, write happy birthday Sam really big", "leave a note for Sam: back at six" | Words, as large as there is room for. |
+| "Mirror, show me how to make pour-over coffee, step by step", "what should I pack for the gym?" | A list of up to eight rows. |
+| "Mirror, show me how the temperature goes over the next hours" | A small chart, as bars or as a line. |
+| "Mirror, draw me a heart", "draw a sun" | A line drawing. |
+| "Mirror, make it red and put it at the top", "bigger" | The same moment, changed where it stands. |
+| "Mirror, stop the timer", "take that down", "take all of those down" | It leaves at once. |
+
+It may also show one unasked, where seeing serves better than a sentence.
+A plain answer, such as the time or a confirmation, gets none.
+
+A moment arrives and leaves with a fade, as a widget does. It goes where the
+glass is free: near the middle, clear of the clock and the other widgets, of
+other moments and of where the answer appears; when room is short it is
+drawn a size smaller. Ask for a place ("at the top", "on the left") to have
+it there instead. It stays for about a minute unless told how long, six
+hours at most; a countdown stays until it has run out and twenty seconds
+more, with its digits pulsing at the end. The glass holds six at a time.
+
+Moments are not kept. If Mirror Home restarts, they are gone; the timer's
+reminder on the board is not. They lie over the film or photo behind them
+and carry a soft dark edge so that they can be read there.
+
 ### Settings you can ask for
 
 Most of what **Settings** and **Display** hold in the phone controls can be
@@ -282,7 +312,10 @@ are set.
 - A background film cannot be pictured: in a picture of the glass it
   appears as its still poster.
 - It answers in writing only: one line of at most 200 characters, or a
-  heading with up to five rows.
+  heading with up to five rows, with a moment beside it if it shows one.
+- A drawing is what a language model can describe in a few dozen lines and
+  curves: a heart, a sun, a house. It is no picture.
+- This glass draws no emoji; the assistant is told to use none.
 
 ## Protocol
 

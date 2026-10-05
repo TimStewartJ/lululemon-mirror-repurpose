@@ -151,6 +151,7 @@ access.
 | `set_character` | Chooses the character the mirror answers as, or none: "be the cat", "next character", "just the words". |
 | `set_answer_place` | Moves where on the glass the answers appear: "put your answers at the top", "further left", "a bit lower". |
 | `arrange_widgets` | Shows, hides, moves and resizes widgets. |
+| `show_moment`, `end_moment` | Puts something on the glass for a while, beside the answer, and takes it down: a countdown that runs, words written large, a list, a chart, a drawing. See [Moments](#moments). |
 | `set_clock` | Makes the clock read 12 or 24 hours, and moves the mirror to another time zone: "use military time", "we moved to Denver". |
 | `set_display_rules` | Sets when the display is dark by itself: the hours it is lit each day, or none; whether it sleeps when it sees nobody, after how long, and how small a movement counts; whether its brightness follows the room. |
 | `set_weather` | Sets the place the weather is for, Fahrenheit or Celsius, and whether there is weather at all: "show the weather for Portland, Maine", "use Celsius". |
@@ -175,6 +176,34 @@ mirror through each of them, or switch off the thing that takes requests,
 and words that were misheard across a room should not be able to. Two more
 need something only a person has: a web page as the dashboard and media to
 play both take an address.
+
+### Moments
+
+A moment is something the model puts on the glass for a while as part of an
+answer, and which the mirror takes away by itself when its time is up. There
+are five kinds: `text` (words, as large as their box allows), `countdown`
+(runs down on the glass to an instant, with a line that shortens),
+`list` (up to eight rows), `chart` (two to twelve values as bars or a line)
+and `drawing` (up to forty lines, circles, rectangles, paths and words on a
+square of 100 by 100 units). Each may carry a small title, a colour and a
+gentle motion (`pulse`, `float`, `spin`).
+
+The model describes a moment; it does not program one. The mirror checks
+every field (`Moments.java`) and draws the kind from them, so nothing a
+model writes can run on the glass. Where a moment goes is decided by the
+glass, which knows where something is drawn: it takes the free room nearest
+to a little above the middle, clear of the widgets' words and pictures, of
+other moments and of where the answer appears, and a size smaller if that is
+what fits. A height or a side is passed on only when a person asked for one.
+
+A moment stays 45 seconds if nothing is said (a list 90, a chart 60), six
+hours at most, and a countdown until 20 seconds after it has run out.
+Showing the same `id` again replaces a moment where it stands. The glass
+holds six at once. None is kept across a restart of Mirror Home: a timer is
+therefore both a reminder on the board, which is announced when due and
+survives, and a countdown to the same instant. The state the model reads
+lists what is showing, so that "stop the timer" or "take that down" has
+something to name.
 
 ### Settings changed by asking
 

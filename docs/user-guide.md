@@ -304,7 +304,10 @@ can ask for either: "Mirror, be the cat", "Mirror, put your answers at the
 top". Most other settings can be asked for too, such as the clock's form and
 time zone, the hours the display is lit, the weather's place, the films'
 timetable and the colours; [Settings you can ask
-for](assistant.md#settings-you-can-ask-for) lists them. The field below takes a typed request, which is the quickest way
+for](assistant.md#settings-you-can-ask-for) lists them. It can also put
+something on the glass for a while, such as a timer that runs down, words
+written large, a list or a small drawing: see [More than a line:
+moments](assistant.md#more-than-a-line-moments). The field below takes a typed request, which is the quickest way
 to try it, and **Asked lately** lists what was asked and answered since the Mirror
 last started.
 

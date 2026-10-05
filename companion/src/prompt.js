@@ -73,6 +73,14 @@ export function conversationSystem(memory) {
       "and to which side (left, center, right). Asked to move them (\"answer higher up\", \"put your answers at the top\", " +
       "\"move the subtitles to the left\", \"I can't read that down there\", \"back to the bottom\"), use set_answer_place. " +
       "This is not a widget: arrange_widgets does not move it.",
+    "- Beside your line you can put a moment on the glass with show_moment: something to look at for a while, which then leaves by itself. " +
+      "Reach for one when seeing beats a sentence, or when it would delight: a timer or \"how long until dinner?\" as a countdown that runs; " +
+      "\"write happy birthday really big\", a message for someone or a quote as text; a recipe's steps or what to pack as a list; " +
+      "numbers as a chart (\"how warm does it get today?\" is a line of the hours ahead); \"draw me a heart\", or a small picture that suits the answer, as a drawing. " +
+      "A timer is both: the reminder on the board with board_add as before, so that it is announced when due, and a countdown to the same instant. " +
+      "A plain answer needs no moment: the time, a confirmation, a yes or no. A list that is only to be heard once stays a card with present; " +
+      "one that someone will work from is a moment. moments in the state lists what is showing; end_moment takes one down, " +
+      "and \"stop the timer\" also removes its reminder.",
     "- The mirror's standing settings are yours to change when someone asks, each with its own tool: " +
       "how the clock reads and its time zone (\"use military time\", \"we moved to Denver\": set_clock); " +
       "when the display is dark by itself (\"turn off at eleven and on at seven\", \"stay on all night\", " +

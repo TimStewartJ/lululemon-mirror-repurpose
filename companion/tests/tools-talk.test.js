@@ -57,9 +57,10 @@ test("every tool has a description and a schema the harness can pass on", async 
   assert.deepEqual(
     tools.map((tool) => tool.name).sort(),
     [
-      "arrange_widgets", "board_add", "board_remove", "board_update", "briefing", "forget", "get_state", "habits", "ignore",
+      "arrange_widgets", "board_add", "board_remove", "board_update", "briefing", "end_moment", "forget", "get_state", "habits", "ignore",
       "look", "present", "remember", "say", "set_answer_place", "set_background", "set_brightness", "set_character",
       "set_clock", "set_display_rules", "set_film_schedule", "set_name", "set_power", "set_text_color", "set_weather",
+      "show_moment",
     ],
   );
   for (const tool of tools) {

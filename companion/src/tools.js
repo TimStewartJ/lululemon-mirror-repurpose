@@ -6,6 +6,7 @@ import { cardTools } from "./tools/card.js";
 import { characterTools } from "./tools/character.js";
 import { displayTools } from "./tools/display.js";
 import { layoutTools } from "./tools/layout.js";
+import { momentTools } from "./tools/moments.js";
 import { settingsTools } from "./tools/settings.js";
 import { talkTools } from "./tools/talk.js";
 
@@ -79,6 +80,7 @@ export function createTools(context) {
     ...displayTools(context),
     ...characterTools(context),
     ...layoutTools(context),
+    ...momentTools(context),
     ...settingsTools({ ...context, habits }),
     ...boardTools(context),
     ...cardTools(context),

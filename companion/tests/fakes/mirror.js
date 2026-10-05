@@ -123,6 +123,9 @@ export async function startFakeMirror({
     displayName: "Mirror",
     /** True for a mirror whose own system does not take a new name. */
     nameRefused: false,
+    /** What is on the glass for a while, oldest first; null for a Mirror Home without moments. */
+    moments: [],
+    momentsVersion: 0,
     /** The films' timetable, and the film chosen by hand over it: { videoId, untilTime } or null. */
     schedule: { enabled: false, slots: [] },
     hold: null,
@@ -306,6 +309,69 @@ export async function startFakeMirror({
     throw new BoardRefusal(405, null, `${method} is not available here. This path takes GET, PUT, PATCH or DELETE`);
   }
 
+  /** The moments whose time is not up. */
+  function showing() {
+    const kept = state.moments.filter((moment) => moment.until > now());
+    if (kept.length !== state.moments.length) state.momentsVersion += 1;
+    state.moments = kept;
+    return kept;
+  }
+
+  /** Takes a moment as Mirror Home does: checked field by field, and refused with the field at fault. */
+  function putMoment(body) {
+    const refuse = (field, error) => [400, { error, field }];
+    const kinds = ["text", "countdown", "list", "chart", "drawing"];
+    if (!kinds.includes(body.kind)) return refuse("kind", "kind must be one of: text, countdown, list, chart, drawing");
+    const id = body.id ?? `m${state.momentsVersion + 1}`;
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) return refuse("id", "id takes up to 32 small letters, digits and dashes");
+    for (const [name, choices] of [["size", ["small", "medium", "large"]], ["height", state.places.heights], ["side", state.places.sides]]) {
+      if (body[name] !== undefined && !choices.includes(body[name])) return refuse(name, `${name} must be one of: ${choices.join(", ")}`);
+    }
+    if (body.color !== undefined && !/^#[0-9a-f]{6}$/i.test(body.color)) return refuse("color", "color must be a colour as #rrggbb");
+    if (!["none", "pulse", "float", "spin"].includes(body.motion ?? "none")) return refuse("motion", "motion must be one of: none, pulse, float, spin");
+    if (body.seconds !== undefined && !(Number.isInteger(body.seconds) && body.seconds >= 5 && body.seconds <= 21600)) {
+      return refuse("seconds", "seconds must be a number from 5 to 21600");
+    }
+    const moment = { id, kind: body.kind, createdAt: now(), size: body.size ?? "medium", motion: body.motion ?? "none" };
+    if (body.height) moment.height = body.height;
+    if (body.side) moment.side = body.side;
+    if (body.title) moment.title = body.title;
+    if (body.color) moment.color = body.color.toLowerCase();
+    let until = null;
+    if (body.kind === "text") {
+      if (typeof body.text !== "string" || body.text.length < 1 || body.text.length > 280) return refuse("text", "text takes 1 to 280 characters on up to 6 lines");
+      moment.text = body.text;
+    } else if (body.kind === "countdown") {
+      if (!(body.endsAt > now() && body.endsAt <= now() + 21_600_000)) return refuse("endsAt", "endsAt must be a moment in the next six hours, in epoch milliseconds");
+      moment.endsAt = body.endsAt;
+      until = body.endsAt + 20_000;
+    } else if (body.kind === "list") {
+      if (!Array.isArray(body.rows) || body.rows.length < 1 || body.rows.length > 8) return refuse("rows", "rows is a list of 1 to 8");
+      moment.rows = body.rows;
+    } else if (body.kind === "chart") {
+      if (!Array.isArray(body.values) || body.values.length < 2 || body.values.length > 12) return refuse("values", "A chart needs at least two values");
+      Object.assign(moment, { values: body.values, chart: body.chart ?? "bars" });
+    } else {
+      if (!Array.isArray(body.shapes) || body.shapes.length < 1 || body.shapes.length > 40) return refuse("shapes", "shapes is a list of 1 to 40");
+      const needs = { line: ["x1", "y1", "x2", "y2"], circle: ["x", "y", "r"], rect: ["x", "y", "w", "h"], path: [], text: ["x", "y"] };
+      for (const shape of body.shapes) {
+        const missing = (needs[shape.shape] ?? ["shape"]).find((name) => typeof shape[name] !== "number");
+        if (!needs[shape.shape] || (shape.shape === "path" && !/^[MmLlHhVvCcSsQqTtAaZz0-9eE+\-., ]{1,800}$/.test(shape.d ?? ""))) {
+          return refuse("shapes", "Each shape is an object whose shape is line, circle, rect, path or text");
+        }
+        if (missing) return refuse(missing, `${missing} must be a number from -100 to 200`);
+      }
+      moment.shapes = body.shapes;
+    }
+    moment.until = body.seconds !== undefined || until === null ? now() + (body.seconds ?? 45) * 1000 : until;
+    const kept = showing().filter((other) => other.id !== id);
+    const at = state.moments.findIndex((other) => other.id === id);
+    if (at >= 0) state.moments[at] = moment;
+    else state.moments = [...kept.slice(kept.length >= 6 ? 1 : 0), moment];
+    state.momentsVersion += 1;
+    return [at >= 0 ? 200 : 201, { moment, replaced: at >= 0, shown: !state.automation.sleeping }];
+  }
+
   /** Whether the rows of a card keep the limits the real mirror sets: up to five, a short label, one line of text. */
   function rowsFit(details) {
     const line = (value, least, most) =>
@@ -461,6 +527,18 @@ export async function startFakeMirror({
       const wanted = (query.get("q") ?? "").trim();
       if (wanted.length < 2 || wanted.length > 80) return [400, { error: "Invalid JSON request" }];
       return [200, searchPlaces(wanted)];
+    }
+    if (state.moments && (path === "/api/v1/moments" || path.startsWith("/api/v1/moments/"))) {
+      const id = path.slice("/api/v1/moments/".length);
+      if (is("GET", "/api/v1/moments")) return [200, { moments: showing(), version: state.momentsVersion, now: now() }];
+      if (is("POST", "/api/v1/moments")) return putMoment(body);
+      if (method === "DELETE") {
+        const removed = showing().filter((moment) => id === "" || moment.id === id).length;
+        if (id !== "" && removed === 0) return [404, { removed: 0 }];
+        state.moments = id === "" ? [] : state.moments.filter((moment) => moment.id !== id);
+        state.momentsVersion += removed > 0 ? 1 : 0;
+        return [200, { removed }];
+      }
     }
     if (is("GET", "/api/v1/preferences")) return [200, preferences()];
     if (is("PUT", "/api/v1/preferences")) {
