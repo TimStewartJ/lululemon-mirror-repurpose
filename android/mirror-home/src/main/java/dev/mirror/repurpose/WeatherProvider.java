@@ -169,57 +169,32 @@ public final class WeatherProvider {
                 throw new JSONException("Location search is invalid");
             }
         }
-        URL url = new URL(
-                "https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&format=json&name="
-                        + URLEncoder.encode(normalized, "UTF-8"));
-        JSONObject source;
-        try {
-            source = fetchJson(url);
-        } catch (IOException errorValue) {
-            Log.e(TAG, "Unable to search weather locations", errorValue);
-            throw errorValue;
-        }
-        JSONArray sourceResults = source.optJSONArray("results");
-        JSONArray results = new JSONArray();
-        if (sourceResults != null) {
-            for (int index = 0; index < sourceResults.length() && index < 5; index++) {
-                JSONObject item = sourceResults.optJSONObject(index);
-                if (item == null) {
-                    continue;
-                }
-                double latitude = item.optDouble("latitude", Double.NaN);
-                double longitude = item.optDouble("longitude", Double.NaN);
-                if (Double.isNaN(latitude)
-                        || Double.isNaN(longitude)
-                        || latitude < -90d
-                        || latitude > 90d
-                        || longitude < -180d
-                        || longitude > 180d) {
-                    continue;
-                }
-                String name = item.optString("name", "").trim();
-                if (name.isEmpty()) {
-                    continue;
-                }
-                String admin = item.optString("admin1", "").trim();
-                String country = item.optString("country", "").trim();
-                StringBuilder label = new StringBuilder(name);
-                if (!admin.isEmpty() && !admin.equals(name)) {
-                    label.append(", ").append(admin);
-                }
-                if (!country.isEmpty()) {
-                    label.append(", ").append(country);
-                }
-                results.put(new JSONObject()
-                        .put("label", label.length() > 80
-                                ? label.substring(0, 80)
-                                : label.toString())
-                        .put("latitude", latitude)
-                        .put("longitude", longitude)
-                        .put("timezone", item.optString("timezone", "")));
+        // A town with its state or country is no town's name to the service: see WeatherPlaces.
+        JSONArray elsewhere = null;
+        for (WeatherPlaces.Reading reading : WeatherPlaces.readings(normalized)) {
+            URL url = new URL(
+                    "https://geocoding-api.open-meteo.com/v1/search?language=en&format=json&count="
+                            + reading.count() + "&name=" + URLEncoder.encode(reading.name, "UTF-8"));
+            JSONObject source;
+            try {
+                source = fetchJson(url);
+            } catch (IOException errorValue) {
+                Log.e(TAG, "Unable to search weather locations", errorValue);
+                throw errorValue;
+            }
+            JSONArray found = source.optJSONArray("results");
+            JSONArray results = WeatherPlaces.pick(found, reading.region);
+            if (results.length() > 0) {
+                return new JSONObject().put("results", results);
+            }
+            if (elsewhere == null && !reading.region.isEmpty()) {
+                JSONArray others = WeatherPlaces.pick(found, "");
+                elsewhere = others.length() > 0 ? others : null;
             }
         }
-        return new JSONObject().put("results", results);
+        JSONObject nothing = new JSONObject().put("results", new JSONArray());
+        // Towns of that name that lie elsewhere, so that whoever asked can see what there is.
+        return elsewhere == null ? nothing : nothing.put("elsewhere", elsewhere);
     }
 
     private synchronized void schedule(long delayMs) {

@@ -2784,7 +2784,10 @@
         });
         selector.classList.toggle('hidden', !selector.options.length);
         if (!selector.options.length) {
-          setMessage('weather-message', 'No matching places were found.', true);
+          var elsewhere = (result.elsewhere || []).map(function (location) { return location.label; });
+          setMessage('weather-message', elsewhere.length
+            ? 'None was found there. Places of that name: ' + elsewhere.join('; ') + '.'
+            : 'No matching places were found. Try the town with its state or country.', true);
           return;
         }
         selector.dispatchEvent(new Event('change'));

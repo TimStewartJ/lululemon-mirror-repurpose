@@ -133,6 +133,16 @@ works), and when the last one was (`lastAt`).
 Turning it on where `supported` is false answers 409. `status.wifi.scanGuard`
 carries `enabled`, `supported`, `state` and `detail`.
 
+`GET /api/v1/weather/locations?q=` looks a place up for the weather and
+answers `{results: [{label, latitude, longitude, timezone}]}` with up to five
+places, best known first. The service behind it searches by a town's name
+alone, so `q` is tried as it stands and then with its last one to three words
+as a state, province or country, written out or abbreviated ("Portland
+Maine", "Portland, ME", "San Jose Costa Rica"); with a comma, what follows it
+is the region. When towns of that name exist but none lies in the region,
+`results` is empty and `elsewhere` lists them in the same form, so that a
+client can say which there are.
+
 Background video list, upload, activation, rollback, schedule, deletion, and poster routes
 require an ordinary bearer credential. The bootstrap availability route is
 public; its POST exchanges an independently generated build-scoped capability

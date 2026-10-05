@@ -86,6 +86,13 @@ outage and are labeled stale after 90 minutes. Browser-based location detection
 is available only from a secure HTTPS or localhost control origin; normal LAN
 HTTP users should use city search.
 
+The search takes a town by itself or with its state, province or country:
+"Springfield", "Springfield, Oregon", "Portland Maine", "Portland ME",
+"San Jose Costa Rica". By its name alone it lists the best known towns of
+that name; with a region it lists the ones that lie there. When no town of
+that name lies in the region, the search says which towns of that name it
+does know.
+
 The visual editor supports a configurable snap grid, edge/center guides,
 undo/redo, widget locks, layers, keyboard movement,
 duplicate instances, and validated JSON import/export. Canonical widgets remain

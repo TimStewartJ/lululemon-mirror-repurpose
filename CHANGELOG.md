@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Find a town for the weather when it is given with its state or country.
+  The place search passed what was typed to a service that searches by a
+  town's name alone, so "Portland, Maine" found nothing and "Springfield"
+  could only ever be the five best known ones. `GET
+  /api/v1/weather/locations` now also reads the last words as a state,
+  province or country, written out or abbreviated ("Portland ME", "San Jose
+  Costa Rica"), asks for more towns of that name and keeps those that lie
+  there. When none does, it answers with the towns of that name that there
+  are (`elsewhere`), and the controls list them instead of "No matching
+  locations".
 - Let the place of the Mirror's answers be chosen. They stood low and in the
   middle of the glass for everyone; now they can stand at one of five
   heights (top, upper, middle, lower, bottom) and to the left, in the middle
