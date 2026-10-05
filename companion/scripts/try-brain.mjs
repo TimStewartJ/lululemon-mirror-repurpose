@@ -196,7 +196,9 @@ const steps = [
       const reminder = item(/dentist/i);
       if (!reminder?.due) return "no reminder about the dentist is on the board";
       const due = local(reminder.due);
-      return due.startsWith(dayAfter(0, "15:00")) ? "" : `it is due ${due}`;
+      // Said after three, the afternoon that is meant can only be tomorrow's.
+      const day = Number(local(Date.now()).slice(11, 13)) >= 15 ? 1 : 0;
+      return due.startsWith(dayAfter(day, "15:00")) ? "" : `it is due ${due}`;
     },
     note: () => `due ${item(/dentist/i)?.due ? local(item(/dentist/i).due) : "nothing"}`,
   },
