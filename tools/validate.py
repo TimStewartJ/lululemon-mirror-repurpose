@@ -1265,7 +1265,12 @@ MOMENTS_ON_GLASS = """JSON.stringify((function () {
         text: element.textContent,
         box: box(element),
         shapes: element.querySelectorAll('svg > *').length,
-        opacity: Number(getComputedStyle(element).opacity)
+        opacity: Number(getComputedStyle(element).opacity),
+        fontSize: parseFloat(getComputedStyle(element).fontSize),
+        cutOff: element.firstChild.scrollHeight > element.clientHeight + 1 || element.firstChild.scrollWidth > element.clientWidth + 1,
+        bars: [].map.call(element.querySelectorAll('.mr-m-bar'), function (bar) { return Math.round(bar.getBoundingClientRect().height); }),
+        dots: element.querySelectorAll('.mr-m-dot').length,
+        rows: [].map.call(element.querySelectorAll('.mr-m-row'), function (row) { return Math.round(row.getBoundingClientRect().height); })
       };
     }),
     drawn: all('.mr-widget:not(.mr-leaving) .mr-inner', box)
@@ -1390,6 +1395,42 @@ def check_moments(ctx: Context) -> None:
                 raise CheckFailed(f"The oldest moments did not make room for the newest: {describe(full, 2000)}")
             if api.expect("DELETE", "/api/v1/moments")["removed"] != len(full):
                 raise CheckFailed("Clearing the glass did not remove the moments it showed")
+            wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
+            # The other two kinds: a list whose long row goes on under itself, and a chart as bars and as a line.
+            api.expect(
+                "POST", "/api/v1/moments",
+                {
+                    "id": "steps", "kind": "list", "title": "Pour-over", "seconds": 60,
+                    "rows": [
+                        {"label": "1", "text": "Rinse the filter"},
+                        {"label": "2", "text": "Bloom with forty grams of hot water for thirty seconds"},
+                        {"label": "3", "text": "Pour"},
+                    ],
+                },
+                status=201,
+            )
+            values = [{"label": day, "value": value} for day, value in (("Mon", 10), ("Tue", 40), ("Wed", 20), ("Thu", 30))]
+            api.expect("POST", "/api/v1/moments", {"id": "bars", "kind": "chart", "size": "small", "values": values}, status=201)
+            api.expect(
+                "POST", "/api/v1/moments",
+                {"id": "line", "kind": "chart", "chart": "line", "size": "small", "side": "left", "height": "bottom", "values": values},
+                status=201,
+            )
+            wait_for("the list and the two charts to have arrived", lambda: shown("list") and len(glass()["moments"]) == 3, timeout=20)
+            time.sleep(1.0)
+            ctx.screenshot("moments-list-charts")
+            listed, bars, line = glass()["moments"]
+            if listed["cutOff"] or len(listed["rows"]) != 3 or "thirty seconds" not in listed["text"]:
+                raise CheckFailed(f"The list does not show its three rows whole: {describe(listed)}")
+            # Read from across a room: a long row takes a second line, the writing is not shrunk to fit one.
+            if listed["rows"][1] < 1.6 * listed["rows"][0] or listed["fontSize"] < 30:
+                raise CheckFailed(f"The long row was shrunk onto one line, or the list is too small to read: {describe(listed)}")
+            heights = bars["bars"]
+            if len(heights) != 4 or not heights[0] < heights[2] < heights[3] < heights[1]:
+                raise CheckFailed(f"The bars do not stand in the order of their values: {describe(bars)}")
+            if line["dots"] != 4 or line["shapes"] != 1 or line["cutOff"] or bars["cutOff"]:
+                raise CheckFailed(f"The line does not have its four points, or a chart is cut off: {describe(line)}")
+            api.expect("DELETE", "/api/v1/moments")
             wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
     finally:
         api.call("DELETE", "/api/v1/moments")

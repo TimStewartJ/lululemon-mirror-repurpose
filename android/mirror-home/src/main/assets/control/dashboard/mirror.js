@@ -1042,7 +1042,7 @@
       countdown: { small: [300, 100], medium: [440, 150], large: [640, 220] },
       chart: { small: [460, 150], medium: [640, 200], large: [880, 270] },
       drawing: { small: [300, 169], medium: [460, 259], large: [700, 394] },
-      list: { small: [460, 34], medium: [580, 42], large: [760, 54] }
+      list: { small: [520, 36], medium: [700, 44], large: [900, 56] }
     };
     var MOMENT_SIZES = ['large', 'medium', 'small'];
     var MOMENT_EDGE = 40;
