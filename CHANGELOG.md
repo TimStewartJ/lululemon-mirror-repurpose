@@ -20,6 +20,17 @@
   are on, and updates) and says so. Tried with the real model against a
   stand-in Mirror: 23 requests of 23 came out as asked, a typical one in 2.3
   seconds.
+- Stop two things asked for in one breath from undoing one another. Asked to
+  "go back to the film and hide the photo", the model calls two tools at
+  once, and each read the Mirror's layout, changed its part and stored the
+  whole: the one that stored last put back what the other had changed, and
+  the answer said that both were done. The companion now runs the calls of
+  one request one after the other. The same held for the display's rules
+  (brightness and sleep settings), and it let a tidying run make two changes
+  where it may make one. A tool call that is refused is now logged with what
+  was asked for, which is how `set_background` was found to be refused for
+  naming its kind along with a photo or a film, as the model does; it takes
+  that now, and tells a darkening that is left in force.
 - Find a town for the weather when it is given with its state or country.
   The place search passed what was typed to a service that searches by a
   town's name alone, so "Portland, Maine" found nothing and "Springfield"

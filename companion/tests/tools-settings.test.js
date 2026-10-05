@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fetchState } from "../src/state.js";
-import { newTurn, toolsFor } from "../src/tools.js";
+import { newTurn, runTool, toolsFor } from "../src/tools.js";
 import { resolveZone } from "../src/tools/settings.js";
 import { startTools } from "./helpers.js";
 
@@ -341,6 +341,41 @@ test("habits tells how they are set and changes the ones asked for", async (t) =
   assert.match((await use("habits", { tidyEveryMinutes: 2 })).error, /The arguments are not right\. tidyEveryMinutes/);
   // None of this is the mirror's business.
   assert.equal(fake.requests().length, 0);
+});
+
+test("the place search is given longer than other requests", async (t) => {
+  const { tools, fake } = await startTools(t);
+  // The fake mirror answers at once; what is checked is that the tool asks with the longer allowance.
+  const asked = [];
+  const mirror = {
+    get: async (path, options) => {
+      asked.push([path.split("?")[0], options?.responseTimeoutMs]);
+      return path.startsWith("/api/v1/weather/locations") ? { results: [] } : { config: fake.state.weatherConfig };
+    },
+  };
+  const { settingsTools } = await import("../src/tools/settings.js");
+  const weather = settingsTools({ mirror, clock: { now: () => 0 }, habits: null }).find((tool) => tool.name === "set_weather");
+  assert.match((await runTool(weather, { place: "Atlantis" }, newTurn("conversation"))).error, /No place called "Atlantis"/);
+  assert.deepEqual(asked, [["/api/v1/weather", undefined], ["/api/v1/weather/locations", 15000]]);
+  assert.ok(tools.length > 0);
+});
+
+test("a call that is refused is logged with what was asked for, so that a tool can be made easier to call", async (t) => {
+  const { tools, fake } = await startTools(t);
+  const events = [];
+  const log = (event, fields) => events.push({ event, ...fields });
+  const background = tools.find((tool) => tool.name === "set_background");
+  await runTool(background, { mode: "sunset" }, newTurn("conversation"), log);
+  await runTool(background, { color: "navy" }, newTurn("conversation"), log);
+  await runTool(background, { mode: "black" }, newTurn("conversation"), log);
+  assert.equal(events.length, 3);
+  assert.deepEqual([events[0].ok, events[0].args], [false, '{"mode":"sunset"}']);
+  assert.match(events[0].refused, /^mode: /);
+  assert.deepEqual([events[1].ok, events[1].args], [false, '{"color":"navy"}']);
+  assert.match(events[1].refused, /written as #rrggbb/);
+  // A call that worked says nothing of its arguments.
+  assert.deepEqual(Object.keys(events[2]).sort(), ["event", "ms", "ok", "tool"]);
+  assert.equal(fake.state.layout.background.mode, "solid");
 });
 
 test("the settings are for a conversation only: a tending run cannot touch them", async (t) => {

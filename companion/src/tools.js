@@ -42,6 +42,7 @@ import { talkTools } from "./tools/talk.js";
  * @property {boolean} [cardRefused] Set when a card that broke the limits was handed back to be written again.
  * @property {import("./state.js").MirrorState|null} state The mirror's state as last fetched.
  * @property {number} stateAt When that state was fetched, on the companion's clock.
+ * @property {Promise<void>} [busy] Settles when the tool call now running for this turn is over.
  */
 
 /** @returns {Turn} */
@@ -96,12 +97,31 @@ export function toolsFor(kind, tools) {
  * Runs one tool call for the model. Never throws: whatever goes wrong comes
  * back as {error}, in words the model can act on or pass to the person.
  *
+ * A model may ask for several calls in one breath, and a harness may start
+ * them side by side. The calls of a turn are run one after the other, in
+ * the order they came: the mirror takes its layout and its display rules as
+ * a whole, so two calls that each read, change and store them would undo
+ * one another, and the one change a tending run may make is counted before
+ * the next call is looked at.
+ *
  * @param {Tool} tool
  * @param {unknown} args As the model gave them.
  * @param {Turn} turn
  * @param {(event: string, fields?: object) => void} [log]
  */
 export async function runTool(tool, args, turn, log = () => {}) {
+  const before = turn.busy ?? Promise.resolve();
+  let done;
+  turn.busy = new Promise((resolve) => (done = resolve));
+  await before;
+  try {
+    return await runOne(tool, args, turn, log);
+  } finally {
+    done();
+  }
+}
+
+async function runOne(tool, args, turn, log) {
   if (turn.closed) return { error: "This request is over. Do nothing more." };
   turn.acted.push(tool.name);
   if (turn.kind === "tend" && tool.changes && turn.changes >= 1) {
@@ -110,6 +130,8 @@ export async function runTool(tool, args, turn, log = () => {}) {
   const parsed = tool.schema.safeParse(args ?? {});
   if (!parsed.success) {
     const problems = parsed.error.issues.map((issue) => `${issue.path.join(".") || "arguments"}: ${issue.message}`);
+    // A call the model has to make again costs the person seconds, so it is worth seeing what was asked for.
+    log("tool", { tool: tool.name, ok: false, ms: 0, refused: problems.join("; "), args: brief(args) });
     return { error: `The arguments are not right. ${problems.join("; ")}.` };
   }
   const started = Date.now();
@@ -127,6 +149,17 @@ export async function runTool(tool, args, turn, log = () => {}) {
     log("tool.failed", { tool: tool.name, detail: describeError(error) });
   }
   if (tool.changes && !result.error) turn.changes += 1;
-  log("tool", { tool: tool.name, ok: !result.error, ms: Date.now() - started });
+  const outcome = { tool: tool.name, ok: !result.error, ms: Date.now() - started };
+  if (result.error) Object.assign(outcome, { refused: String(result.error).slice(0, 200), args: brief(args) });
+  log("tool", outcome);
   return result;
+}
+
+/** The arguments of a call that was refused, short enough for a log line. */
+function brief(args) {
+  try {
+    return JSON.stringify(args ?? {}).slice(0, 300);
+  } catch {
+    return "(not printable)";
+  }
 }

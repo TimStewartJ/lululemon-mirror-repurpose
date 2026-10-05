@@ -15,6 +15,9 @@ const TEXT_COLOR = "#f5f2ec";
 const ACCENT_COLOR = "#c2ced3";
 const SHORTEST_STAY_SECONDS = 30;
 const LONGEST_STAY_SECONDS = 3600;
+// The mirror asks a service on the internet where a place lies, once for each way of reading what was said.
+// On the mirror that took 2 to 4 seconds; the usual 8 would call a slow day "unreachable".
+const PLACE_SEARCH_MS = 15_000;
 
 /** "7:05" and "07:05" become "07:05"; anything that is no time of day becomes null. */
 function timeOfDay(text) {
@@ -200,7 +203,7 @@ export function settingsTools({ mirror, clock, habits }) {
         if (lookUp !== undefined && on !== false) {
           let found;
           try {
-            found = await mirror.get(`/api/v1/weather/locations?q=${encodeURIComponent(lookUp.trim())}`);
+            found = await mirror.get(`/api/v1/weather/locations?q=${encodeURIComponent(lookUp.trim())}`, { responseTimeoutMs: PLACE_SEARCH_MS });
           } catch (error) {
             if (!(error instanceof MirrorRefused)) throw error;
             return { error: "The mirror could not look the place up just now; it needs the internet for that. Nothing was changed." };

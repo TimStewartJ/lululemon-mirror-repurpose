@@ -114,10 +114,11 @@ export function createMirror({
    *
    * @param {string} method
    * @param {string} path
-   * @param {{ body?: unknown }} [options]
+   * @param {{ body?: unknown, responseTimeoutMs?: number }} [options] `responseTimeoutMs` gives one request longer
+   *   than the usual: for what the mirror itself has to ask the internet for.
    * @returns {Promise<{ status: number, body: any, buffer: Buffer, contentType: string }>}
    */
-  async function request(method, path, { body } = {}) {
+  async function request(method, path, { body, responseTimeoutMs: allowedMs = responseTimeoutMs } = {}) {
     if (!host || !token) throw new MirrorUnreachable(health.detail);
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body), "utf8");
     const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
@@ -129,7 +130,7 @@ export function createMirror({
     let answer;
     for (let attempt = 1; ; attempt++) {
       try {
-        answer = await send({ agent, host, port, method, path, headers, payload, connectTimeoutMs, responseTimeoutMs });
+        answer = await send({ agent, host, port, method, path, headers, payload, connectTimeoutMs, responseTimeoutMs: allowedMs });
         break;
       } catch (error) {
         // An answer that never came is not asked for twice: the mirror may
@@ -184,7 +185,7 @@ export function createMirror({
   return {
     request,
     call,
-    get: (path) => call("GET", path),
+    get: (path, options) => call("GET", path, options),
     /** What the last contact with the mirror showed; never asks the mirror. */
     health: () => ({ ...health }),
     close: () => agent.destroy(),

@@ -81,6 +81,19 @@ test("an answer that never comes is given up on, and not asked for twice", async
   assert.equal(requests, 1);
 });
 
+test("one request can be given longer than the rest, for what the mirror has to ask the internet", async (t) => {
+  const port = await serverThat(t, (request, response) => {
+    setTimeout(() => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ results: [] }));
+    }, 300);
+  });
+  const mirror = createMirror({ host: "127.0.0.1", port, token: "test-mirror-token", responseTimeoutMs: 100 });
+  t.after(() => mirror.close());
+  await assert.rejects(mirror.get("/api/v1/weather/locations?q=Portland"), MirrorUnreachable);
+  assert.deepEqual(await mirror.get("/api/v1/weather/locations?q=Portland", { responseTimeoutMs: 2000 }), { results: [] });
+});
+
 test("a refusal carries the mirror's own words and field", async (t) => {
   const { mirror } = await withFake(t);
   await assert.rejects(

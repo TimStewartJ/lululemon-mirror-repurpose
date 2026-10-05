@@ -108,10 +108,9 @@ export function displayTools({ mirror, clock }) {
       background.mode = "photo";
       answer.background = "photo";
     }
-    if (dim !== undefined) {
-      background.dim = dim;
-      answer.darkenedBy = `${dim}%`;
-    }
+    if (dim !== undefined) background.dim = dim;
+    // A darkening that is left in force is told as well: it is easily taken to have gone with the old background.
+    if (dim !== undefined || background.dim > 0) answer.darkenedBy = `${background.dim ?? 0}%`;
     layout.background = background;
     await saveLayout(mirror, layout);
     return answer;
@@ -205,17 +204,20 @@ export function displayTools({ mirror, clock }) {
     {
       name: "set_background",
       description:
-        "Changes what is behind the widgets. Give one of these four. " +
-        "video: a film's id or name from the state, or \"next\" for the one after the film showing. " +
-        "mode: \"film\" (the chosen film), \"black\" (plain black, the most mirror-like) or \"photo\" (the photo last shown). " +
-        "photo: \"next\", \"previous\", or its number in the mirror's library counted from 1, for a particular photo. " +
-        "color: one plain colour as #rrggbb, with secondColor for a gradient from the first, top left, to the second, bottom right; " +
-        "on this glass dark colours look like mirror and bright ones glow. " +
-        "dim darkens whatever is behind the widgets so that they are easier to read: 0 (not at all) to 90 percent. " +
-        "It may come alone or with one of the four.",
+        "Changes what is behind the widgets. mode says which kind: \"film\" (back to the film as it was showing; with a film schedule on, the schedule's film), " +
+        "\"black\" (plain black, the most mirror-like), \"photo\" (a photo from the mirror's library) or \"color\". " +
+        "video: only to change which film plays: a film's id or name from the state, or \"next\" for the one after the film showing. " +
+        "Leave it out to return to the film. " +
+        "photo: which photo fills the glass behind the widgets: \"next\", \"previous\", or its number in the library counted from 1. " +
+        "Left out, the photo last shown. This is not the photo widget, a small frame among the widgets: " +
+        "asked for a photo, change the background and leave the widgets as they are. " +
+        "color: a plain colour as #rrggbb; with secondColor, a gradient from the first, top left, to the second, bottom right. " +
+        "On this glass dark colours look like mirror and bright ones glow. " +
+        "dim darkens whatever is behind the widgets so that they are easier to read: 0 (not at all) to 90 percent. It may come alone. " +
+        "video, photo and color each say their kind, so mode may be left out with them.",
       schema: z.object({
+        mode: z.enum(["film", "black", "photo", "color", "gradient"]).optional(),
         video: z.string().min(1).optional(),
-        mode: z.enum(["film", "black", "photo"]).optional(),
         photo: z.string().min(1).optional(),
         color: z.string().min(1).optional(),
         secondColor: z.string().min(1).optional(),
@@ -223,11 +225,19 @@ export function displayTools({ mirror, clock }) {
       }),
       changes: true,
       async handler({ video, mode, photo, color, secondColor, dim }) {
-        const given = [video, mode, photo, color].filter((value) => value !== undefined).length;
         if (secondColor !== undefined && color === undefined) return { error: "secondColor needs color: the two ends of a gradient." };
-        if (given === 0 && dim === undefined) return { error: "Give video, mode, photo, color or dim." };
-        if (given > 1) return { error: "Give one of video, mode, photo and color, not several." };
-        if (video === undefined) return restyle({ mode, photo, color, secondColor, dim });
+        const said = { video, photo, color };
+        const given = Object.keys(said).filter((name) => said[name] !== undefined);
+        if (given.length > 1) return { error: `Give one of video, photo and color, not ${given.join(" and ")}.` };
+        // A model names the kind along with the thing: "photo" with which photo, "film" with which film.
+        const implied = { video: "film", photo: "photo", color: "color" }[given[0]];
+        const kind = mode === "gradient" ? "color" : mode;
+        if (kind && implied && kind !== implied) {
+          return { error: `mode "${mode}" does not go with ${given[0]}. Give the one that is meant.` };
+        }
+        if (!kind && !implied && dim === undefined) return { error: "Give video, mode, photo, color or dim." };
+        if (kind === "color" && color === undefined) return { error: "mode color needs color: the colour as #rrggbb." };
+        if (video === undefined) return restyle({ mode: kind, photo, color, secondColor, dim });
         const answer = await showFilm(video);
         if (answer.error || dim === undefined) return answer;
         return { ...answer, ...(await restyle({ dim })) };

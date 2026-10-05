@@ -103,6 +103,17 @@ const openItems = () => mirror.state.board.items.filter((candidate) => !candidat
 const names = (answer, entry) => entry.title.toLowerCase().split(/\W+/).some((word) => word.length >= 4 && shown(answer).toLowerCase().includes(word));
 /** Puts an item on the fake mirror's board directly, as another program would. */
 const post = (id, entry) => mirror.state.board.put(id, entry, "try-brain").item;
+/** A complaint when a tool had to be called more than once: every further call is seconds the person waits. */
+const once = (answer, tool) => {
+  const calls = answer.acted.filter((name) => name === tool).length;
+  return calls === 1 ? "" : `${tool} was called ${calls} times`;
+};
+/** Every widget's place and whether it shows, to tell whether a request moved what it was not asked to. */
+const boxes = () => JSON.stringify(mirror.state.layout.widgets.map((entry) => [entry.id, entry.visible, entry.x, entry.y, entry.w, entry.h]));
+const changedWidgets = (before) => {
+  const was = new Map(JSON.parse(before).map((entry) => [entry[0], JSON.stringify(entry)]));
+  return JSON.parse(boxes()).filter((entry) => was.get(entry[0]) !== JSON.stringify(entry)).map((entry) => `${entry[0]} ${entry[1] ? "shown" : "hidden"} at ${entry.slice(2).join(",")}`).join("; ");
+};
 const dayAfter = (days, time) => `${local(Date.now() + days * 86_400_000).slice(0, 10)}T${time}`;
 
 /**
@@ -373,7 +384,12 @@ const steps = [
   {
     group: "settings",
     words: "Mirror, stop changing the film by the clock.",
-    check: () => (!mirror.state.schedule.enabled && mirror.state.schedule.slots.length === 3 ? "" : `the timetable is ${mirror.state.schedule.enabled ? "on" : "off"} with ${mirror.state.schedule.slots.length} times`),
+    before: () => ({ times: mirror.state.schedule.slots.length }),
+    // Stopped, not thrown away: its times are kept.
+    check: (answer, before) =>
+      !mirror.state.schedule.enabled && mirror.state.schedule.slots.length === before.times
+        ? ""
+        : `the timetable is ${mirror.state.schedule.enabled ? "on" : "off"} with ${mirror.state.schedule.slots.length} of ${before.times} times`,
   },
   {
     group: "settings",
@@ -387,17 +403,43 @@ const steps = [
   },
   {
     group: "settings",
+    words: "Mirror, make the background a gradient from deep navy to purple.",
+    check: (answer) => (mirror.state.layout.background.mode === "gradient" ? once(answer, "set_background") : `the background is ${mirror.state.layout.background.mode}`),
+    note: () => `gradient ${mirror.state.layout.background.primary} to ${mirror.state.layout.background.secondary}`,
+  },
+  {
+    group: "settings",
     words: "Mirror, show me the next photo.",
     before: () => {
       mirror.state.photos = ["IMG_4001.jpg", "IMG_4002.jpg", "IMG_4003.jpg"].map((name) => ({ name, sizeBytes: 204800 }));
+      return { widgets: boxes() };
     },
-    check: (answer) => (answer.acted.includes("set_background") && mirror.state.layout.background.mode === "photo" ? "" : `the background is ${mirror.state.layout.background.mode}`),
+    // The photo behind everything is meant; the widgets are left as they are.
+    check: (answer, before) => {
+      if (mirror.state.layout.background.mode !== "photo") return `the background is ${mirror.state.layout.background.mode}`;
+      return boxes() === before.widgets ? once(answer, "set_background") : `the widgets were changed too: ${changedWidgets(before.widgets)}`;
+    },
   },
   {
     group: "settings",
     words: "Mirror, it's hard to read against the picture, darken it a bit.",
     check: () => (mirror.state.layout.background.dim > 0 && mirror.state.layout.background.mode === "photo" ? "" : `dim ${mirror.state.layout.background.dim}, mode ${mirror.state.layout.background.mode}`),
     note: () => `darkened by ${mirror.state.layout.background.dim}%`,
+  },
+  {
+    group: "settings",
+    // With a timetable on, the film is the timetable's: going back to it must not choose one by hand.
+    words: "Mirror, go back to the film, without the darkening.",
+    before: () => {
+      mirror.state.schedule.enabled = true;
+      return { film: mirror.state.activeFilm, widgets: boxes() };
+    },
+    check: (answer, before) => {
+      const background = mirror.state.layout.background;
+      if (background.mode !== "video" || background.dim !== 0) return `the background is ${background.mode}, darkened by ${background.dim}%`;
+      if (mirror.state.hold || mirror.state.activeFilm !== before.film) return "a film was chosen by hand over the timetable";
+      return boxes() === before.widgets ? once(answer, "set_background") : `the widgets were changed too: ${changedWidgets(before.widgets)}`;
+    },
   },
   {
     group: "settings",
@@ -468,6 +510,7 @@ for (const step of steps) {
   if (options.only && !options.only.split(",").some((word) => wanted(word.trim().toLowerCase()))) continue;
   if (mirror.state.automation.sleeping) mirror.state.automation.sleeping = false;
   const before = step.before?.();
+  const written = mirror.writes().length;
   const answer = await say(step.words, step.addressed);
   const problem = step.check(answer, before);
   totals.push(answer.ms.agent);
@@ -485,6 +528,11 @@ for (const step of steps) {
           : `          model: ${call.ms} ms, first token after ${call.firstTokenMs} ms; tokens in ${call.inputTokens} (cached ${call.cachedTokens}), out ${call.outputTokens}, reasoning ${call.reasoningTokens}`,
       );
     }
+  }
+  // What the request changed on the mirror, so that a change nobody asked for is seen.
+  for (const write of mirror.writes().slice(written)) {
+    if (write.path === "/api/v1/assistant/say") continue;
+    console.log(`  wrote:  ${write.method} ${write.path}${write.body ? ` ${JSON.stringify(write.body).slice(0, 160)}` : ""}`);
   }
   if (step.note) console.log(`  mirror: ${step.note()}`);
   if (answer.error) console.log(`  error:  ${answer.error}`);

@@ -166,8 +166,70 @@ test("set_background shows a plain colour or a gradient", async (t) => {
   assert.match((await use("set_background", { color: "navy" })).error, /written as #rrggbb/);
   assert.match((await use("set_background", { color: "#0b1d3a", secondColor: "purple" })).error, /written as #rrggbb/);
   assert.match((await use("set_background", { secondColor: "#40105a" })).error, /secondColor needs color/);
-  assert.match((await use("set_background", { color: "#0b1d3a", mode: "film" })).error, /one of video, mode, photo and color/);
+  assert.match((await use("set_background", { color: "#0b1d3a", mode: "film" })).error, /mode "film" does not go with color/);
+  assert.match((await use("set_background", { color: "#0b1d3a", photo: "next" })).error, /Give one of video, photo and color, not photo and color/);
+  assert.match((await use("set_background", { mode: "color" })).error, /mode color needs color/);
   assert.equal(fake.writes().length, writes);
+});
+
+test("set_background takes the kind named along with the thing, as a model gives them", async (t) => {
+  const { use, fake } = await startTools(t);
+  fake.state.photos = ["IMG_4001.jpg", "IMG_4002.jpg"].map((name) => ({ name, sizeBytes: 204800 }));
+  assert.deepEqual(await use("set_background", { mode: "photo", photo: "next" }), { background: "photo", photo: "1 of 2" });
+  assert.deepEqual(await use("set_background", { mode: "color", color: "#000080", secondColor: "#800080" }), {
+    background: "a gradient from #000080 to #800080",
+  });
+  assert.deepEqual(await use("set_background", { mode: "gradient", color: "#000080", secondColor: "#400040" }), {
+    background: "a gradient from #000080 to #400040",
+  });
+  assert.equal((await use("set_background", { mode: "film", video: "flowers" })).showing.id, "9c1f44e7");
+  assert.equal(fake.writes().filter((request) => request.path.endsWith("/activate")).length, 1);
+});
+
+test("calls a model makes at the same moment do not undo one another", async (t) => {
+  const { use, fake } = await startTools(t);
+  // Each of these reads the layout, changes its own part and stores the whole. Run side by side,
+  // the one that stored last put back what the others had changed.
+  const turn = newTurn("conversation");
+  const answers = await Promise.all([
+    use("set_background", { mode: "black", dim: 30 }, turn),
+    use("arrange_widgets", { changes: [{ id: "weather", visible: false }] }, turn),
+    use("set_text_color", { text: "#ffd9a0" }, turn),
+  ]);
+  assert.deepEqual(answers.map((answer) => answer.error), [undefined, undefined, undefined]);
+  const layout = fake.state.layout;
+  assert.deepEqual([layout.background.mode, layout.background.dim], ["solid", 30]);
+  assert.equal(fake.widget("weather").visible, false);
+  assert.equal(layout.textColor, "#ffd9a0");
+  // The display's rules are stored as a whole in the same way.
+  await Promise.all([use("set_brightness", { level: 120 }, turn), use("set_display_rules", { afterMinutes: 10 }, turn)]);
+  assert.deepEqual([fake.state.automation.wakeBrightness, fake.state.automation.motionTimeoutSeconds], [120, 600]);
+  assert.deepEqual(turn.acted, ["set_background", "arrange_widgets", "set_text_color", "set_brightness", "set_display_rules"]);
+});
+
+test("a tending run that asks for two changes at once still gets one", async (t) => {
+  const { tools, fake } = await startTools(t);
+  const turn = newTurn("tend");
+  const background = tools.find((tool) => tool.name === "set_background");
+  const arrange = tools.find((tool) => tool.name === "arrange_widgets");
+  const answers = await Promise.all([
+    runTool(background, { video: "next" }, turn),
+    runTool(arrange, { changes: [{ id: "weather", visible: false }] }, turn),
+  ]);
+  assert.equal(answers[0].showing.id, "9c1f44e7");
+  assert.match(answers[1].error, /may change one thing/);
+  assert.equal(fake.widget("weather").visible, true);
+});
+
+test("going back to the film leaves a film schedule in charge", async (t) => {
+  const { use, fake } = await startTools(t);
+  await use("set_film_schedule", { slots: [{ at: "06:00", film: "flowers" }, { at: "19:00", film: "still water" }] });
+  await use("set_background", { mode: "black", dim: 30 });
+  const chosen = fake.state.activeFilm;
+  assert.deepEqual(await use("set_background", { mode: "film", dim: 0 }), { background: "film", darkenedBy: "0%" });
+  assert.equal(fake.state.layout.background.mode, "video");
+  assert.equal(fake.state.hold, null, "no film was chosen by hand over the timetable");
+  assert.equal(fake.state.activeFilm, chosen);
 });
 
 test("set_background darkens what is behind the widgets, alone or with a change of film", async (t) => {
@@ -180,6 +242,8 @@ test("set_background darkens what is behind the widgets, alone or with a change 
   });
   assert.equal(fake.state.layout.background.dim, 0);
   assert.deepEqual(await use("set_background", { mode: "black", dim: 20 }), { background: "black", darkenedBy: "20%" });
+  // A darkening that stays is told with the next change, so that nobody takes it to have gone.
+  assert.deepEqual(await use("set_background", { mode: "film" }), { background: "film", darkenedBy: "20%" });
   assert.match((await use("set_background", { dim: 95 })).error, /The arguments are not right\. dim/);
   // A film that is not there is not darkened either.
   assert.match((await use("set_background", { video: "the ocean", dim: 50 })).error, /No film matches/);
