@@ -133,6 +133,42 @@ look for changes every few seconds.
 A request that someone made is answered where they can see it: a Mirror
 that is dark wakes for the answer, unless the answer was to go dark.
 
+### Settings you can ask for
+
+Most of what **Settings** and **Display** hold in the phone controls can be
+asked for as well, in your own words:
+
+| Say | What changes |
+|---|---|
+| "Mirror, use military time", "back to AM and PM" | How the clock reads. |
+| "Mirror, we moved to Denver, fix the clock" | The time zone. The Mirror follows that zone's daylight saving by itself. |
+| "Mirror, turn off at eleven at night and come back on at seven", "stay on all night" | The hours the display is lit each day. |
+| "Mirror, don't go dark when the room is empty", "wait ten minutes before you sleep", "you keep missing me, be more sensitive" | Whether the display sleeps when it sees nobody, after how long, and how small a movement counts as someone. |
+| "Mirror, show the weather for Portland, Maine", "use Celsius", "no weather" | The place the weather is for, its units, and whether there is weather. |
+| "Mirror, play the flowers film from six in the morning and the water one from seven at night", "also the forest one from noon", "stop changing the film by the clock", "go back to the schedule" | Which film plays from which time of day. |
+| "Mirror, make the background a deep blue", "a gradient from navy to purple", "the next photo", "the second photo", "it's hard to read, darken it a bit" | A plain colour, a gradient, a particular photo, and how far the background is darkened behind the widgets. |
+| "Mirror, make the text a warm amber", "put the text back to normal" | The colour of what is written on the glass. |
+| "Mirror, call yourself Hallway" | The name on the glass and in the controls. You still say "Mirror" to be heard: the word that wakes it is part of the voice model. |
+| "Mirror, stop greeting me", "no morning briefing", "nothing by yourself after nine at night until seven", "leave the films alone", "what do you do on your own?" | What the assistant does unasked. A change holds after the companion restarts. |
+
+A town is best said with its state or country. Of several towns of one name
+the Mirror takes the best known and says which, so that "no, the one in
+Maine" can follow; one that is not where you said it was is not swapped for
+another, and the Mirror asks which you mean. Moving the weather does not
+move the clock: when the place is in another time zone the answer says so.
+
+Hours that leave the present moment outside them make the display go dark
+at once, which is what was asked for; say "Mirror, wake up" to have it for
+now. Dark text cannot be seen on a mirror, which is black where nothing is
+drawn, and the Mirror says so when asked for a dark colour.
+
+Four things stay with the phone controls, and the Mirror says so when asked:
+the Wi-Fi, which phones are paired, whether the assistant and the listening
+are on, and software updates. Each can lock people out of the Mirror or
+switch off the thing that takes requests, and a sentence misheard from
+across a room should not be able to. A web page as the dashboard and media
+to play need an address, which nobody dictates.
+
 ## How a request travels
 
 1. The recogniser on the Mirror hears its name, followed by something that
@@ -228,6 +264,11 @@ with how long it had been dark. What the companion makes of that is up to
 it; the one in this repository greets, at most now and then, and not at
 night. Reminders that fall due are shown by the companion as well, through
 the same route by which it shows anything: a line on the glass.
+
+Each of these can be switched off, and the hours it keeps quiet changed, by
+asking: "Mirror, stop greeting me", "Mirror, nothing by yourself after nine
+at night until seven". "Mirror, what do you do on your own?" tells how they
+are set.
 
 ## Limits
 

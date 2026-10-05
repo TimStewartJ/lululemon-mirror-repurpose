@@ -67,6 +67,7 @@ export function buildState({ status, layout, board, films, assistant = null, now
   const widgets = Array.isArray(layout?.widgets) ? layout.widgets : [];
   const items = Array.isArray(board?.items) ? board.items : [];
   const snapshot = {
+    name: status.displayName || undefined,
     now: describeNow(status, now, offsetMinutes),
     display: describeDisplay(automation),
     layoutUnits: COORDINATES,
@@ -118,12 +119,23 @@ function describeDisplay(automation) {
   if (automation.sleeping) seen.asleepBecause = automation.sleepReason || "unknown";
   if (automation.manualOverride) seen.heldFourHours = true;
   seen.wakeBrightness = automation.wakeBrightness;
+  return { ...seen, ...describeRules(automation) };
+}
+
+/** When the display is dark by itself: its awake hours, and whether it sleeps when it sees nobody. */
+export function describeRules(automation) {
+  const seen = {};
   if (automation.ambientEnabled && automation.ambientLightAvailable) seen.brightnessFollowsRoomLight = true;
   seen.awakeHours = automation.enabled ? `${automation.wakeTime} to ${automation.sleepTime}` : "always";
-  seen.sleepsWhenNobodyIsThere = automation.motionEnabled
-    ? `after ${automation.motionTimeoutSeconds} seconds`
-    : "no";
+  seen.sleepsWhenNobodyIsThere = automation.motionEnabled ? `after ${describeStay(automation.motionTimeoutSeconds)}` : "no";
+  if (automation.motionEnabled) seen.movementSensitivity = automation.motionSensitivity;
   return seen;
+}
+
+/** 300 seconds are "5 minutes"; 45 are "45 seconds". */
+function describeStay(seconds) {
+  if (seconds % 60 !== 0) return `${seconds} seconds`;
+  return seconds === 60 ? "1 minute" : `${seconds / 60} minutes`;
 }
 
 function describeBackground(layout, films) {
@@ -136,9 +148,13 @@ function describeBackground(layout, films) {
     return film;
   });
   const schedule = films.schedule;
+  const timetable = (schedule?.slots ?? []).map((slot) => `${slot.start} ${shortId(slot.videoId)}`).join(", ");
   if (schedule?.active) {
-    seen.filmSchedule = (schedule.slots ?? []).map((slot) => `${slot.start} ${shortId(slot.videoId)}`).join(", ");
+    seen.filmSchedule = timetable;
     if (schedule.hold) seen.filmHeldUntil = schedule.hold.untilTime;
+  } else if (timetable) {
+    // A timetable that is kept but not followed, so that it can be turned on again or added to.
+    seen.filmScheduleSwitchedOff = timetable;
   }
   return seen;
 }

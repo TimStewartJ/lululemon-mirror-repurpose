@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createActivity } from "../src/activity.js";
+import { createHabits } from "../src/habits.js";
 import { createMemory } from "../src/memory.js";
 import { createMirror } from "../src/mirror.js";
 import { createProactive } from "../src/proactive.js";
@@ -26,8 +27,9 @@ async function startProactive(t, script = [], settings = {}) {
   const events = [];
   const log = (event, fields) => events.push({ event, ...fields });
   const brain = scriptedBrain(clock, script);
+  const habits = createHabits({ settings: { greet: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"], ...settings } });
   const proactive = createProactive({
-    settings: { greet: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"], ...settings },
+    settings: habits.settings,
     brain,
     mirror,
     tools: createTools({ mirror, memory, clock, log }),
@@ -37,6 +39,7 @@ async function startProactive(t, script = [], settings = {}) {
     log,
     clock,
   });
+  habits.onChange(() => proactive.settingsChanged());
   t.after(async () => {
     proactive.stop();
     mirror.close();
@@ -44,7 +47,7 @@ async function startProactive(t, script = [], settings = {}) {
   });
   /** Puts an item on the fake mirror's board directly, as another program would. */
   const post = (item) => fake.state.board.create(item, "Kitchen agent");
-  return { clock, fake, brain, proactive, activity, queue, memory, events, post };
+  return { clock, fake, brain, proactive, habits, activity, queue, memory, events, post };
 }
 
 test("someone walking up after a long dark is greeted with one notice", async (t) => {
@@ -331,6 +334,31 @@ test("once started, it looks every 30 seconds and tends every hour", async (t) =
   assert.equal(brain.runs.length, 0);
   await clock.advance(56 * MINUTE);
   await until(() => brain.runs.length === 1, "the hourly tending run");
+  proactive.stop();
+});
+
+test("the tidying follows its settings when they are changed while running", async (t) => {
+  const settings = { tend: false };
+  const { proactive, clock, brain, habits } = await startProactive(t, [{ text: "Nothing to do." }, { text: "Nothing to do." }], settings);
+  proactive.start();
+  await clock.advance(3 * 60 * MINUTE);
+  assert.equal(brain.runs.length, 0, "switched off, it does not tidy");
+  // Switched on and told to come round every 20 minutes, as the habits tool does it.
+  habits.change({ tend: true, tendMinutes: 20 });
+  await clock.advance(19 * MINUTE);
+  assert.equal(brain.runs.length, 0);
+  await clock.advance(MINUTE);
+  await until(() => brain.runs.length === 1, "the first tending run after 20 minutes");
+  // Asked for less often while a round is pending, the pending one is dropped for the new time.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  habits.change({ tendMinutes: 120 });
+  await clock.advance(60 * MINUTE);
+  assert.equal(brain.runs.length, 1);
+  await clock.advance(60 * MINUTE);
+  await until(() => brain.runs.length === 2, "the tending run after two hours");
+  habits.change({ tend: false });
+  await clock.advance(6 * 60 * MINUTE);
+  assert.equal(brain.runs.length, 2);
   proactive.stop();
 });
 

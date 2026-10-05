@@ -47,7 +47,11 @@ const schema = z.object({
   stateDir: z.string().min(1).default("~/.local/state/mirror-companion"),
 });
 
-/** @typedef {z.infer<typeof schema> & { path: string }} Config */
+/**
+ * @typedef {z.infer<typeof schema> & { path: string, onDisk?: boolean }} Config
+ *   `onDisk` is set for a config that was read from the file at `path`, so that a setting changed while
+ *   running may be written back there.
+ */
 
 export function defaultConfigPath(env = process.env) {
   return env.MIRROR_COMPANION_CONFIG || path.join(os.homedir(), ".config", "mirror-companion", "config.json");
@@ -107,7 +111,7 @@ export function loadConfig(file = defaultConfigPath()) {
   } catch (error) {
     throw new Error(`The config at ${file} is not valid JSON: ${error.message}`);
   }
-  return parseConfig(raw, file);
+  return { ...parseConfig(raw, file), path: path.resolve(file), onDisk: true };
 }
 
 /** The config as "init" writes it: every setting spelled out, a fresh secret, no mirror yet. */

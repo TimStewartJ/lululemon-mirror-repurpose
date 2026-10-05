@@ -1,3 +1,4 @@
+import { createHabits } from "./habits.js";
 import { describeError } from "./log.js";
 import { MirrorRefused, MirrorUnreachable } from "./mirror.js";
 import { boardTools } from "./tools/board.js";
@@ -5,6 +6,7 @@ import { cardTools } from "./tools/card.js";
 import { characterTools } from "./tools/character.js";
 import { displayTools } from "./tools/display.js";
 import { layoutTools } from "./tools/layout.js";
+import { settingsTools } from "./tools/settings.js";
 import { talkTools } from "./tools/talk.js";
 
 /**
@@ -64,13 +66,19 @@ const FOR_KIND = {
  * @param {ReturnType<import("./memory.js").createMemory>} context.memory
  * @param {import("./clock.js").Clock} context.clock
  * @param {(event: string, fields?: object) => void} context.log
+ * @param {import("./habits.js").Habits} [context.habits] What the companion does unasked; without them, habits that
+ *   are all on and are kept in memory only.
  * @returns {Tool[]}
  */
 export function createTools(context) {
+  const habits =
+    context.habits ??
+    createHabits({ settings: { greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] } });
   return [
     ...displayTools(context),
     ...characterTools(context),
     ...layoutTools(context),
+    ...settingsTools({ ...context, habits }),
     ...boardTools(context),
     ...cardTools(context),
     ...talkTools(context),

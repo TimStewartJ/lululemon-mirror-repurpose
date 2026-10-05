@@ -7,8 +7,8 @@
 //   node scripts/try-brain.mjs [--model NAME] [--effort LEVEL] [--offset MINUTES] [--zone NAME]
 //                              [--only WORD] [--calls] [--verbose]
 //
-// --only runs the requests that contain one of the words, given with commas between them; --calls adds one line per
-// call to the model; --verbose prints the companion's whole log.
+// --only runs the requests that contain one of the words, given with commas between them, or that belong to a group
+// of that name (settings); --calls adds one line per call to the model; --verbose prints the companion's whole log.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -290,6 +290,160 @@ const steps = [
     check: (answer) =>
       answer.acted.includes("briefing") && answer.reply === "Good morning" && isCard(answer) ? "" : "it was not answered with the morning briefing",
   },
+  // The mirror's standing settings, asked for the way people say them.
+  {
+    group: "settings",
+    words: "Mirror, use military time.",
+    check: (answer) => (answer.acted.includes("set_clock") && mirror.state.clock24Hour ? "" : `the clock is ${mirror.state.clock24Hour ? "24-hour" : "12-hour"}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, turn off at eleven at night and come back on at seven.",
+    check: () => {
+      const rules = mirror.state.automation;
+      return rules.enabled && rules.wakeTime === "07:00" && rules.sleepTime === "23:00" ? "" : `awake ${rules.enabled ? `${rules.wakeTime} to ${rules.sleepTime}` : "always"}`;
+    },
+    note: () => `awake ${mirror.state.automation.wakeTime} to ${mirror.state.automation.sleepTime}`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, when do you turn off at night?",
+    // Answered from the state, in the form the clock has by now: 23:00.
+    check: (answer) => (/23:00|11(:00)? ?PM/i.test(shown(answer)) && !answer.acted.some((name) => name.startsWith("set_")) ? "" : "the answer does not give the hour from the state"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, actually just stay on all night.",
+    check: () => (mirror.state.automation.enabled === false ? "" : "the awake hours are still on"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, wait ten minutes before you go dark when nobody is around.",
+    check: () => {
+      const rules = mirror.state.automation;
+      return rules.motionEnabled && rules.motionTimeoutSeconds === 600 ? "" : `motion ${rules.motionEnabled}, after ${rules.motionTimeoutSeconds} seconds`;
+    },
+  },
+  {
+    group: "settings",
+    words: "Mirror, don't go to sleep when the room is empty.",
+    check: () => (mirror.state.automation.motionEnabled === false ? "" : "it still sleeps when nobody is there"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, show the weather for Portland, Maine.",
+    check: (answer) => {
+      if (mirror.state.weatherConfig.latitude !== 43.65737) return `the weather is for ${mirror.state.weatherConfig.locationName}`;
+      return /Maine/.test(answer.reply) ? "" : "the reply does not say which Portland it took";
+    },
+    note: () => `weather for ${mirror.state.weatherConfig.locationName}`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, I'd rather have Fahrenheit.",
+    check: () => (mirror.state.weatherConfig.units === "us" ? "" : `the units are ${mirror.state.weatherConfig.units}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, change the weather to Springfield, Ohio.",
+    // No such town is known there: it asks which one, and changes nothing.
+    check: (answer) => (mirror.state.weatherConfig.latitude === 43.65737 && answer.reply.length > 0 ? "" : `the weather is for ${mirror.state.weatherConfig.locationName}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, play the flowers film from six in the morning and the still water one from seven in the evening.",
+    check: () => {
+      const timetable = mirror.state.schedule;
+      const short = timetable.slots.map((slot) => `${slot.start} ${slot.videoId.slice(0, 8)}`).sort().join(", ");
+      return timetable.enabled && short === "06:00 9c1f44e7, 19:00 e03b77d1" ? "" : `the timetable is ${timetable.enabled ? "on" : "off"}: ${short || "empty"}`;
+    },
+    note: () => `timetable ${mirror.state.schedule.slots.map((slot) => `${slot.start} ${slot.videoId.slice(0, 8)}`).join(", ")}`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, also play the four seasons one from noon.",
+    // One time more means the present ones with it.
+    check: () => {
+      const short = mirror.state.schedule.slots.map((slot) => `${slot.start} ${slot.videoId.slice(0, 8)}`).sort().join(", ");
+      return short === "06:00 9c1f44e7, 12:00 546e5d02, 19:00 e03b77d1" ? "" : `the timetable is ${short || "empty"}`;
+    },
+  },
+  {
+    group: "settings",
+    words: "Mirror, stop changing the film by the clock.",
+    check: () => (!mirror.state.schedule.enabled && mirror.state.schedule.slots.length === 3 ? "" : `the timetable is ${mirror.state.schedule.enabled ? "on" : "off"} with ${mirror.state.schedule.slots.length} times`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, make the background a deep blue.",
+    check: () => {
+      const background = mirror.state.layout.background;
+      const [red, , blue] = [1, 3, 5].map((at) => parseInt(background.primary.slice(at, at + 2), 16));
+      return ["solid", "gradient"].includes(background.mode) && blue > red ? "" : `the background is ${background.mode} ${background.primary}`;
+    },
+    note: () => `background ${mirror.state.layout.background.mode} ${mirror.state.layout.background.primary}`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, show me the next photo.",
+    before: () => {
+      mirror.state.photos = ["IMG_4001.jpg", "IMG_4002.jpg", "IMG_4003.jpg"].map((name) => ({ name, sizeBytes: 204800 }));
+    },
+    check: (answer) => (answer.acted.includes("set_background") && mirror.state.layout.background.mode === "photo" ? "" : `the background is ${mirror.state.layout.background.mode}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, it's hard to read against the picture, darken it a bit.",
+    check: () => (mirror.state.layout.background.dim > 0 && mirror.state.layout.background.mode === "photo" ? "" : `dim ${mirror.state.layout.background.dim}, mode ${mirror.state.layout.background.mode}`),
+    note: () => `darkened by ${mirror.state.layout.background.dim}%`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, make the clock and the text a warm amber.",
+    check: () => {
+      const color = mirror.state.layout.textColor;
+      const [red, , blue] = [1, 3, 5].map((at) => parseInt(color.slice(at, at + 2), 16));
+      return color !== "#f5f2ec" && red > blue + 40 ? "" : `the text is ${color}`;
+    },
+    note: () => `text ${mirror.state.layout.textColor}, accent ${mirror.state.layout.accentColor}`,
+  },
+  {
+    group: "settings",
+    words: "Mirror, put the text back to normal.",
+    check: () => (mirror.state.layout.textColor === "#f5f2ec" ? "" : `the text is ${mirror.state.layout.textColor}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, I want to call you Hallway from now on.",
+    // The name on the glass can change; the word that wakes it cannot, and the reply should not promise otherwise.
+    check: (answer) => (mirror.state.displayName === "Hallway" && /mirror/i.test(answer.reply) ? "" : `the name is ${mirror.state.displayName}; the reply does not say that "Mirror" still wakes it`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, stop greeting me every time I walk up.",
+    check: (answer) => (answer.acted.includes("habits") && running.habits.get().greet === false ? "" : "it still greets"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, don't show me anything by yourself after nine at night until seven in the morning.",
+    check: () => (JSON.stringify(running.habits.get().quietHours) === '["21:00","07:00"]' ? "" : `quiet hours ${JSON.stringify(running.habits.get().quietHours)}`),
+  },
+  {
+    group: "settings",
+    words: "Mirror, what do you do on your own?",
+    check: (answer) => (answer.acted.includes("habits") && shown(answer).length > 0 ? "" : "it did not look its habits up"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, change the wifi password.",
+    check: (answer) => (/phone|controls|can't|cannot/i.test(answer.reply) && !answer.acted.some((name) => name.startsWith("set_")) ? "" : "it did not say that this is not its to change"),
+  },
+  {
+    group: "settings",
+    words: "Mirror, we moved to Denver, fix the clock.",
+    check: (answer) => (answer.acted.includes("set_clock") && mirror.state.timeZone === "America/Denver" ? "" : `the zone is ${mirror.state.timeZone}`),
+    note: () => `zone ${mirror.state.timeZone}, offset ${mirror.state.utcOffsetMinutes} minutes`,
+  },
 ];
 
 console.log(`Model ${options.model}, reasoning effort ${options.effort}. The fake mirror's zone is ${options.zone} (UTC offset ${offset} minutes); its clock reads ${local(Date.now())}.`);
@@ -308,7 +462,8 @@ console.log(" ready.\n");
 const failures = [];
 const totals = [];
 for (const step of steps) {
-  if (options.only && !options.only.split(",").some((word) => step.words.toLowerCase().includes(word.trim().toLowerCase()))) continue;
+  const wanted = (word) => step.group === word || step.words.toLowerCase().includes(word);
+  if (options.only && !options.only.split(",").some((word) => wanted(word.trim().toLowerCase()))) continue;
   if (mirror.state.automation.sleeping) mirror.state.automation.sleeping = false;
   const before = step.before?.();
   const answer = await say(step.words, step.addressed);
@@ -334,6 +489,13 @@ for (const step of steps) {
   console.log(`  check:  ${problem ? `NOT AS EXPECTED: ${problem}` : "as expected"}\n`);
   if (problem) failures.push(step.words);
 }
+
+// The settings steps leave the clock, the rules and the habits changed; what follows is tried as it was before them.
+Object.assign(mirror.state, { timeZone: options.zone, utcOffsetMinutes: offset, clock24Hour: false, displayName: "Mirror" });
+Object.assign(mirror.state.automation, { enabled: true, wakeTime: "06:30", sleepTime: "23:00", motionEnabled: true, sleeping: false });
+mirror.state.schedule = { enabled: false, slots: [] };
+mirror.state.layout.background.mode = "video";
+running.habits.change({ greet: true, tend: true, quietHours: null });
 
 // What is answered without the model: the greetings the mirror recognises by itself.
 if (!options.only) {

@@ -26,7 +26,8 @@ test("the snapshot has the display, the widgets, the background, the board, the 
     power: "awake",
     wakeBrightness: 180,
     awakeHours: "06:30 to 23:00",
-    sleepsWhenNobodyIsThere: "after 300 seconds",
+    sleepsWhenNobodyIsThere: "after 5 minutes",
+    movementSensitivity: 6,
   });
   assert.match(snapshot.layoutUnits, /thousandths of the screen.*0,0 is the top left/);
   assert.equal(snapshot.widgets.length, 16);

@@ -301,7 +301,10 @@ choose one. **Answers appear** and **To the side** set where on the glass
 the answers stand: low and in the middle unless you move them, which suits a
 Mirror that hangs high or is read from the side. With the assistant on you
 can ask for either: "Mirror, be the cat", "Mirror, put your answers at the
-top". The field below takes a typed request, which is the quickest way
+top". Most other settings can be asked for too, such as the clock's form and
+time zone, the hours the display is lit, the weather's place, the films'
+timetable and the colours; [Settings you can ask
+for](assistant.md#settings-you-can-ask-for) lists them. The field below takes a typed request, which is the quickest way
 to try it, and **Asked lately** lists what was asked and answered since the Mirror
 last started.
 

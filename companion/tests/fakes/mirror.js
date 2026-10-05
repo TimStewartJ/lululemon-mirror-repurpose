@@ -10,6 +10,61 @@ const FILMS = [
 
 export const PAIRING_CODE = "123456";
 
+/** The places the fake mirror's search knows, best known first as the real service lists them. */
+const PLACES = [
+  { name: "Seattle", region: "Washington", country: "United States", latitude: 47.60621, longitude: -122.33207, timezone: "America/Los_Angeles" },
+  { name: "Portland", region: "Oregon", country: "United States", latitude: 45.52345, longitude: -122.67621, timezone: "America/Los_Angeles" },
+  { name: "Portland", region: "Maine", country: "United States", latitude: 43.65737, longitude: -70.2589, timezone: "America/New_York" },
+  { name: "Portland", region: "Victoria", country: "Australia", latitude: -38.34308, longitude: 141.60424, timezone: "Australia/Melbourne" },
+  { name: "Springfield", region: "Missouri", country: "United States", latitude: 37.21533, longitude: -93.29824, timezone: "America/Chicago" },
+  { name: "Springfield", region: "Illinois", country: "United States", latitude: 39.80172, longitude: -89.64371, timezone: "America/Chicago" },
+  { name: "Springfield", region: "Oregon", country: "United States", latitude: 44.04624, longitude: -123.02203, timezone: "America/Los_Angeles" },
+  { name: "Santa Clara", region: "California", country: "United States", latitude: 37.35411, longitude: -121.95524, timezone: "America/Los_Angeles" },
+  { name: "Denver", region: "Colorado", country: "United States", latitude: 39.73915, longitude: -104.9847, timezone: "America/Denver" },
+  { name: "New York", region: "New York", country: "United States", latitude: 40.71427, longitude: -74.00597, timezone: "America/New_York" },
+  { name: "Berlin", region: "State of Berlin", country: "Germany", latitude: 52.52437, longitude: 13.41053, timezone: "Europe/Berlin" },
+  { name: "Paris", region: "Ile-de-France", country: "France", latitude: 48.85341, longitude: 2.3488, timezone: "Europe/Paris" },
+  { name: "Paris", region: "Texas", country: "United States", latitude: 33.66094, longitude: -95.55551, timezone: "America/Chicago" },
+  { name: "London", region: "England", country: "United Kingdom", latitude: 51.50853, longitude: -0.12574, timezone: "Europe/London" },
+  { name: "Tokyo", region: "Tokyo", country: "Japan", latitude: 35.6895, longitude: 139.69171, timezone: "Asia/Tokyo" },
+];
+const REGION_SHORT = { me: "maine", or: "oregon", wa: "washington", tx: "texas", il: "illinois", mo: "missouri", ca: "california", ny: "new york", usa: "united states", us: "united states", uk: "united kingdom" };
+
+/**
+ * Searches the places as Mirror Home does: by the name as it stands, and
+ * then with its last words as a state or country. Towns of that name that
+ * lie elsewhere come back as `elsewhere`.
+ */
+function searchPlaces(query) {
+  const words = query.toLowerCase().replace(/,/g, " ").trim().split(/\s+/);
+  const listed = (places) =>
+    places.slice(0, 5).map((place) => ({
+      label: [place.name, place.region === place.name ? "" : place.region, place.country].filter(Boolean).join(", "),
+      latitude: place.latitude, longitude: place.longitude, timezone: place.timezone,
+    }));
+  let elsewhere = null;
+  for (let regionWords = 0; regionWords < words.length && regionWords <= 3; regionWords += 1) {
+    const name = words.slice(0, words.length - regionWords).join(" ");
+    const region = words.slice(words.length - regionWords).join(" ");
+    const named = PLACES.filter((place) => place.name.toLowerCase() === name);
+    const lies = (place, wanted) => {
+      if ([place.region.toLowerCase(), place.country.toLowerCase()].some((part) => part === wanted || part === REGION_SHORT[wanted])) return true;
+      const parts = wanted.split(" ");
+      return parts.some((_, split) => split > 0 && lies(place, parts.slice(0, split).join(" ")) && lies(place, parts.slice(split).join(" ")));
+    };
+    const found = regionWords === 0 ? named : named.filter((place) => lies(place, region));
+    if (found.length > 0) return { results: listed(found) };
+    if (regionWords > 0 && named.length > 0 && !elsewhere) elsewhere = listed(named);
+  }
+  return elsewhere ? { results: [], elsewhere } : { results: [] };
+}
+
+/** A time of day as minutes after midnight; -1 for what is none. */
+function minutesOf(time) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(time));
+  return match ? Number(match[1]) * 60 + Number(match[2]) : -1;
+}
+
 // A real JPEG of 16 by 16 pixels: black with a white bar. A model that is
 // handed the "screenshot" needs a picture it can open.
 const TINY_JPEG = Buffer.from(
@@ -58,7 +113,19 @@ export async function startFakeMirror({
       motion: { available: true, monitoring: true },
     },
     brightness: 180,
+    /** False for a mirror whose weather was never set up. */
     weather: true,
+    weatherConfig: { enabled: true, locationName: "Seattle", units: "metric", latitude: 47.60621, longitude: -122.33207 },
+    /** How the clock reads; a test may change them as the phone controls would. */
+    timeZone,
+    utcOffsetMinutes,
+    clock24Hour: false,
+    displayName: "Mirror",
+    /** True for a mirror whose own system does not take a new name. */
+    nameRefused: false,
+    /** The films' timetable, and the film chosen by hand over it: { videoId, untilTime } or null. */
+    schedule: { enabled: false, slots: [] },
+    hold: null,
     /** The character the mirror answers as, and the ones it has; null for a Mirror Home without any. */
     mascot: "none",
     mascots: [
@@ -78,25 +145,31 @@ export async function startFakeMirror({
   };
 
   function weather() {
-    if (!state.weather) {
-      return { config: { enabled: false, locationName: "", units: "metric" }, state: "unconfigured", refreshing: false, stale: false, updatedAt: null, nextRefreshAt: null, error: null, data: null };
+    const config = state.weather ? { ...state.weatherConfig } : { enabled: false, locationName: "", units: "metric", latitude: null, longitude: null };
+    if (!config.enabled) {
+      return { config: { ...config, latitude: null, longitude: null }, state: "unconfigured", refreshing: false, stale: false, updatedAt: null, nextRefreshAt: null, error: null, data: null };
     }
+    const utcOffsetMinutes = state.utcOffsetMinutes;
+    const us = config.units === "us";
+    // The same weather wherever the place is, in the units asked for.
+    const degrees = (celsius) => (us ? Math.round((celsius * 9 / 5 + 32) * 10) / 10 : celsius);
+    const place = config.locationName.split(",")[0];
     const hour = 60 * 60 * 1000;
     const thisHour = Math.floor(now() / hour) * hour;
     const midnight = Math.floor((now() + utcOffsetMinutes * 60_000) / (24 * hour)) * 24 * hour - utcOffsetMinutes * 60_000;
     const day = (index, high, low, rain, condition) => ({
-      time: midnight + index * 24 * hour, high, low, precipitationProbability: rain, weatherCode: 3, condition,
+      time: midnight + index * 24 * hour, high: degrees(high), low: degrees(low), precipitationProbability: rain, weatherCode: 3, condition,
       sunrise: midnight + index * 24 * hour + 7 * hour, sunset: midnight + index * 24 * hour + 18.75 * hour,
     });
     return {
-      config: { enabled: true, locationName: "Seattle", units: "metric" },
+      config,
       state: "ready", refreshing: false, stale: false, updatedAt: now() - 600_000, nextRefreshAt: now() + 1_200_000, error: null,
       data: {
-        provider: "open-meteo", fetchedAt: now() - 600_000, locationName: "Seattle", unitsSystem: "metric",
-        units: { temperature: "°C", windSpeed: "km/h", precipitation: "mm" },
-        current: { time: thisHour, temperature: 12.4, apparentTemperature: 10.9, weatherCode: 3, condition: "Overcast", daylight: true, precipitation: 0, windSpeed: 9.2 },
+        provider: "open-meteo", fetchedAt: now() - 600_000, locationName: place, unitsSystem: config.units,
+        units: us ? { temperature: "°F", windSpeed: "mph", precipitation: "inch" } : { temperature: "°C", windSpeed: "km/h", precipitation: "mm" },
+        current: { time: thisHour, temperature: degrees(12.4), apparentTemperature: degrees(10.9), weatherCode: 3, condition: "Overcast", daylight: true, precipitation: 0, windSpeed: 9.2 },
         hourly: [1, 2, 3, 4, 5, 6, 7, 8].map((index) => ({
-          time: thisHour + index * hour, temperature: 12 + index * 0.5, precipitationProbability: index >= 4 ? 70 : 10,
+          time: thisHour + index * hour, temperature: degrees(12 + index * 0.5), precipitationProbability: index >= 4 ? 70 : 10,
           weatherCode: index >= 4 ? 61 : 3, condition: index >= 4 ? "Light rain" : "Overcast",
         })),
         daily: [day(0, 16.2, 9.1, 70, "Light rain"), day(1, 18.4, 8.3, 10, "Mostly clear"), day(2, 15, 9, 40, "Overcast")],
@@ -108,24 +181,54 @@ export async function startFakeMirror({
     return { ...state.automation };
   }
 
+  function preferences() {
+    return {
+      timeZone: state.timeZone, utcOffsetMinutes: state.utcOffsetMinutes, utcOffsetChanges: [], clockSource: "bundled",
+      clock24Hour: state.clock24Hour, ambientLightAvailable: state.automation.ambientLightAvailable,
+    };
+  }
+
+  /** The films' timetable as the mirror reports it, and the film that shows by it now. */
+  function schedule() {
+    const slots = [...state.schedule.slots].sort((first, second) => minutesOf(first.start) - minutesOf(second.start));
+    const active = state.schedule.enabled && slots.length > 0;
+    let current = null;
+    let next = null;
+    if (active) {
+      const shifted = new Date(now() + state.utcOffsetMinutes * 60_000);
+      const minute = shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+      // The film of the last time that has come; before the day's first one, yesterday's last still plays.
+      const at = slots.findLastIndex((slot) => minutesOf(slot.start) <= minute);
+      current = slots[at < 0 ? slots.length - 1 : at];
+      next = slots[(at + 1) % slots.length];
+    }
+    return {
+      enabled: state.schedule.enabled, slots, active, maxSlots: 8, utcOffsetMinutes: state.utcOffsetMinutes,
+      current, next, nextChangeAt: null, hold: active ? state.hold : null,
+    };
+  }
+
   function catalog() {
+    const timetable = schedule();
+    const effective = timetable.active ? (timetable.hold?.videoId ?? timetable.current.videoId) : state.activeFilm;
     return {
       videos: state.films.map((film) => ({
         id: film.id, name: film.name, sizeBytes: 90_000_000, addedAt: 1790000000000, mimeType: "video/mp4", width: 1080, height: 1920,
         rotation: 0, durationMs: 120000, frameRate: 30, bitrate: 6_000_000, decoderName: "OMX.qcom.video.decoder.avc",
         avcProfile: 8, avcLevel: 4096, hasAudio: false, posterAvailable: true,
-        active: film.id === state.activeFilm, previous: false, showing: film.id === state.activeFilm, scheduledStarts: [],
+        active: film.id === state.activeFilm, previous: false, showing: film.id === effective,
+        scheduledStarts: timetable.slots.filter((slot) => slot.videoId === film.id).map((slot) => slot.start),
       })),
-      activeId: state.activeFilm, previousId: "", effectiveId: state.activeFilm, canRollback: false,
-      schedule: { enabled: false, slots: [], active: false, maxSlots: 8, utcOffsetMinutes, current: null, next: null, nextChangeAt: null, hold: null },
+      activeId: state.activeFilm, previousId: "", effectiveId: effective, canRollback: false,
+      schedule: timetable,
       totalBytes: 270_000_000, usableBytes: 3_000_000_000, maxVideoBytes: 268435456, maxLibraryBytes: 805306368, minFreeBytes: 536870912, maxVideos: 12,
     };
   }
 
   function status() {
     return {
-      apiVersion: 1, appVersion: "2.3.0", deviceUptimeSeconds: 86400, paired: true, displayName: "Mirror",
-      timeZone, utcOffsetMinutes, nextUtcOffsetChange: null, clock24Hour: false,
+      apiVersion: 1, appVersion: "2.3.0", deviceUptimeSeconds: 86400, paired: true, displayName: state.displayName,
+      timeZone: state.timeZone, utcOffsetMinutes: state.utcOffsetMinutes, nextUtcOffsetChange: null, clock24Hour: state.clock24Hour,
       mirrorBinderConnected: true, systemHelperConnected: false,
       brightness: state.automation.sleeping ? 0 : state.brightness,
       wifi: { connected: true, ssid: "home", ipAddress: "192.0.2.10" }, address: "192.0.2.10",
@@ -269,9 +372,14 @@ export async function startFakeMirror({
     }
     if (is("GET", "/api/v1/automation")) return [200, automation()];
     if (is("PUT", "/api/v1/automation")) {
+      const stay = body.motionTimeoutSeconds ?? state.automation.motionTimeoutSeconds;
+      const sensitivity = body.motionSensitivity ?? state.automation.motionSensitivity;
       const valid =
-        /^\d\d:\d\d$/.test(body.wakeTime ?? "") && /^\d\d:\d\d$/.test(body.sleepTime ?? "") &&
-        Number.isInteger(body.wakeBrightness) && body.wakeBrightness >= 1 && body.wakeBrightness <= 255;
+        minutesOf(body.wakeTime) >= 0 && minutesOf(body.sleepTime) >= 0 &&
+        Number.isInteger(body.wakeBrightness) && body.wakeBrightness >= 1 && body.wakeBrightness <= 255 &&
+        !(body.ambientEnabled === true && !state.automation.ambientLightAvailable) &&
+        Number.isInteger(stay) && stay >= 30 && stay <= 3600 &&
+        Number.isInteger(sensitivity) && sensitivity >= 1 && sensitivity <= 10;
       if (!valid) return [400, { error: "Invalid automation settings" }];
       Object.assign(state.automation, {
         enabled: body.enabled === true, wakeTime: body.wakeTime, sleepTime: body.sleepTime, wakeBrightness: body.wakeBrightness,
@@ -312,10 +420,69 @@ export async function startFakeMirror({
       if (!state.films.some((film) => film.id === id)) return [404, { error: "Background video not found" }];
       state.activeFilm = id;
       state.layout.background.mode = "video";
+      // Over a timetable, a film chosen by hand shows until the next time on it.
+      const timetable = schedule();
+      state.hold = timetable.active ? { videoId: id, untilTime: timetable.next.start } : null;
+      return [200, catalog()];
+    }
+    if (is("PUT", "/api/v1/background-videos/schedule")) {
+      const slots = body.slots ?? [];
+      if (!Array.isArray(slots)) return [400, { error: "Schedule times must be a list" }];
+      if (slots.length > 8) return [400, { error: "A schedule can have at most 8 times" }];
+      if (slots.some((slot) => minutesOf(slot?.start) < 0)) return [400, { error: "Schedule times must use 24-hour HH:MM" }];
+      if (slots.some((slot) => !/^[0-9a-f]{64}$/.test(slot.videoId ?? ""))) return [400, { error: "Choose a video for every schedule time" }];
+      if (new Set(slots.map((slot) => slot.start)).size < slots.length) return [400, { error: "Each schedule time must be different" }];
+      if (body.enabled === true && slots.length === 0) return [400, { error: "Add at least one time before turning the schedule on" }];
+      if (slots.some((slot) => !state.films.some((film) => film.id === slot.videoId))) return [409, { error: "A scheduled video is no longer on the Mirror" }];
+      state.schedule = { enabled: body.enabled === true, slots: slots.map((slot) => ({ start: slot.start, videoId: slot.videoId })) };
+      state.hold = null;
+      if (schedule().active) state.layout.background.mode = "video";
+      return [200, catalog()];
+    }
+    if (is("POST", "/api/v1/background-videos/schedule/resume")) {
+      state.hold = null;
       return [200, catalog()];
     }
     if (is("GET", "/api/v1/photos")) return [200, { photos: state.photos }];
     if (is("GET", "/api/v1/weather")) return [200, weather()];
+    if (is("PUT", "/api/v1/weather")) {
+      // As on the mirror: coordinates are needed only for weather that is on, and are forgotten when it is off.
+      const enabled = body.enabled === true;
+      const numbers = typeof body.latitude === "number" && typeof body.longitude === "number";
+      if (enabled && !(numbers && Math.abs(body.latitude) <= 90 && Math.abs(body.longitude) <= 180)) return [400, { error: "Invalid JSON request" }];
+      const locationName = String(body.locationName ?? "").trim();
+      const units = String(body.units ?? "us").toLowerCase();
+      if (locationName.length > 80 || !["us", "metric"].includes(units)) return [400, { error: "Invalid JSON request" }];
+      state.weatherConfig = { enabled, locationName, units, latitude: enabled ? body.latitude : null, longitude: enabled ? body.longitude : null };
+      state.weather = true;
+      return [200, weather()];
+    }
+    if (is("GET", "/api/v1/weather/locations")) {
+      const wanted = (query.get("q") ?? "").trim();
+      if (wanted.length < 2 || wanted.length > 80) return [400, { error: "Invalid JSON request" }];
+      return [200, searchPlaces(wanted)];
+    }
+    if (is("GET", "/api/v1/preferences")) return [200, preferences()];
+    if (is("PUT", "/api/v1/preferences")) {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: body.timeZone });
+      } catch {
+        return [400, { error: "Unknown IANA time zone" }];
+      }
+      const offset = body.utcOffsetMinutes ?? 0;
+      if (typeof body.timeZone !== "string" || !Number.isInteger(offset) || Math.abs(offset) > 18 * 60) return [400, { error: "Invalid UTC offset" }];
+      // The real mirror follows its own table for a zone that changed; the fake takes the offset it was given.
+      if (body.timeZone !== state.timeZone || offset !== state.utcOffsetMinutes) Object.assign(state, { timeZone: body.timeZone, utcOffsetMinutes: offset });
+      state.clock24Hour = body.clock24Hour === true;
+      return [200, preferences()];
+    }
+    if (is("POST", "/api/v1/control/name")) {
+      const name = body.name;
+      if (typeof name !== "string" || name.trim() === "" || name.length > 64) return [400, { error: "Name must contain 1-64 characters" }];
+      if (state.nameRefused) return [503, { changed: false, name }];
+      state.displayName = name;
+      return [200, { changed: true, name }];
+    }
     return [404, { error: "Endpoint not found" }];
   }
 

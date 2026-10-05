@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseConfig } from "../src/config.js";
+import { createHabits } from "../src/habits.js";
 import { createLog } from "../src/log.js";
 import { createMemory } from "../src/memory.js";
 import { createMirror } from "../src/mirror.js";
@@ -92,11 +93,15 @@ export async function startTools(t) {
     mirror.close();
     await fake.close();
   });
-  const tools = createTools({ mirror, memory, clock, log: () => {} });
+  // The habits a fresh companion has, kept in memory only.
+  const habits = createHabits({
+    settings: { greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] },
+  });
+  const tools = createTools({ mirror, memory, clock, log: () => {}, habits });
   /** Runs one tool as a model in a conversation would. */
   async function use(name, args = {}, turn = newTurn("conversation")) {
     const tool = tools.find((candidate) => candidate.name === name);
     return runTool(tool, args, turn);
   }
-  return { clock, fake, mirror, memory, tools, use };
+  return { clock, fake, mirror, memory, habits, tools, use };
 }

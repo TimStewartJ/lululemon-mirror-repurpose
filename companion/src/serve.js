@@ -6,6 +6,7 @@ import { createBrain } from "./brain.js";
 import { createBriefingMemory } from "./briefing.js";
 import { systemClock } from "./clock.js";
 import { readableByOthers } from "./config.js";
+import { createHabits } from "./habits.js";
 import { createHealth } from "./health.js";
 import { createLog, describeError } from "./log.js";
 import { createMemory } from "./memory.js";
@@ -23,7 +24,7 @@ import { createTools } from "./tools.js";
  *
  * @param {import("./config.js").Config} config
  * @param {Object} [parts]
- * @returns {Promise<{ server: import("node:http").Server, port: number, stop: () => Promise<void>, proactive: object }>}
+ * @returns {Promise<{ server: import("node:http").Server, port: number, stop: () => Promise<void>, proactive: object, habits: import("./habits.js").Habits }>}
  */
 export async function serve(config, parts = {}) {
   const clock = parts.clock ?? systemClock;
@@ -51,11 +52,14 @@ export async function serve(config, parts = {}) {
   const activity = createActivity(config.stateDir, log);
   const recordings = createRecordings(config.stateDir, config.keepUtterances, log);
   const queue = createQueue();
-  const tools = createTools({ mirror, memory, clock, log });
+  // What the companion does unasked can be changed by asking it; a change is written to the config it was started from.
+  const habits = createHabits({ settings: config.proactive, file: config.onDisk ? config.path : null, log });
+  const tools = createTools({ mirror, memory, clock, log, habits });
   // One memory of the last briefing for both: a card shown unasked can be answered with "dismiss those" as well.
   const briefings = createBriefingMemory(clock);
   const assistant = createAssistant({ brain, stt, mirror, tools, memory, activity, recordings, queue, briefings, log, clock });
-  const proactive = createProactive({ settings: config.proactive, brain, mirror, tools, memory, activity, queue, briefings, log, clock });
+  const proactive = createProactive({ settings: habits.settings, brain, mirror, tools, memory, activity, queue, briefings, log, clock });
+  habits.onChange(() => proactive.settingsChanged());
   const health = createHealth({ version, model: config.model, brain, stt, mirror, queue, activity, clock });
   const server = createServer({ secret: config.secret, assistant, proactive, activity, queue, health, log, clock });
 
@@ -85,6 +89,7 @@ export async function serve(config, parts = {}) {
     server,
     port,
     proactive,
+    habits,
     stop() {
       stopping ??= (async () => {
         log("stopping", {});

@@ -108,7 +108,7 @@ test("set_background refuses an unknown film and lists the ones there are", asyn
   fake.state.films.length = 0;
   assert.match((await use("set_background", { video: "next" })).error, /no film on the mirror/);
   assert.match((await use("set_background", { mode: "film" })).error, /no film on the mirror/);
-  assert.match((await use("set_background", {})).error, /Give video or mode/);
+  assert.match((await use("set_background", {})).error, /Give video, mode, photo, color or dim/);
 });
 
 test("set_background changes the mode and nothing else in the layout", async (t) => {
@@ -124,6 +124,66 @@ test("set_background changes the mode and nothing else in the layout", async (t)
   fake.state.photos = [];
   fake.state.layout.background.photo = "";
   assert.match((await use("set_background", { mode: "photo" })).error, /no photo on the mirror/);
+});
+
+test("set_background shows a particular photo of the library, by its place or the one after", async (t) => {
+  const { use, fake } = await startTools(t);
+  // Photos carry the names a camera gave them, so they are asked for by their place.
+  fake.state.photos = ["IMG_4001.jpg", "IMG_4002.jpg", "PXL_2026_beach.jpg"].map((name) => ({ name, sizeBytes: 204800 }));
+  assert.deepEqual(await use("set_background", { photo: "2" }), { background: "photo", photo: "2 of 3" });
+  assert.deepEqual([fake.state.layout.background.mode, fake.state.layout.background.photo], ["photo", "IMG_4002.jpg"]);
+  assert.equal((await use("set_background", { photo: "next" })).photo, "3 of 3");
+  assert.equal((await use("set_background", { photo: "next" })).photo, "1 of 3");
+  assert.equal((await use("set_background", { photo: "previous" })).photo, "3 of 3");
+  assert.equal((await use("set_background", { photo: "first" })).photo, "1 of 3");
+  assert.equal((await use("set_background", { photo: "last" })).photo, "3 of 3");
+  assert.equal((await use("set_background", { photo: "beach" })).photo, "3 of 3");
+  // From a film, "next" goes on from the photo last shown.
+  await use("set_background", { mode: "film" });
+  assert.equal((await use("set_background", { photo: "next" })).photo, "1 of 3");
+  const writes = fake.writes().length;
+  assert.match((await use("set_background", { photo: "7" })).error, /There are 3 photos\. Give "next", "previous" or a number from 1 to 3/);
+  assert.match((await use("set_background", { photo: "IMG" })).error, /There are 3 photos/);
+  fake.state.photos.length = 1;
+  await use("set_background", { photo: "1" });
+  assert.match((await use("set_background", { photo: "next" })).error, /only one photo, and it is showing/);
+  fake.state.photos.length = 0;
+  assert.match((await use("set_background", { photo: "next" })).error, /no photo on the mirror/);
+  assert.equal(fake.writes().length, writes + 1);
+});
+
+test("set_background shows a plain colour or a gradient", async (t) => {
+  const { use, fake } = await startTools(t);
+  assert.deepEqual(await use("set_background", { color: "#0B1D3A" }), { background: "the colour #0b1d3a" });
+  assert.deepEqual([fake.state.layout.background.mode, fake.state.layout.background.primary], ["solid", "#0b1d3a"]);
+  assert.deepEqual(await use("set_background", { color: "#000" }), { background: "black" });
+  assert.deepEqual(await use("set_background", { color: "#0b1d3a", secondColor: "40105a" }), {
+    background: "a gradient from #0b1d3a to #40105a",
+  });
+  const background = fake.state.layout.background;
+  assert.deepEqual([background.mode, background.primary, background.secondary], ["gradient", "#0b1d3a", "#40105a"]);
+  const writes = fake.writes().length;
+  assert.match((await use("set_background", { color: "navy" })).error, /written as #rrggbb/);
+  assert.match((await use("set_background", { color: "#0b1d3a", secondColor: "purple" })).error, /written as #rrggbb/);
+  assert.match((await use("set_background", { secondColor: "#40105a" })).error, /secondColor needs color/);
+  assert.match((await use("set_background", { color: "#0b1d3a", mode: "film" })).error, /one of video, mode, photo and color/);
+  assert.equal(fake.writes().length, writes);
+});
+
+test("set_background darkens what is behind the widgets, alone or with a change of film", async (t) => {
+  const { use, fake } = await startTools(t);
+  assert.deepEqual(await use("set_background", { dim: 40 }), { darkenedBy: "40%" });
+  assert.deepEqual([fake.state.layout.background.mode, fake.state.layout.background.dim], ["video", 40]);
+  assert.deepEqual(await use("set_background", { video: "flowers", dim: 0 }), {
+    showing: { id: "9c1f44e7", name: "luminous-flowers-spatial-180s.mp4" },
+    darkenedBy: "0%",
+  });
+  assert.equal(fake.state.layout.background.dim, 0);
+  assert.deepEqual(await use("set_background", { mode: "black", dim: 20 }), { background: "black", darkenedBy: "20%" });
+  assert.match((await use("set_background", { dim: 95 })).error, /The arguments are not right\. dim/);
+  // A film that is not there is not darkened either.
+  assert.match((await use("set_background", { video: "the ocean", dim: 50 })).error, /No film matches/);
+  assert.equal(fake.state.layout.background.dim, 20);
 });
 
 test("an unreachable mirror is something the model can explain", async (t) => {
@@ -147,7 +207,7 @@ test("a greeting may only speak and a tending run may only tidy, once", async (t
   assert.deepEqual(toolsFor("greeting", tools).map((tool) => tool.name), ["say"]);
   assert.deepEqual(toolsFor("tend", tools).map((tool) => tool.name), ["get_state", "set_background", "arrange_widgets", "board_remove"]);
   // In a conversation the answer is the line on the glass; a say tool beside it showed the line twice.
-  assert.equal(toolsFor("conversation", tools).length, 16);
+  assert.equal(toolsFor("conversation", tools).length, 23);
   assert.ok(!toolsFor("conversation", tools).some((tool) => tool.name === "say"));
 
   const turn = newTurn("tend");

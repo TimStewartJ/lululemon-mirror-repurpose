@@ -96,6 +96,10 @@ switch reads **Connected** once the mirror has reached the companion.
 | `keepUtterances` | How many recordings to keep. 0 keeps none. |
 | `stateDir` | Where the companion keeps what it stores. |
 
+The `proactive` settings can also be changed by asking the mirror ("stop
+greeting me", "quiet from nine at night until seven"); see
+[Settings changed by asking](#settings-changed-by-asking).
+
 ## Run
 
 ```bash
@@ -143,10 +147,17 @@ access.
 | `look` | Takes a picture of what the glass shows. |
 | `set_power` | Puts the display to sleep or wakes it. |
 | `set_brightness` | Sets how bright the display is when awake. |
-| `set_background` | Chooses a film, or a black or photo background. |
+| `set_background` | Chooses a film, plain black, a colour or a gradient, or a photo of the mirror's library ("the next photo", "the second one"), and darkens what is behind the widgets so that they are easier to read. |
 | `set_character` | Chooses the character the mirror answers as, or none: "be the cat", "next character", "just the words". |
 | `set_answer_place` | Moves where on the glass the answers appear: "put your answers at the top", "further left", "a bit lower". |
 | `arrange_widgets` | Shows, hides, moves and resizes widgets. |
+| `set_clock` | Makes the clock read 12 or 24 hours, and moves the mirror to another time zone: "use military time", "we moved to Denver". |
+| `set_display_rules` | Sets when the display is dark by itself: the hours it is lit each day, or none; whether it sleeps when it sees nobody, after how long, and how small a movement counts; whether its brightness follows the room. |
+| `set_weather` | Sets the place the weather is for, Fahrenheit or Celsius, and whether there is weather at all: "show the weather for Portland, Maine", "use Celsius". |
+| `set_film_schedule` | Sets which film plays from which time of day, stops and starts that timetable, and returns to it from a film chosen by hand. |
+| `set_text_color` | Colours the clock, the date, notes and the board, or the weather and the other small widgets, and gives them back their own soft white. |
+| `set_name` | Gives the mirror the name it shows on the glass and in the controls. The word that wakes it stays "Mirror". |
+| `habits` | Tells and changes what the companion does unasked: the greeting, the morning briefing, the reminder cards, the tidying and how often, and the quiet hours. "Stop greeting me", "nothing by yourself after nine at night". |
 | `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. A hidden board is shown for a new item, at a free place if another widget has taken its own. |
 | `present` | Answers with a card when the answer is a list or has several parts: "what's on my list?", "what's the forecast?". |
 | `briefing` | Answers a greeting or "what did I miss?" with the briefing. |
@@ -156,6 +167,34 @@ access.
 
 A request within two minutes of the last one continues the same
 conversation, so "make it bigger" works after "show the clock".
+
+Four things the model cannot change, and says so when asked: the Wi-Fi,
+which phones are paired, whether the assistant and the listening are
+switched on, and software updates. A request can lock people out of the
+mirror through each of them, or switch off the thing that takes requests,
+and words that were misheard across a room should not be able to. Two more
+need something only a person has: a web page as the dashboard and media to
+play both take an address.
+
+### Settings changed by asking
+
+A change made through `habits` takes effect at once and is written to the
+`proactive` part of the config file the companion was started from, so that
+it holds after a restart; the rest of the file is left as it was written. If
+the file cannot be written, the change holds until the companion is next
+restarted, and the answer says so.
+
+For the weather the mirror looks the place up itself, by the town's name with
+its state or country, and the companion takes the best known match and names
+the others in its answer. A town that is not where it was said to be is not
+replaced by one of the same name elsewhere: the model is told which there
+are and asks. When the place lies in another time zone than the mirror's
+clock, the answer says so and the clock is left alone until someone asks.
+
+A new time zone is given to the mirror by its IANA name with the offset in
+force there, which the companion works out; the mirror then follows the
+changes its own table has for that zone. The same zone is sent back exactly
+as it was read, which the mirror takes as "leave the clock alone".
 
 ### Cards
 

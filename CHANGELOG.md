@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Let the assistant change the Mirror's standing settings when asked, where
+  it could only be asked about them. The companion's model has seven more
+  tools: `set_clock` (12 or 24 hours, and the time zone: "use military
+  time", "we moved to Denver"), `set_display_rules` (the hours the display
+  is lit, whether it sleeps when it sees nobody, after how long and at what
+  sensitivity), `set_weather` (the place, Fahrenheit or Celsius, on or off),
+  `set_film_schedule` (which film from which time of day; stop, start and
+  return to it), `set_text_color`, `set_name`, and `habits`, which tells and
+  changes what the companion does unasked: the greeting, the morning
+  briefing, the reminder cards, the tidying and the quiet hours. A change of
+  habits takes effect at once and is written to the companion's config, so
+  that it holds after a restart. `set_background` now also takes a plain
+  colour, a gradient, a particular photo ("the next photo", "the second
+  one") and how far to darken what is behind the widgets. The model is told
+  what it cannot change (the Wi-Fi, pairing, whether it and the listening
+  are on, and updates) and says so. Tried with the real model against a
+  stand-in Mirror: 23 requests of 23 came out as asked, a typical one in 2.3
+  seconds.
 - Find a town for the weather when it is given with its state or country.
   The place search passed what was typed to a service that searches by a
   town's name alone, so "Portland, Maine" found nothing and "Springfield"

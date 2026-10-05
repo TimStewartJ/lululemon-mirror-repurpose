@@ -57,7 +57,7 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   assert.match(system, /Never say you did something that a tool refused/);
   assert.match(system, /What you remember about this household\n- Nothing yet\./);
   assert.match(system, /When you are unsure whether words were meant for you, they were/);
-  assert.equal(tools.length, 16);
+  assert.equal(tools.length, 23);
   assert.ok(!tools.includes("say"), "the answer is the line; there is no second way to show one");
   // Who the mirror is on the glass is part of how it stands, and it can be asked to be another.
   assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
@@ -65,6 +65,10 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   // So is where its words stand.
   assert.equal(snapshot.answersAt, "bottom center");
   assert.match(system, /"put your answers at the top".*use set_answer_place/);
+  // The standing settings can be asked for as well, and what cannot be changed is named.
+  assert.equal(snapshot.name, "Mirror");
+  assert.match(system, /"use military time".*set_clock/);
+  assert.match(system, /Four things you cannot change.*the Wi-Fi/);
 });
 
 test("a due time worked out by the model lands on the board at the right instant", async (t) => {

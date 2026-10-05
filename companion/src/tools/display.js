@@ -1,35 +1,22 @@
 import { z } from "zod";
 import { MirrorRefused } from "../mirror.js";
 import { fetchState, shortId } from "../state.js";
+import { findFilm, parseColor, saveAutomation } from "./common.js";
 import { saveLayout } from "./layout.js";
 
 const BRIGHTNESS_STEP = 40;
 const DIMMEST = 15;
 const BRIGHTEST = 255;
+const NO_FILM = "There is no film on the mirror. Films are added in the phone controls under Display.";
+const NO_PHOTO = "There is no photo on the mirror. Photos are added in the phone controls under Display.";
 
 /** @returns {import("../tools.js").Tool[]} */
 export function displayTools({ mirror, clock }) {
-  /** Finds a film by its id, the start of its id, or its name. */
-  function findFilm(videos, wanted) {
-    const text = wanted.trim().toLowerCase();
-    const plain = (name) => String(name).toLowerCase().replace(/\.[a-z0-9]+$/, "");
-    const matches = videos.filter(
-      (video) =>
-        video.id === text ||
-        (text.length >= 6 && video.id.startsWith(text)) ||
-        String(video.name).toLowerCase() === text ||
-        plain(video.name) === plain(text),
-    );
-    return matches.length === 1 ? matches[0] : null;
-  }
-
   async function showFilm(wanted) {
     const catalog = await mirror.get("/api/v1/background-videos");
     const videos = catalog.videos ?? [];
     const listed = videos.map((video) => `${shortId(video.id)} (${video.name})`).join(", ");
-    if (videos.length === 0) {
-      return { error: "There is no film on the mirror. Films are added in the phone controls under Display." };
-    }
+    if (videos.length === 0) return { error: NO_FILM };
     let film;
     if (wanted.trim().toLowerCase() === "next") {
       if (videos.length < 2) return { error: `There is only one film, ${videos[0].name}, so there is no next one.` };
@@ -47,32 +34,87 @@ export function displayTools({ mirror, clock }) {
     return answer;
   }
 
-  async function setMode(mode) {
+  /**
+   * Which photo of the library is meant: "next", "previous", its place in
+   * the library counted from 1, or its name. The photos carry the names a
+   * camera gave them, so a person asks by place.
+   *
+   * @returns {number} its index, or -1 when none is meant
+   */
+  function findPhoto(photos, wanted, current) {
+    const text = wanted.trim().toLowerCase();
+    const at = photos.findIndex((photo) => photo.name === current);
+    if (text === "next") return at < 0 ? 0 : (at + 1) % photos.length;
+    if (text === "previous") return at < 0 ? 0 : (at - 1 + photos.length) % photos.length;
+    if (text === "first") return 0;
+    if (text === "last") return photos.length - 1;
+    if (/^\d+$/.test(text)) return Number(text) >= 1 && Number(text) <= photos.length ? Number(text) - 1 : -1;
+    const named = photos.map((photo, index) => (String(photo.name).toLowerCase().includes(text) ? index : -1)).filter((index) => index >= 0);
+    return named.length === 1 ? named[0] : -1;
+  }
+
+  /** Changes what the layout says of the background: its kind, its colours, its photo, how far it is darkened. */
+  async function restyle({ mode, photo, color, secondColor, dim }) {
     const layout = await mirror.get("/api/v1/dashboard/layout");
-    const background = layout.background ?? {};
-    if (mode === "film") {
-      const catalog = await mirror.get("/api/v1/background-videos");
-      if ((catalog.videos ?? []).length === 0) {
-        return { error: "There is no film on the mirror. Films are added in the phone controls under Display." };
+    const background = { ...(layout.background ?? {}) };
+    const answer = {};
+    if (color !== undefined) {
+      const first = parseColor(color);
+      const second = secondColor === undefined ? null : parseColor(secondColor);
+      if (!first || (secondColor !== undefined && !second)) {
+        return { error: "A colour is written as #rrggbb, for example #1a2b3c. Nothing was changed." };
       }
+      background.primary = first;
+      if (second) {
+        background.secondary = second;
+        background.mode = "gradient";
+        answer.background = `a gradient from ${first} to ${second}`;
+      } else {
+        background.mode = "solid";
+        answer.background = first === "#000000" ? "black" : `the colour ${first}`;
+      }
+    } else if (photo !== undefined) {
+      const photos = (await mirror.get("/api/v1/photos")).photos ?? [];
+      if (photos.length === 0) return { error: NO_PHOTO };
+      const onGlass = background.mode === "photo" && background.photo === photos[0].name;
+      if (photos.length === 1 && onGlass && ["next", "previous"].includes(photo.trim().toLowerCase())) {
+        return { error: "There is only one photo, and it is showing." };
+      }
+      // "Next" goes on from the photo last shown, also when a film is showing now.
+      const index = findPhoto(photos, photo, background.photo);
+      if (index < 0) {
+        const many = photos.length === 1 ? "is one photo" : `are ${photos.length} photos`;
+        return { error: `There ${many}. Give "next", "previous" or a number from 1 to ${photos.length}.` };
+      }
+      background.photo = photos[index].name;
+      background.mode = "photo";
+      answer.background = "photo";
+      answer.photo = `${index + 1} of ${photos.length}`;
+    } else if (mode === "film") {
+      const catalog = await mirror.get("/api/v1/background-videos");
+      if ((catalog.videos ?? []).length === 0) return { error: NO_FILM };
       background.mode = "video";
+      answer.background = "film";
     } else if (mode === "black") {
       background.mode = "solid";
       background.primary = "#000000";
-    } else {
+      answer.background = "black";
+    } else if (mode === "photo") {
       if (!background.photo) {
-        const library = await mirror.get("/api/v1/photos");
-        const first = (library.photos ?? [])[0];
-        if (!first) {
-          return { error: "There is no photo on the mirror. Photos are added in the phone controls under Display." };
-        }
+        const first = ((await mirror.get("/api/v1/photos")).photos ?? [])[0];
+        if (!first) return { error: NO_PHOTO };
         background.photo = first.name;
       }
       background.mode = "photo";
+      answer.background = "photo";
+    }
+    if (dim !== undefined) {
+      background.dim = dim;
+      answer.darkenedBy = `${dim}%`;
     }
     layout.background = background;
-    const saved = await saveLayout(mirror, layout);
-    return { background: saved.background.mode === "video" ? "film" : mode };
+    await saveLayout(mirror, layout);
+    return answer;
   }
 
   return [
@@ -147,26 +189,7 @@ export function displayTools({ mirror, clock }) {
           const limit = was >= BRIGHTEST ? " It is at its brightest." : was <= DIMMEST ? " It is at its dimmest." : "";
           return { wakeBrightness: was, changed: false, note: `The brightness was already ${was}.${limit}` };
         }
-        // The mirror takes its schedule settings as a whole, so they are sent
-        // back as read with one number changed.
-        await mirror.call("PUT", "/api/v1/automation", {
-          body: {
-            enabled: before.enabled,
-            wakeTime: before.wakeTime,
-            sleepTime: before.sleepTime,
-            wakeBrightness: target,
-            ambientEnabled: before.ambientEnabled,
-            ambientMinimum: before.ambientMinimum,
-            ambientMaximum: before.ambientMaximum,
-            motionEnabled: before.motionEnabled,
-            motionTimeoutSeconds: before.motionTimeoutSeconds,
-            motionSensitivity: before.motionSensitivity,
-          },
-        });
-        // Saving those settings ends a sleep or wake someone asked for, so it is asked for again.
-        if (before.manualOverride) {
-          await mirror.call("POST", `/api/v1/automation/${before.sleeping ? "sleep" : "wake"}`);
-        }
+        await saveAutomation(mirror, before, { wakeBrightness: target });
         // The saved level applies at the next wake; this applies it to a display that is on now.
         if (!before.sleeping) {
           try {
@@ -182,18 +205,32 @@ export function displayTools({ mirror, clock }) {
     {
       name: "set_background",
       description:
-        "Changes what is behind the widgets. video: a film's id or name from the state, or \"next\" for the one after the film showing. " +
-        "mode: \"film\" (the chosen film), \"black\" (plain black, the most mirror-like) or \"photo\" (a photo from the mirror's library). " +
-        "Give video or mode.",
+        "Changes what is behind the widgets. Give one of these four. " +
+        "video: a film's id or name from the state, or \"next\" for the one after the film showing. " +
+        "mode: \"film\" (the chosen film), \"black\" (plain black, the most mirror-like) or \"photo\" (the photo last shown). " +
+        "photo: \"next\", \"previous\", or its number in the mirror's library counted from 1, for a particular photo. " +
+        "color: one plain colour as #rrggbb, with secondColor for a gradient from the first, top left, to the second, bottom right; " +
+        "on this glass dark colours look like mirror and bright ones glow. " +
+        "dim darkens whatever is behind the widgets so that they are easier to read: 0 (not at all) to 90 percent. " +
+        "It may come alone or with one of the four.",
       schema: z.object({
         video: z.string().min(1).optional(),
         mode: z.enum(["film", "black", "photo"]).optional(),
+        photo: z.string().min(1).optional(),
+        color: z.string().min(1).optional(),
+        secondColor: z.string().min(1).optional(),
+        dim: z.number().int().min(0).max(90).optional(),
       }),
       changes: true,
-      async handler({ video, mode }) {
-        if (video === undefined && mode === undefined) return { error: "Give video or mode." };
-        if (video !== undefined) return showFilm(video);
-        return setMode(mode);
+      async handler({ video, mode, photo, color, secondColor, dim }) {
+        const given = [video, mode, photo, color].filter((value) => value !== undefined).length;
+        if (secondColor !== undefined && color === undefined) return { error: "secondColor needs color: the two ends of a gradient." };
+        if (given === 0 && dim === undefined) return { error: "Give video, mode, photo, color or dim." };
+        if (given > 1) return { error: "Give one of video, mode, photo and color, not several." };
+        if (video === undefined) return restyle({ mode, photo, color, secondColor, dim });
+        const answer = await showFilm(video);
+        if (answer.error || dim === undefined) return answer;
+        return { ...answer, ...(await restyle({ dim })) };
       },
     },
   ];

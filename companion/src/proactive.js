@@ -362,6 +362,8 @@ export function createProactive({ settings, brain, mirror, tools, memory, activi
   }
 
   function tendLater() {
+    clock.clearTimeout(tendTimer);
+    tendTimer = null;
     if (stopped || !settings.tend) return;
     tendTimer = clock.setTimeout(() => {
       tendTimer = null;
@@ -401,6 +403,15 @@ export function createProactive({ settings, brain, mirror, tools, memory, activi
         // Mirror Home has restarted, so what was known of its board may be out of date.
         boardVersion = boardVersion === null ? null : -1;
       }
+    },
+
+    /**
+     * The settings were changed while running. Whether to greet, to brief and
+     * to show reminders is looked up each time; the tidying is on a timer,
+     * which is set anew.
+     */
+    settingsChanged() {
+      tendLater();
     },
 
     checkReminders,
