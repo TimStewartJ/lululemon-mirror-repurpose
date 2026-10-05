@@ -554,8 +554,10 @@ const steps = [
     check: () => {
       const [chart] = moments("chart");
       if (!chart || chart.values.length < 3) return "no chart of the hours ahead is on the glass";
-      // The numbers of the state, not made up: the stand-in's hours rise by half a degree.
-      return chart.values.every((entry) => entry.value >= 12 && entry.value <= 17) ? "" : "the values are not those of the state";
+      // The numbers of the state, not made up: the stand-in's hours go from 12 to 16 degrees Celsius,
+      // which earlier requests of a whole run may have turned into Fahrenheit.
+      const [least, most] = mirror.state.weatherConfig.units === "us" ? [53, 62] : [12, 17];
+      return chart.values.every((entry) => entry.value >= least && entry.value <= most) ? "" : "the values are not those of the state";
     },
     note: momentsNote,
   },
