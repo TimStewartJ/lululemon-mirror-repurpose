@@ -76,8 +76,8 @@ export function momentTools({ mirror, clock }) {
         "rect {x,y,w,h,round}, path {d}, text {x,y,text,size} centred on x; thin lines in one or two colours suit this glass, where black is mirror). " +
         "title is a small heading over it. Letters, digits and plain punctuation only, in every text of it: this glass draws no emoji or pictographs. " +
         "seconds is how long it stays (5 to 21600); left out, about a minute. A countdown needs none. " +
-        "You need not place it: the glass puts it near the middle, on free room where there is some and otherwise over widgets, " +
-        "which step back until it leaves. Give height (top, upper, middle, lower, bottom) or side (left, center, right) only when asked for a place. " +
+        "You need not place it: moments stand in a column in the middle of the glass in the order they came, and widgets under them " +
+        "step back until they leave. Give height (top, upper, middle, lower, bottom) or side (left, center, right) only when asked for a place. " +
         "size is small, medium (if left out) or large, which is for when something big is asked for. color is #rrggbb; motion is pulse, float or spin, for a drawing or a word that should live. " +
         "id names it: showing the same id again replaces it where it stands (a score that changes); moments in the state lists what is showing. " +
         "Nothing else is needed for it: the display need not be woken and no widget moved. " +

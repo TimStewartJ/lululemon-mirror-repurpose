@@ -1330,6 +1330,8 @@ def check_moments(ctx: Context) -> None:
                 lambda: all(shown(kind) for kind in ("countdown", "text", "drawing")),
                 timeout=30,
             )
+            # Each one that came made the others glide; they are looked at once they stand.
+            time.sleep(1.2)
             ctx.screenshot("moments")
             seen = glass()
             if shown("drawing")["shapes"] != 5:
@@ -1360,6 +1362,7 @@ def check_moments(ctx: Context) -> None:
                 timeout=30,
             )
             # The same id takes the place of what is showing, where it stands.
+            time.sleep(1.2)
             before = shown("drawing")["box"]
             second = api.expect(
                 "POST", "/api/v1/moments",
@@ -1405,7 +1408,7 @@ def check_moments(ctx: Context) -> None:
                 lambda: glass()["steppedBack"] == [] and glass()["clock"] > 0.95,
                 timeout=15,
             )
-            # A glass with no room left lets the oldest go for the newest, and the Mirror then lists what shows.
+            # A column too tall for the glass: the older moments are drawn smaller, and the newest keeps its size.
             for number in range(1, 6):
                 api.expect(
                     "POST", "/api/v1/moments",
@@ -1413,24 +1416,46 @@ def check_moments(ctx: Context) -> None:
                     status=201,
                 )
                 time.sleep(1.0)
-
-            def words() -> str:
-                return " ".join(moment["text"] for moment in glass()["moments"])
-
-            wait_for("the newest of the large words to have arrived", lambda: "Number 5" in words(), timeout=20)
             wait_for(
-                "the Mirror to list as many moments as the glass shows",
-                lambda: len(api.expect("GET", "/api/v1/moments")["moments"]) == len(glass()["moments"]),
+                "the newest of the large words to have arrived",
+                lambda: any("Number 5" in moment["text"] and moment["opacity"] > 0.9 for moment in glass()["moments"]),
                 timeout=20,
             )
+            time.sleep(1.2)
             ctx.screenshot("moments-full")
             full = glass()["moments"]
             if any(boxes_share(moment["box"], other["box"]) for index, moment in enumerate(full) for other in full[:index]):
                 raise CheckFailed(f"On a full glass, moments lie over one another: {describe(full, 2000)}")
-            if "Number 1" in words() or "Redrawn" in words():
-                raise CheckFailed(f"The oldest moments did not make room for the newest: {describe(full, 2000)}")
+            written = {moment["text"][-1]: moment["fontSize"] for moment in full if moment["text"].startswith("Number ")}
+            if (
+                sorted(written) != list("12345") or written["1"] >= written["5"]
+                or any(written[str(number)] > written[str(number + 1)] + 1 for number in range(1, 5))
+            ):
+                raise CheckFailed(f"The older words are not the ones that were made smaller: {describe(written)}")
+            if len(api.expect("GET", "/api/v1/moments")["moments"]) != len(full):
+                raise CheckFailed("The Mirror does not list as many moments as the glass shows")
             if api.expect("DELETE", "/api/v1/moments")["removed"] != len(full):
                 raise CheckFailed("Clearing the glass did not remove the moments it showed")
+            wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
+            # Two that cannot both be on the glass at any size: the older leaves for the newer, and the Mirror is told.
+            rows = [{"text": f"Row {number} of a list that is much too long for this glass"} for number in range(1, 9)]
+            for title in ("First", "Second"):
+                api.expect(
+                    "POST", "/api/v1/moments",
+                    {"id": title.lower(), "kind": "list", "size": "large", "title": title, "seconds": 120, "rows": rows}, status=201,
+                )
+                time.sleep(1.5)
+            wait_for(
+                "the first long list to have left for the second, on the glass and in the Mirror's list",
+                lambda: [moment["id"] for moment in api.expect("GET", "/api/v1/moments")["moments"]] == ["second"]
+                and [moment["text"][:6] for moment in glass()["moments"]] == ["Second"],
+                timeout=20,
+            )
+            time.sleep(1.0)
+            ctx.screenshot("moments-two-lists")
+            if shown("list")["cutOff"]:
+                raise CheckFailed(f"The long list that stayed is cut off: {describe(shown('list'))}")
+            api.expect("DELETE", "/api/v1/moments")
             wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
             # The other two kinds: a list whose long row goes on under itself, and a chart as bars and as a line.
             api.expect(
@@ -1453,7 +1478,7 @@ def check_moments(ctx: Context) -> None:
                 status=201,
             )
             wait_for("the list and the two charts to have arrived", lambda: shown("list") and len(glass()["moments"]) == 3, timeout=20)
-            time.sleep(1.0)
+            time.sleep(1.5)
             ctx.screenshot("moments-list-charts")
             listed, bars, line = glass()["moments"]
             if listed["cutOff"] or len(listed["rows"]) != 3 or "thirty seconds" not in listed["text"]:

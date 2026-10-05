@@ -178,7 +178,7 @@ out. Moments are held in memory only.
 | `kind` | `text`, `countdown`, `list`, `chart` or `drawing`. |
 | `id` | Up to 32 small letters, digits and dashes; made up if left out. |
 | `seconds` | How long it stays: 5 to 21600, 45 if left out. |
-| `size`, `height`, `side` | `small`, `medium` (default) or `large`; and, to place it, one of the heights and sides that the assistant's answers have. Without a height the glass places it near the middle: on free room, or else over widgets, which fade out until it leaves. |
+| `size`, `height`, `side` | `small`, `medium` (default) or `large`; and, to place it, one of the heights and sides that the assistant's answers have. Without a height it stands in the glass's column of moments, in the middle, in the order they came; widgets under a moment fade out until it leaves. |
 | `title`, `color`, `motion` | A heading of up to 40 characters; `#rrggbb`; `none`, `pulse`, `float` or `spin`. |
 | `text` | For `text`: 1 to 280 characters on up to six lines. |
 | `endsAt` | For `countdown`: the instant it runs to, in epoch milliseconds, within six hours. Without `seconds` it stays until 20 seconds after that. |
@@ -190,7 +190,7 @@ The answer to `POST` is `{moment, replaced, shown}`, 201 for a new moment
 and 200 for one that took another's place; `shown` is false while the
 display is dark. A moment that is refused answers 400 with `{error, field}`.
 A seventh moment takes the place of the oldest. When the glass has no room
-left for a new moment, the oldest ones leave until it has, and the glass
+for all of them even at their smallest, the oldest ones leave, and the glass
 tells the Mirror with `DELETE /api/v1/moments/{id}`, which loopback may call
 without a credential, so that the list is what shows. `status.assistant` now
 also carries `place`, which is how the glass knows where the answer appears.

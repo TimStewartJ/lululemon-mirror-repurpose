@@ -11,11 +11,12 @@
   has two tools for it, `show_moment` and `end_moment`, and describes a
   moment rather than programming one: Mirror Home checks every field and
   draws the five kinds itself (`GET`, `POST` and `DELETE /api/v1/moments`).
-  The glass decides where a moment goes, since it alone knows what is drawn
-  where: near the middle, on free room where there is some and otherwise
-  over widgets, which fade out until it leaves; moments do not lie over one
-  another, and each stands on a slight dark backing for the film or photo
-  behind it. A moment arrives and leaves with a fade, stays about a minute
+  The glass decides where moments go, since it alone knows what is drawn
+  where: they stand in one column in the middle, in the order they came, on
+  free room where there is some and otherwise over widgets, which fade out
+  until the moment over them leaves. When the column is too tall the older
+  moments are drawn smaller, and then the oldest leave. Each stands on a
+  slight dark backing for the film or photo behind it. A moment arrives and leaves with a fade, stays about a minute
   unless told otherwise and six hours at most, and is replaced where it
   stands when it is sent again under its id. A timer is both a countdown and
   a reminder on the board, so that it is still announced if Mirror Home

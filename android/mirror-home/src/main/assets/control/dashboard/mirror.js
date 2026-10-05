@@ -210,6 +210,9 @@
     var momentLayer = document.createElement('div');
     momentLayer.className = 'mr-layer mr-moments';
     var momentNodes = {};
+    /* How many moments have come, to keep them in the order they came; and what the last arrangement was made for. */
+    var momentCount = 0;
+    var arranged = '';
     /* Moments that had to make room for a newer one, as id and the time each was made. */
     var displaced = {};
     var dropMoment = settings.dropMoment || function () {};
@@ -1098,10 +1101,10 @@
       return boxes;
     }
 
-    /* Where the moments that are showing lie, but for one. */
-    function momentBoxes(except) {
+    /* Where the moments that are showing lie. */
+    function momentBoxes() {
       return Object.keys(momentNodes).filter(function (id) {
-        return id !== except && !momentNodes[id].leaving && momentNodes[id].box;
+        return !momentNodes[id].leaving && momentNodes[id].box;
       }).map(function (id) { return momentNodes[id].box; });
     }
 
@@ -1110,64 +1113,127 @@
       return a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
     }
 
-    /* Where a moment goes. A height that was named is taken as said.
-       Otherwise it stands in the middle column, clear of the other moments
-       and of where the answer appears, over as few widgets as it can and
-       then as near as it can to where the eye rests. Widgets that it lies
-       over step back while it shows: a moment is there for a while, and
-       what was asked for should not be the thing that is made small. Only
-       with no such room is it drawn a size smaller, and only then put where
-       the answer will lie over it for a while. With no room at all there is
-       no place, unless one is to be had come what may. */
-    function placeMoment(moment, comeWhatMay) {
-      var across = function (size) {
+    /* Gives a moment its box, at the size it is drawn at. One whose box has another size is drawn anew. */
+    function setBox(node, box, size) {
+      if (!node.box || node.box.w !== box.w || node.box.h !== box.h || node.size !== size) node.stale = true;
+      node.box = box;
+      node.size = size;
+      node.element.style.left = (box.x / 10) + '%';
+      node.element.style.top = (box.y / 10) + '%';
+      node.element.style.width = (box.w / 10) + '%';
+      node.element.style.height = (box.h / 10) + '%';
+    }
+
+    /* The longest stretch down the glass that none of the blocks, each [from, to], lies in. */
+    function longestStretch(blocks) {
+      var best = [MOMENT_EDGE, MOMENT_EDGE];
+      var from = MOMENT_EDGE;
+      blocks.concat([[1000 - MOMENT_EDGE, 1000]]).sort(function (a, b) { return a[0] - b[0]; }).forEach(function (block) {
+        if (block[0] - from > best[1] - best[0]) best = [from, block[0]];
+        from = Math.max(from, block[1]);
+      });
+      return best;
+    }
+
+    /* How the moments stand. One that was given a height is where it was
+       told. The others stand in one column in the order they came, and
+       glide when one comes or goes. The column stands clear of where the
+       answer appears while it can, over as few widgets as it can, and then
+       as near as it can to where the eye rests. Widgets under a moment step
+       back while it shows: a moment is there for a while, and what was just
+       asked for should not be the thing that is made small. When the column
+       is too tall, the older ones are drawn smaller, oldest first, and when
+       that is not enough the oldest leave; the Mirror is told, so that what
+       it lists is what shows. */
+    function arrangeMoments() {
+      var shown = Object.keys(momentNodes).map(function (id) { return momentNodes[id]; })
+        .filter(function (node) { return !node.leaving; })
+        .sort(function (a, b) { return a.order - b.order; });
+      var stage = stageSize();
+      var assistant = runtime && runtime.assistant;
+      var band = assistant && assistant.enabled && assistant.place && ANSWER_BANDS[assistant.place.height];
+      /* They keep their places until what decides them changes: not when a widget comes or goes. */
+      var key = shown.map(function (node) {
+        var asked = momentSize(node.moment, node.moment.size);
+        return [node.moment.id, node.moment.size, node.moment.height, node.moment.side, asked.w, asked.h].join(':');
+      }).concat([stage.width, stage.height, band ? band.join('-') : '']).join('|');
+      if (key === arranged) return;
+      arranged = key;
+      var leave = function (node) {
+        displaced[node.moment.id] = node.moment.createdAt;
+        dismissMoment(node.moment.id);
+        dropMoment(node.moment.id);
+      };
+      var across = function (moment, size) {
         return moment.side === 'left' ? MOMENT_EDGE
           : moment.side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
       };
-      var asked = momentSize(moment, moment.size);
-      var middle = function (height) {
-        var y = height === 'top' ? MOMENT_EDGE : height === 'bottom' ? 1000 : Math.round(MOMENT_CENTRES[height] - asked.h / 2);
-        return {
-          x: across(asked), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - asked.h, y)),
-          w: asked.w, h: asked.h, size: moment.size
-        };
-      };
-      if (moment.height) return middle(moment.height);
-      var others = momentBoxes(moment.id);
-      var widgets = widgetBoxes();
-      var assistant = runtime && runtime.assistant;
-      var band = assistant && assistant.enabled && assistant.place && ANSWER_BANDS[assistant.place.height];
-      var answer = band ? { x: 0, y: band[0], w: 1000, h: band[1] - band[0] } : null;
-      var smaller = MOMENT_SIZES.slice(MOMENT_SIZES.indexOf(moment.size) + 1);
-      var ways = [
-        { sizes: [moment.size] },
-        { sizes: smaller },
-        { sizes: [moment.size].concat(smaller), underAnswer: true }
-      ];
-      for (var w = 0; w < ways.length; w++) {
-        for (var s = 0; s < ways[w].sizes.length; s++) {
-          var size = momentSize(moment, ways[w].sizes[s]);
+      var column = [];
+      var told = [];
+      shown.forEach(function (node) {
+        var moment = node.moment;
+        if (!moment.height) {
+          node.fits = moment.size;
+          column.push(node);
+          return;
+        }
+        var size = momentSize(moment, moment.size);
+        var y = moment.height === 'top' ? MOMENT_EDGE : moment.height === 'bottom' ? 1000
+          : Math.round(MOMENT_CENTRES[moment.height] - size.h / 2);
+        var box = { x: across(moment, size), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - size.h, y)), w: size.w, h: size.h };
+        /* Of two that were told the same place, the newer has it. */
+        told = told.filter(function (other) {
+          if (!touches(box, other.box, 0)) return true;
+          leave(other);
+          return false;
+        });
+        setBox(node, box, moment.size);
+        told.push(node);
+      });
+      var widgets = column.length ? widgetBoxes() : [];
+      var taken = told.map(function (node) { return [node.box.y - MOMENT_GAP, node.box.y + node.box.h + MOMENT_GAP]; });
+      while (column.length) {
+        var sizes = column.map(function (node) { return momentSize(node.moment, node.fits); });
+        var tall = sizes.reduce(function (sum, size) { return sum + size.h; }, MOMENT_GAP * (sizes.length - 1));
+        var stretch = (band ? [longestStretch(taken.concat([band]))] : []).concat([longestStretch(taken)])
+          .filter(function (each) { return each[1] - each[0] >= tall; })[0];
+        /* The last one, as small as it gets, has a place come what may. */
+        if (!stretch && column.length === 1 && column[0].fits === 'small') stretch = [MOMENT_EDGE, 1000 - MOMENT_EDGE];
+        if (stretch) {
           var best = null;
-          for (var y = MOMENT_EDGE; y + size.h <= 1000 - MOMENT_EDGE; y += 20) {
-            var box = { x: across(size), y: y, w: size.w, h: size.h, size: ways[w].sizes[s] };
-            if (!ways[w].underAnswer && answer && touches(box, answer, 0)) continue;
-            if (others.some(function (other) { return touches(box, other, MOMENT_GAP); })) continue;
-            var covers = widgets.filter(function (other) { return touches(box, other, MOMENT_GAP); }).length;
-            var off = Math.abs(y + size.h / 2 - MOMENT_EYE);
+          for (var top = stretch[0]; top === stretch[0] || top + tall <= stretch[1]; top += 10) {
+            var y = top;
+            var boxes = sizes.map(function (size, index) {
+              var box = { x: across(column[index].moment, size), y: y, w: size.w, h: size.h };
+              y += size.h + MOMENT_GAP;
+              return box;
+            });
+            var covers = widgets.filter(function (widget) {
+              return boxes.some(function (box) { return touches(box, widget, MOMENT_GAP); });
+            }).length;
+            var off = Math.abs(top + tall / 2 - MOMENT_EYE);
             if (!best || covers < best.covers || (covers === best.covers && off < best.off)) {
-              best = { box: box, covers: covers, off: off };
+              best = { boxes: boxes, covers: covers, off: off };
             }
           }
-          if (best) return best.box;
+          column.forEach(function (node, index) { setBox(node, best.boxes[index], node.fits); });
+          break;
+        }
+        var older = column.filter(function (node) { return node.fits !== 'small'; })[0];
+        if (older) {
+          older.fits = MOMENT_SIZES[MOMENT_SIZES.indexOf(older.fits) + 1];
+        } else {
+          /* With the oldest gone, the others are tried at the sizes asked for again. */
+          leave(column.shift());
+          column.forEach(function (node) { node.fits = node.moment.size; });
         }
       }
-      return comeWhatMay ? middle('middle') : null;
     }
 
     /* A widget that a moment lies over steps back for as long as it does:
        words over words cannot be read. It returns when the moment leaves. */
     function coverWidgets() {
-      var shown = momentBoxes(null);
+      var shown = momentBoxes();
       if (shown.length === 0) {
         Object.keys(nodes).forEach(function (id) {
           if (nodes[id].covered) setPhase(nodes[id], 'covered', false);
@@ -1180,24 +1246,17 @@
       });
     }
 
-    /* A full glass: the newest moment is what someone has just asked for,
-       so the oldest ones leave until it has room. The Mirror is told, so
-       that what it lists is what shows. */
-    function roomFor(moment) {
-      for (;;) {
-        var box = placeMoment(moment, false);
-        if (box) return box;
-        var oldest = null;
-        Object.keys(momentNodes).forEach(function (id) {
-          var node = momentNodes[id];
-          if (id === moment.id || node.leaving || !node.box) return;
-          if (!oldest || node.moment.createdAt < momentNodes[oldest].moment.createdAt) oldest = id;
-        });
-        if (!oldest) return placeMoment(moment, true);
-        displaced[oldest] = momentNodes[oldest].moment.createdAt;
-        dismissMoment(oldest);
-        dropMoment(oldest);
-      }
+    /* After any change to what shows: each has its place, what changed is
+       drawn, and the widgets under them step back. */
+    function settleMoments() {
+      arrangeMoments();
+      Object.keys(momentNodes).forEach(function (id) {
+        var node = momentNodes[id];
+        if (node.leaving || !node.stale) return;
+        node.stale = false;
+        drawMoment(node);
+      });
+      coverWidgets();
     }
 
     function countdownText(left) {
@@ -1297,24 +1356,14 @@
       }
     }
 
+    /* Draws what a moment holds into the box it has, and fits it there. */
     function drawMoment(node) {
       var moment = node.moment;
       var element = node.element;
       var stage = stageSize();
-      /* It keeps its place while it shows, unless what decides its place has changed. */
-      var asked = momentSize(moment, moment.size);
-      var placed = [moment.kind, moment.size, moment.height, moment.side, asked.w, asked.h].join('|');
-      if (node.placed !== placed) {
-        node.placed = placed;
-        node.box = roomFor(moment);
-      }
       var box = { width: stage.width * node.box.w / 1000, height: stage.height * node.box.h / 1000 };
-      element.style.left = (node.box.x / 10) + '%';
-      element.style.top = (node.box.y / 10) + '%';
-      element.style.width = (node.box.w / 10) + '%';
-      element.style.height = (node.box.h / 10) + '%';
       element.style.color = moment.color || layout.textColor;
-      var body = momentBody(moment, box, node.box.size);
+      var body = momentBody(moment, box, node.size);
       node.done = false;
       node.inner.className = 'mr-m-inner' + (moment.motion && moment.motion !== 'none' ? ' mr-m-' + moment.motion : '');
       node.inner.innerHTML = (moment.title ? '<div class="mr-m-title">' + escapeHtml(moment.title) + '</div>' : '') + body.html;
@@ -1366,7 +1415,6 @@
       if (node.leaving) return;
       node.leaving = true;
       node.element.className += ' mr-leaving';
-      coverWidgets();
       node.leaveTimer = window.setTimeout(function () {
         if (momentNodes[id] !== node || !node.leaving) return;
         momentLayer.removeChild(node.element);
@@ -1379,35 +1427,41 @@
       var time = Date.now();
       var stage = stageSize();
       var seen = {};
+      var arriving = [];
       list.forEach(function (moment) {
         if (moment.until <= time || displaced[moment.id] === moment.createdAt) return;
         seen[moment.id] = true;
         var node = momentNodes[moment.id];
-        var arriving = !node;
         /* Its kind is on it before it is drawn: what it holds is fitted as its kind is styled. */
         var kind = 'mr-moment mr-m-' + moment.kind;
-        if (arriving) {
+        if (node) {
+          window.clearTimeout(node.leaveTimer);
+          node.leaving = false;
+          node.element.className = kind;
+        } else {
           node = momentNodes[moment.id] = { element: document.createElement('div'), inner: document.createElement('div') };
+          node.order = ++momentCount;
+          /* It is laid out once unseen, or it would simply be there. */
           node.element.className = kind + ' mr-entering';
           node.element.appendChild(node.inner);
           momentLayer.appendChild(node.element);
+          arriving.push(node);
         }
         var key = JSON.stringify(moment) + layout.textColor + stage.width + 'x' + stage.height;
         if (node.key !== key) {
           node.key = key;
           node.moment = moment;
-          drawMoment(node);
+          node.stale = true;
         }
-        /* It is laid out once unseen, or it would simply be there. */
-        if (arriving) void node.element.offsetWidth;
-        window.clearTimeout(node.leaveTimer);
-        node.leaving = false;
-        node.element.className = kind;
       });
       Object.keys(momentNodes).forEach(function (id) {
         if (!seen[id]) dismissMoment(id);
       });
-      coverWidgets();
+      settleMoments();
+      arriving.forEach(function (node) {
+        void node.element.offsetWidth;
+        node.element.className = node.element.className.replace(' mr-entering', '');
+      });
       /* One that the Mirror no longer lists need not be remembered. */
       Object.keys(displaced).forEach(function (id) {
         if (!list.some(function (moment) { return moment.id === id && moment.createdAt === displaced[id]; })) delete displaced[id];
@@ -1416,13 +1470,19 @@
 
     function tickMoments() {
       var time = Date.now();
+      var left = false;
       Object.keys(momentNodes).forEach(function (id) {
         var node = momentNodes[id];
         if (node.leaving) return;
         /* The glass lets a moment go at its second; the Mirror forgets it by itself. */
-        if (node.moment.until <= time) dismissMoment(id);
-        else if (node.moment.kind === 'countdown') tickMoment(node, time);
+        if (node.moment.until <= time) {
+          dismissMoment(id);
+          left = true;
+        } else if (node.moment.kind === 'countdown') {
+          tickMoment(node, time);
+        }
       });
+      if (left) settleMoments();
     }
 
     function render(force) {
