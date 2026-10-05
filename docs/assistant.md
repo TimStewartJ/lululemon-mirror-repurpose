@@ -153,9 +153,10 @@ A plain answer, such as the time or a confirmation, gets none.
 
 A moment arrives and leaves with a fade, as a widget does, and stands on a
 slight dark backing so that it can be read over a film or a photo. It goes
-near the middle of the glass. Where there is free room it takes that; where
-there is not, it lies over the clock, the weather or whatever else is
-there, and those fade out until it leaves: a moment is there for a while,
+in the middle column of the glass, as near to a little above the middle as
+it can. Where there is free room it takes that; where there is not, it
+lies over as few widgets as it can, be it the clock or the weather, and
+those fade out until it leaves: a moment is there for a while,
 and what you asked for should not be the thing that is made small. Moments
 do not lie over one another, and keep clear of where the answer appears
 while they can; on a glass with no room left the oldest leave for the

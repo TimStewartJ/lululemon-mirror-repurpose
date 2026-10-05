@@ -1037,14 +1037,18 @@
 
     /* Width and height of each kind at each size, in thousandths of the
        glass. The glass is portrait, so a drawing that is square to the eye
-       is about half as many units high as wide. A list is as high as its rows. */
+       is about half as many units high as wide. */
     var MOMENT_BOXES = {
       text: { small: [460, 90], medium: [640, 140], large: [880, 220] },
       countdown: { small: [300, 100], medium: [440, 150], large: [640, 220] },
       chart: { small: [460, 150], medium: [640, 200], large: [880, 270] },
-      drawing: { small: [300, 169], medium: [460, 259], large: [700, 394] },
-      list: { small: [520, 36], medium: [700, 44], large: [900, 56] }
+      drawing: { small: [300, 169], medium: [460, 259], large: [700, 394] }
     };
+    /* A list has a width and a size of writing, as a share of the glass's
+       width, and is as high as its rows need: a row that is longer than the
+       list is wide goes on under itself. */
+    var LIST_SHAPES = { small: [520, 0.036], medium: [700, 0.044], large: [900, 0.054] };
+    var LIST_TALLEST = 760;
     var MOMENT_SIZES = ['large', 'medium', 'small'];
     var MOMENT_EDGE = 40;
     var MOMENT_GAP = 15;
@@ -1054,10 +1058,23 @@
     var MOMENT_CENTRES = { upper: 300, middle: 480, lower: 660 };
     var ANSWER_BANDS = { top: [0, 260], upper: [150, 410], middle: [370, 630], lower: [590, 850], bottom: [720, 1000] };
 
+    function listFont(size) {
+      return stageSize().width * LIST_SHAPES[size][1];
+    }
+
     function momentSize(moment, size) {
-      var box = MOMENT_BOXES[moment.kind][size];
-      if (moment.kind !== 'list') return { w: box[0], h: box[1] };
-      return { w: box[0], h: Math.min(600, Math.round((moment.rows.length + (moment.title ? 1.2 : 0)) * box[1] + 16)) };
+      if (moment.kind !== 'list') return { w: MOMENT_BOXES[moment.kind][size][0], h: MOMENT_BOXES[moment.kind][size][1] };
+      /* How many lines each row will take is reckoned from its length; the fitting puts right what this gets wrong. */
+      var stage = stageSize();
+      var font = listFont(size);
+      var labelled = moment.rows.some(function (row) { return row.label; });
+      var room = stage.width * (LIST_SHAPES[size][0] / 1000 - 0.052) - (labelled ? 2.2 * font : 0);
+      var ems = moment.title ? 1.3 : 0;
+      moment.rows.forEach(function (row) {
+        ems += Math.ceil(row.text.length * 0.52 * font / room) * 1.12 + 0.4;
+      });
+      var high = (ems * font + stage.width * 0.032 + 8) * 1000 / stage.height;
+      return { w: LIST_SHAPES[size][0], h: Math.min(LIST_TALLEST, Math.round(high)) };
     }
 
     /* What the widgets draw now, in thousandths of the glass: their words
@@ -1094,50 +1111,54 @@
     }
 
     /* Where a moment goes. A height that was named is taken as said.
-       Otherwise it goes as near as it can to where the eye rests, in the
-       first of these that there is: free room; room that widgets have, which
-       step back while it shows (a moment is there for a while, and what was
-       asked for should not be the thing that is made small); room at a
-       smaller size; room where the answer will lie over it for a while. Moments never lie over
-       one another. With no room at all there is no place, unless one is to
-       be had come what may. */
+       Otherwise it stands in the middle column, clear of the other moments
+       and of where the answer appears, over as few widgets as it can and
+       then as near as it can to where the eye rests. Widgets that it lies
+       over step back while it shows: a moment is there for a while, and
+       what was asked for should not be the thing that is made small. Only
+       with no such room is it drawn a size smaller, and only then put where
+       the answer will lie over it for a while. With no room at all there is
+       no place, unless one is to be had come what may. */
     function placeMoment(moment, comeWhatMay) {
-      var across = function (size, side) {
-        return side === 'left' ? MOMENT_EDGE : side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
+      var across = function (size) {
+        return moment.side === 'left' ? MOMENT_EDGE
+          : moment.side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
       };
       var asked = momentSize(moment, moment.size);
       var middle = function (height) {
         var y = height === 'top' ? MOMENT_EDGE : height === 'bottom' ? 1000 : Math.round(MOMENT_CENTRES[height] - asked.h / 2);
-        return { x: across(asked, moment.side), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - asked.h, y)), w: asked.w, h: asked.h };
+        return {
+          x: across(asked), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - asked.h, y)),
+          w: asked.w, h: asked.h, size: moment.size
+        };
       };
       if (moment.height) return middle(moment.height);
       var others = momentBoxes(moment.id);
+      var widgets = widgetBoxes();
       var assistant = runtime && runtime.assistant;
       var band = assistant && assistant.enabled && assistant.place && ANSWER_BANDS[assistant.place.height];
       var answer = band ? { x: 0, y: band[0], w: 1000, h: band[1] - band[0] } : null;
       var smaller = MOMENT_SIZES.slice(MOMENT_SIZES.indexOf(moment.size) + 1);
-      var columns = moment.side ? [moment.side] : ['center', 'left', 'right'];
       var ways = [
-        { sizes: [moment.size], clearOf: others.concat(widgetBoxes()) },
-        { sizes: [moment.size], clearOf: others },
-        { sizes: smaller, clearOf: others },
-        { sizes: [moment.size].concat(smaller), clearOf: others, underAnswer: true }
+        { sizes: [moment.size] },
+        { sizes: smaller },
+        { sizes: [moment.size].concat(smaller), underAnswer: true }
       ];
       for (var w = 0; w < ways.length; w++) {
-        var way = ways[w];
-        for (var s = 0; s < way.sizes.length; s++) {
-          var size = momentSize(moment, way.sizes[s]);
-          var off = function (y) { return Math.abs(y + size.h / 2 - MOMENT_EYE); };
-          var rows = [];
-          for (var y = MOMENT_EDGE; y + size.h <= 1000 - MOMENT_EDGE; y += 20) rows.push(y);
-          rows.sort(function (a, b) { return off(a) - off(b); });
-          for (var c = 0; c < columns.length; c++) {
-            for (var r = 0; r < rows.length; r++) {
-              var box = { x: across(size, columns[c]), y: rows[r], w: size.w, h: size.h };
-              if (!way.underAnswer && answer && touches(box, answer, 0)) continue;
-              if (!way.clearOf.some(function (other) { return touches(box, other, MOMENT_GAP); })) return box;
+        for (var s = 0; s < ways[w].sizes.length; s++) {
+          var size = momentSize(moment, ways[w].sizes[s]);
+          var best = null;
+          for (var y = MOMENT_EDGE; y + size.h <= 1000 - MOMENT_EDGE; y += 20) {
+            var box = { x: across(size), y: y, w: size.w, h: size.h, size: ways[w].sizes[s] };
+            if (!ways[w].underAnswer && answer && touches(box, answer, 0)) continue;
+            if (others.some(function (other) { return touches(box, other, MOMENT_GAP); })) continue;
+            var covers = widgets.filter(function (other) { return touches(box, other, MOMENT_GAP); }).length;
+            var off = Math.abs(y + size.h / 2 - MOMENT_EYE);
+            if (!best || covers < best.covers || (covers === best.covers && off < best.off)) {
+              best = { box: box, covers: covers, off: off };
             }
           }
+          if (best) return best.box;
         }
       }
       return comeWhatMay ? middle('middle') : null;
@@ -1251,7 +1272,7 @@
 
     /* What a moment holds, and the size its words start from: a share of
        its box, which they then shrink from until they fit. */
-    function momentBody(moment, box) {
+    function momentBody(moment, box, size) {
       switch (moment.kind) {
         case 'countdown':
           return {
@@ -1259,10 +1280,7 @@
             size: Math.min(box.height * 0.58, box.width * 0.27)
           };
         case 'list':
-          return {
-            html: rowsHtml(moment),
-            size: Math.min(box.height / (moment.rows.length + (moment.title ? 1.2 : 0)) * 0.58, box.width * 0.075)
-          };
+          return { html: rowsHtml(moment), size: listFont(size) };
         case 'chart':
           return { html: chartHtml(moment), size: Math.min(box.height * 0.1, box.width / moment.values.length * 0.3) };
         case 'drawing':
@@ -1284,7 +1302,8 @@
       var element = node.element;
       var stage = stageSize();
       /* It keeps its place while it shows, unless what decides its place has changed. */
-      var placed = [moment.kind, moment.size, moment.height, moment.side, moment.rows ? moment.rows.length : 0, Boolean(moment.title)].join('|');
+      var asked = momentSize(moment, moment.size);
+      var placed = [moment.kind, moment.size, moment.height, moment.side, asked.w, asked.h].join('|');
       if (node.placed !== placed) {
         node.placed = placed;
         node.box = roomFor(moment);
@@ -1295,7 +1314,7 @@
       element.style.width = (node.box.w / 10) + '%';
       element.style.height = (node.box.h / 10) + '%';
       element.style.color = moment.color || layout.textColor;
-      var body = momentBody(moment, box);
+      var body = momentBody(moment, box, node.box.size);
       node.done = false;
       node.inner.className = 'mr-m-inner' + (moment.motion && moment.motion !== 'none' ? ' mr-m-' + moment.motion : '');
       node.inner.innerHTML = (moment.title ? '<div class="mr-m-title">' + escapeHtml(moment.title) + '</div>' : '') + body.html;
@@ -1365,9 +1384,11 @@
         seen[moment.id] = true;
         var node = momentNodes[moment.id];
         var arriving = !node;
+        /* Its kind is on it before it is drawn: what it holds is fitted as its kind is styled. */
+        var kind = 'mr-moment mr-m-' + moment.kind;
         if (arriving) {
           node = momentNodes[moment.id] = { element: document.createElement('div'), inner: document.createElement('div') };
-          node.element.className = 'mr-moment mr-entering';
+          node.element.className = kind + ' mr-entering';
           node.element.appendChild(node.inner);
           momentLayer.appendChild(node.element);
         }
@@ -1381,7 +1402,7 @@
         if (arriving) void node.element.offsetWidth;
         window.clearTimeout(node.leaveTimer);
         node.leaving = false;
-        node.element.className = 'mr-moment mr-m-' + moment.kind;
+        node.element.className = kind;
       });
       Object.keys(momentNodes).forEach(function (id) {
         if (!seen[id]) dismissMoment(id);

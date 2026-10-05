@@ -1261,7 +1261,7 @@ MOMENTS_ON_GLASS = """JSON.stringify((function () {
   return {
     moments: all('.mr-moment:not(.mr-leaving)', function (element) {
       return {
-        kind: element.className.replace(/.*mr-m-/, ''),
+        kind: element.className.match(/mr-m-(\\w+)/)[1],
         text: element.textContent,
         box: box(element),
         shapes: element.querySelectorAll('svg > *').length,
@@ -1344,7 +1344,7 @@ def check_moments(ctx: Context) -> None:
                 raise CheckFailed(f"A widget stepped back though no moment lies over it: {describe(seen['steppedBack'])}")
             # Each stands on a slight dark backing, for the film or photo that may be behind it.
             backing = re.match(r"rgba\(0, 0, 0, (0\.\d+)\)", shown("text")["backing"])
-            if not backing or not 0.3 <= float(backing.group(1)) <= 0.8:
+            if not backing or not 0.3 <= float(backing.group(1)) <= 0.8:  # dark enough to read on, far from a black card
                 raise CheckFailed(f"A moment's backing is {shown('text')['backing']}, not a slight dark one")
             running = re.search(r"Tea(\d):(\d\d)", shown("countdown")["text"])
             if not running:
