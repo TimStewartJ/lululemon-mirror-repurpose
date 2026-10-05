@@ -191,11 +191,13 @@ gentle motion (`pulse`, `float`, `spin`).
 The model describes a moment; it does not program one. The mirror checks
 every field (`Moments.java`) and draws the kind from them, so nothing a
 model writes can run on the glass. Where a moment goes is decided by the
-glass, which knows where something is drawn: it takes the free room nearest
-to a little above the middle, clear of the widgets' words and pictures, of
-other moments and of where the answer appears, and a size smaller if that is
-what fits. On a glass with no room left the oldest moments leave for the
-newest, and the mirror then no longer lists them. A height or a side is passed on only when a person asked for one.
+glass, which knows what is drawn where. It goes as near as it can to a
+little above the middle: on free room if there is some, and otherwise over
+widgets, which fade out for as long as it lies over them and return when it
+leaves. Only then is it drawn a size smaller, or put where the answer
+appears. Moments never lie over one another: on a glass with no room left
+the oldest leave for the newest, and the mirror then no longer lists them.
+Each stands on a slight dark backing, for the film or photo behind it. A height or a side is passed on only when a person asked for one.
 
 A moment stays 45 seconds if nothing is said (a list 90, a chart 60), six
 hours at most, and a countdown until 20 seconds after it has run out.

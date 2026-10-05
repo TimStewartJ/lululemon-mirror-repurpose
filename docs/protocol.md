@@ -178,7 +178,7 @@ out. Moments are held in memory only.
 | `kind` | `text`, `countdown`, `list`, `chart` or `drawing`. |
 | `id` | Up to 32 small letters, digits and dashes; made up if left out. |
 | `seconds` | How long it stays: 5 to 21600, 45 if left out. |
-| `size`, `height`, `side` | `small`, `medium` (default) or `large`; and, to place it, one of the heights and sides that the assistant's answers have. Without a height the glass finds free room itself. |
+| `size`, `height`, `side` | `small`, `medium` (default) or `large`; and, to place it, one of the heights and sides that the assistant's answers have. Without a height the glass places it near the middle: on free room, or else over widgets, which fade out until it leaves. |
 | `title`, `color`, `motion` | A heading of up to 40 characters; `#rrggbb`; `none`, `pulse`, `float` or `spin`. |
 | `text` | For `text`: 1 to 280 characters on up to six lines. |
 | `endsAt` | For `countdown`: the instant it runs to, in epoch milliseconds, within six hours. Without `seconds` it stays until 20 seconds after that. |

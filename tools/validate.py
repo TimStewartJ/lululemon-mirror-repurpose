@@ -1267,13 +1267,18 @@ MOMENTS_ON_GLASS = """JSON.stringify((function () {
         shapes: element.querySelectorAll('svg > *').length,
         opacity: Number(getComputedStyle(element).opacity),
         fontSize: parseFloat(getComputedStyle(element).fontSize),
-        cutOff: element.firstChild.scrollHeight > element.clientHeight + 1 || element.firstChild.scrollWidth > element.clientWidth + 1,
+        backing: getComputedStyle(element).backgroundColor,
+        cutOff: element.firstChild.scrollHeight > element.firstChild.clientHeight + 1
+          || element.firstChild.scrollWidth > element.firstChild.clientWidth + 1
+          || [].some.call(element.firstChild.children, function (part) { return part.offsetWidth > element.firstChild.clientWidth + 1; }),
         bars: [].map.call(element.querySelectorAll('.mr-m-bar'), function (bar) { return Math.round(bar.getBoundingClientRect().height); }),
         dots: element.querySelectorAll('.mr-m-dot').length,
         rows: [].map.call(element.querySelectorAll('.mr-m-row'), function (row) { return Math.round(row.getBoundingClientRect().height); })
       };
     }),
-    drawn: all('.mr-widget:not(.mr-leaving) .mr-inner', box)
+    drawn: all('.mr-widget:not(.mr-leaving) .mr-inner', box),
+    steppedBack: all('.mr-widget.mr-covered', function (element) { return element.className.match(/mr-widget mr-(\\w+)/)[1]; }),
+    clock: Number(getComputedStyle(document.querySelector('.mr-widget.mr-clock')).opacity)
   };
 }()))"""
 
@@ -1308,7 +1313,8 @@ def check_moments(ctx: Context) -> None:
             api.expect(
                 "POST", "/api/v1/moments",
                 {
-                    "id": "art", "kind": "drawing", "title": "Drawn", "color": "#ff8fa3", "motion": "pulse",
+                    # Small, so that all three have room beside what the widgets draw.
+                    "id": "art", "kind": "drawing", "size": "small", "title": "Drawn", "color": "#ff8fa3", "motion": "pulse",
                     "shapes": [
                         {"shape": "circle", "x": 50, "y": 50, "r": 40},
                         {"shape": "line", "x1": 10, "y1": 90, "x2": 90, "y2": 90},
@@ -1328,11 +1334,18 @@ def check_moments(ctx: Context) -> None:
             seen = glass()
             if shown("drawing")["shapes"] != 5:
                 raise CheckFailed(f"The drawing has {shown('drawing')['shapes']} shapes on the glass, not the 5 sent")
-            # The glass found each a place: over nothing that a widget draws, and not over one another.
+            # With room to spare the glass found each a place over nothing that a widget draws, and not over
+            # one another; no widget had to step back.
             for index, moment in enumerate(seen["moments"]):
                 others = seen["drawn"] + [other["box"] for other in seen["moments"][:index]]
                 if any(boxes_share(moment["box"], other) for other in others):
                     raise CheckFailed(f"The {moment['kind']} at {moment['box']} lies over something drawn: {describe(seen)}")
+            if seen["steppedBack"] or seen["clock"] < 0.9:
+                raise CheckFailed(f"A widget stepped back though no moment lies over it: {describe(seen['steppedBack'])}")
+            # Each stands on a slight dark backing, for the film or photo that may be behind it.
+            backing = re.match(r"rgba\(0, 0, 0, (0\.\d+)\)", shown("text")["backing"])
+            if not backing or not 0.3 <= float(backing.group(1)) <= 0.8:
+                raise CheckFailed(f"A moment's backing is {shown('text')['backing']}, not a slight dark one")
             running = re.search(r"Tea(\d):(\d\d)", shown("countdown")["text"])
             if not running:
                 raise CheckFailed(f"The countdown shows {shown('countdown')['text']!r}, not the time left")
@@ -1350,7 +1363,10 @@ def check_moments(ctx: Context) -> None:
             before = shown("drawing")["box"]
             second = api.expect(
                 "POST", "/api/v1/moments",
-                {"id": "art", "kind": "drawing", "title": "Redrawn", "shapes": [{"shape": "circle", "x": 50, "y": 50, "r": 20}]},
+                {
+                    "id": "art", "kind": "drawing", "size": "small", "title": "Redrawn",
+                    "shapes": [{"shape": "circle", "x": 50, "y": 50, "r": 20}],
+                },
             )
             if not second["replaced"]:
                 raise CheckFailed(f"The second drawing did not take the first one's place: {describe(second)}")
@@ -1369,6 +1385,26 @@ def check_moments(ctx: Context) -> None:
             api.expect("DELETE", "/api/v1/moments/tea")
             api.expect("DELETE", "/api/v1/moments/tea", status=404)
             wait_for("the countdown to leave when it is taken down", lambda: shown("countdown") is None, timeout=15)
+            # A moment may lie over a widget, which steps back for as long as it does and then returns.
+            api.expect(
+                "POST", "/api/v1/moments",
+                {"id": "over", "kind": "text", "size": "large", "height": "top", "text": "Over the clock", "seconds": 60}, status=201,
+            )
+            wait_for(
+                "the clock to step back under the words put at the top",
+                lambda: "clock" in glass()["steppedBack"] and glass()["clock"] < 0.05,
+                timeout=15,
+            )
+            ctx.screenshot("moments-over-clock")
+            over = [moment for moment in glass()["moments"] if "Over the clock" in moment["text"]][0]
+            if over["cutOff"] or over["opacity"] < 0.9:
+                raise CheckFailed(f"The words asked for at the top are cut off or not shown: {describe(over)}")
+            api.expect("DELETE", "/api/v1/moments/over")
+            wait_for(
+                "the clock to return when the words have left",
+                lambda: glass()["steppedBack"] == [] and glass()["clock"] > 0.95,
+                timeout=15,
+            )
             # A glass with no room left lets the oldest go for the newest, and the Mirror then lists what shows.
             for number in range(1, 6):
                 api.expect(

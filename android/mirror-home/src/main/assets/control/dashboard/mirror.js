@@ -906,7 +906,8 @@
         (editing && widget.id === selectedId ? ' mr-selected' : '') +
         (node.entering ? ' mr-entering' : '') +
         (node.leaving ? ' mr-leaving' : '') +
-        (node.dissolving ? ' mr-dissolving' : '');
+        (node.dissolving ? ' mr-dissolving' : '') +
+        (node.covered ? ' mr-covered' : '');
       element.style.left = (widget.x / 10) + '%';
       element.style.top = (widget.y / 10) + '%';
       element.style.width = (widget.w / 10) + '%';
@@ -1047,6 +1048,8 @@
     var MOMENT_SIZES = ['large', 'medium', 'small'];
     var MOMENT_EDGE = 40;
     var MOMENT_GAP = 15;
+    /* Where the eye rests on a tall glass: a little above the middle. */
+    var MOMENT_EYE = 450;
     /* The middle of each named height, and the band the answer takes at each. */
     var MOMENT_CENTRES = { upper: 300, middle: 480, lower: 660 };
     var ANSWER_BANDS = { top: [0, 260], upper: [150, 410], middle: [370, 630], lower: [590, 850], bottom: [720, 1000] };
@@ -1057,10 +1060,9 @@
       return { w: box[0], h: Math.min(600, Math.round((moment.rows.length + (moment.title ? 1.2 : 0)) * box[1] + 16)) };
     }
 
-    /* What is drawn on the glass now, in thousandths of it: the words and
-       pictures of the widgets, not their boxes, which are often far larger,
-       and the other moments. */
-    function drawnBoxes(exceptMoment) {
+    /* What the widgets draw now, in thousandths of the glass: their words
+       and pictures, not their boxes, which are often far larger. */
+    function widgetBoxes() {
       var stage = container.getBoundingClientRect();
       var boxes = [];
       Object.keys(nodes).forEach(function (id) {
@@ -1069,24 +1071,36 @@
         var rect = (node.type === 'photo' ? node.element : node.inner).getBoundingClientRect();
         if (rect.width < 1 || rect.height < 1) return;
         boxes.push({
+          node: node,
           x: (rect.left - stage.left) * 1000 / stage.width,
           y: (rect.top - stage.top) * 1000 / stage.height,
           w: rect.width * 1000 / stage.width,
           h: rect.height * 1000 / stage.height
         });
       });
-      Object.keys(momentNodes).forEach(function (id) {
-        if (id !== exceptMoment && !momentNodes[id].leaving && momentNodes[id].box) boxes.push(momentNodes[id].box);
-      });
       return boxes;
     }
 
+    /* Where the moments that are showing lie, but for one. */
+    function momentBoxes(except) {
+      return Object.keys(momentNodes).filter(function (id) {
+        return id !== except && !momentNodes[id].leaving && momentNodes[id].box;
+      }).map(function (id) { return momentNodes[id].box; });
+    }
+
+    /* Whether two boxes come closer to one another than the gap. */
+    function touches(a, b, gap) {
+      return a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
+    }
+
     /* Where a moment goes. A height that was named is taken as said.
-       Otherwise it gets the free room nearest to a little above the middle,
-       where the eye rests on a tall glass: clear of what is drawn and of
-       where the answer appears, one size smaller if that is what fits, and
-       only then where the answer will lie over it for a while. With no
-       room at all there is no place, unless one is to be had come what may. */
+       Otherwise it goes as near as it can to where the eye rests, in the
+       first of these that there is: free room; room that widgets have, which
+       step back while it shows (a moment is there for a while, and what was
+       asked for should not be the thing that is made small); room at a
+       smaller size; room where the answer will lie over it for a while. Moments never lie over
+       one another. With no room at all there is no place, unless one is to
+       be had come what may. */
     function placeMoment(moment, comeWhatMay) {
       var across = function (size, side) {
         return side === 'left' ? MOMENT_EDGE : side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
@@ -1097,34 +1111,52 @@
         return { x: across(asked, moment.side), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - asked.h, y)), w: asked.w, h: asked.h };
       };
       if (moment.height) return middle(moment.height);
-      var drawn = drawnBoxes(moment.id);
+      var others = momentBoxes(moment.id);
       var assistant = runtime && runtime.assistant;
       var band = assistant && assistant.enabled && assistant.place && ANSWER_BANDS[assistant.place.height];
       var answer = band ? { x: 0, y: band[0], w: 1000, h: band[1] - band[0] } : null;
-      var sizes = MOMENT_SIZES.slice(MOMENT_SIZES.indexOf(moment.size));
+      var smaller = MOMENT_SIZES.slice(MOMENT_SIZES.indexOf(moment.size) + 1);
       var columns = moment.side ? [moment.side] : ['center', 'left', 'right'];
-      var free = function (box, keepAnswerClear) {
-        if (keepAnswerClear && answer && box.y < answer.y + answer.h && answer.y < box.y + box.h) return false;
-        return !drawn.some(function (other) {
-          return box.x < other.x + other.w + MOMENT_GAP && other.x < box.x + box.w + MOMENT_GAP
-            && box.y < other.y + other.h + MOMENT_GAP && other.y < box.y + box.h + MOMENT_GAP;
-        });
-      };
-      for (var pass = answer ? 0 : 1; pass < 2; pass++) {
-        for (var s = 0; s < sizes.length; s++) {
-          var size = momentSize(moment, sizes[s]);
+      var ways = [
+        { sizes: [moment.size], clearOf: others.concat(widgetBoxes()) },
+        { sizes: [moment.size], clearOf: others },
+        { sizes: smaller, clearOf: others },
+        { sizes: [moment.size].concat(smaller), clearOf: others, underAnswer: true }
+      ];
+      for (var w = 0; w < ways.length; w++) {
+        var way = ways[w];
+        for (var s = 0; s < way.sizes.length; s++) {
+          var size = momentSize(moment, way.sizes[s]);
+          var off = function (y) { return Math.abs(y + size.h / 2 - MOMENT_EYE); };
           var rows = [];
           for (var y = MOMENT_EDGE; y + size.h <= 1000 - MOMENT_EDGE; y += 20) rows.push(y);
-          rows.sort(function (a, b) { return Math.abs(a + size.h / 2 - 450) - Math.abs(b + size.h / 2 - 450); });
+          rows.sort(function (a, b) { return off(a) - off(b); });
           for (var c = 0; c < columns.length; c++) {
             for (var r = 0; r < rows.length; r++) {
               var box = { x: across(size, columns[c]), y: rows[r], w: size.w, h: size.h };
-              if (free(box, pass === 0)) return box;
+              if (!way.underAnswer && answer && touches(box, answer, 0)) continue;
+              if (!way.clearOf.some(function (other) { return touches(box, other, MOMENT_GAP); })) return box;
             }
           }
         }
       }
       return comeWhatMay ? middle('middle') : null;
+    }
+
+    /* A widget that a moment lies over steps back for as long as it does:
+       words over words cannot be read. It returns when the moment leaves. */
+    function coverWidgets() {
+      var shown = momentBoxes(null);
+      if (shown.length === 0) {
+        Object.keys(nodes).forEach(function (id) {
+          if (nodes[id].covered) setPhase(nodes[id], 'covered', false);
+        });
+        return;
+      }
+      widgetBoxes().forEach(function (box) {
+        var covered = shown.some(function (other) { return touches(box, other, 0); });
+        if (Boolean(box.node.covered) !== covered) setPhase(box.node, 'covered', covered);
+      });
     }
 
     /* A full glass: the newest moment is what someone has just asked for,
@@ -1280,8 +1312,15 @@
       var size = body.size;
       element.style.fontSize = size + 'px';
       if (moment.kind === 'countdown') tickMoment(node, Date.now());
-      for (var tries = 0; tries < 24
-          && (node.inner.scrollHeight > box.height + 1 || node.inner.scrollWidth > box.width + 1); tries++) {
+      /* What it holds has to fit inside its backing's margin. A line that is
+         centred sticks out to both sides, and only the right one counts as
+         scrolling, so each part's own width is looked at as well. */
+      var tooLarge = function () {
+        var inner = node.inner;
+        if (inner.scrollHeight > inner.clientHeight + 1 || inner.scrollWidth > inner.clientWidth + 1) return true;
+        return Array.prototype.some.call(inner.children, function (part) { return part.offsetWidth > inner.clientWidth + 1; });
+      };
+      for (var tries = 0; tries < 24 && tooLarge(); tries++) {
         size *= 0.9;
         element.style.fontSize = size + 'px';
       }
@@ -1308,6 +1347,7 @@
       if (node.leaving) return;
       node.leaving = true;
       node.element.className += ' mr-leaving';
+      coverWidgets();
       node.leaveTimer = window.setTimeout(function () {
         if (momentNodes[id] !== node || !node.leaving) return;
         momentLayer.removeChild(node.element);
@@ -1346,6 +1386,7 @@
       Object.keys(momentNodes).forEach(function (id) {
         if (!seen[id]) dismissMoment(id);
       });
+      coverWidgets();
       /* One that the Mirror no longer lists need not be remembered. */
       Object.keys(displaced).forEach(function (id) {
         if (!list.some(function (moment) { return moment.id === id && moment.createdAt === displaced[id]; })) delete displaced[id];

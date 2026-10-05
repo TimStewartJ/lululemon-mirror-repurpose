@@ -151,18 +151,21 @@ answer, and the Mirror takes it away again by itself:
 It may also show one unasked, where seeing serves better than a sentence.
 A plain answer, such as the time or a confirmation, gets none.
 
-A moment arrives and leaves with a fade, as a widget does. It goes where the
-glass is free: near the middle, clear of the clock and the other widgets, of
-other moments and of where the answer appears; when room is short it is
-drawn a size smaller, and on a glass with no room left the oldest moments
-leave for the newest. Ask for a place ("at the top", "on the left") to have
+A moment arrives and leaves with a fade, as a widget does, and stands on a
+slight dark backing so that it can be read over a film or a photo. It goes
+near the middle of the glass. Where there is free room it takes that; where
+there is not, it lies over the clock, the weather or whatever else is
+there, and those fade out until it leaves: a moment is there for a while,
+and what you asked for should not be the thing that is made small. Moments
+do not lie over one another, and keep clear of where the answer appears
+while they can; on a glass with no room left the oldest leave for the
+newest. Ask for a place ("at the top", "on the left") to have
 it there instead. It stays for about a minute unless told how long, six
 hours at most; a countdown stays until it has run out and twenty seconds
 more, with its digits pulsing at the end. The glass holds six at a time.
 
 Moments are not kept. If Mirror Home restarts, they are gone; the timer's
-reminder on the board is not. They lie over the film or photo behind them
-and carry a soft dark edge so that they can be read there.
+reminder on the board is not.
 
 ### Settings you can ask for
 
