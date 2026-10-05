@@ -210,6 +210,9 @@
     var momentLayer = document.createElement('div');
     momentLayer.className = 'mr-layer mr-moments';
     var momentNodes = {};
+    /* Moments that had to make room for a newer one, as id and the time each was made. */
+    var displaced = {};
+    var dropMoment = settings.dropMoment || function () {};
     container.appendChild(photoLayer);
     container.appendChild(shadeLayer);
     container.appendChild(widgetLayer);
@@ -1082,8 +1085,9 @@
        Otherwise it gets the free room nearest to a little above the middle,
        where the eye rests on a tall glass: clear of what is drawn and of
        where the answer appears, one size smaller if that is what fits, and
-       only then where the answer will lie over it for a while. */
-    function placeMoment(moment) {
+       only then where the answer will lie over it for a while. With no
+       room at all there is no place, unless one is to be had come what may. */
+    function placeMoment(moment, comeWhatMay) {
       var across = function (size, side) {
         return side === 'left' ? MOMENT_EDGE : side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
       };
@@ -1120,7 +1124,27 @@
           }
         }
       }
-      return middle('middle');
+      return comeWhatMay ? middle('middle') : null;
+    }
+
+    /* A full glass: the newest moment is what someone has just asked for,
+       so the oldest ones leave until it has room. The Mirror is told, so
+       that what it lists is what shows. */
+    function roomFor(moment) {
+      for (;;) {
+        var box = placeMoment(moment, false);
+        if (box) return box;
+        var oldest = null;
+        Object.keys(momentNodes).forEach(function (id) {
+          var node = momentNodes[id];
+          if (id === moment.id || node.leaving || !node.box) return;
+          if (!oldest || node.moment.createdAt < momentNodes[oldest].moment.createdAt) oldest = id;
+        });
+        if (!oldest) return placeMoment(moment, true);
+        displaced[oldest] = momentNodes[oldest].moment.createdAt;
+        dismissMoment(oldest);
+        dropMoment(oldest);
+      }
     }
 
     function countdownText(left) {
@@ -1231,7 +1255,7 @@
       var placed = [moment.kind, moment.size, moment.height, moment.side, moment.rows ? moment.rows.length : 0, Boolean(moment.title)].join('|');
       if (node.placed !== placed) {
         node.placed = placed;
-        node.box = placeMoment(moment);
+        node.box = roomFor(moment);
       }
       var box = { width: stage.width * node.box.w / 1000, height: stage.height * node.box.h / 1000 };
       element.style.left = (node.box.x / 10) + '%';
@@ -1297,7 +1321,7 @@
       var stage = stageSize();
       var seen = {};
       list.forEach(function (moment) {
-        if (moment.until <= time) return;
+        if (moment.until <= time || displaced[moment.id] === moment.createdAt) return;
         seen[moment.id] = true;
         var node = momentNodes[moment.id];
         var arriving = !node;
@@ -1321,6 +1345,10 @@
       });
       Object.keys(momentNodes).forEach(function (id) {
         if (!seen[id]) dismissMoment(id);
+      });
+      /* One that the Mirror no longer lists need not be remembered. */
+      Object.keys(displaced).forEach(function (id) {
+        if (!list.some(function (moment) { return moment.id === id && moment.createdAt === displaced[id]; })) delete displaced[id];
       });
     }
 

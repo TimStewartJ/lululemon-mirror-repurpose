@@ -3,7 +3,13 @@
   'use strict';
 
   var stage = document.getElementById('dashboard');
-  var renderer = window.MirrorRenderer.create(stage, { nativeVideo: true });
+  var renderer = window.MirrorRenderer.create(stage, {
+    nativeVideo: true,
+    /* A moment that made room for a newer one: the Mirror is told, so that it no longer lists it. */
+    dropMoment: function (id) {
+      fetch('/api/v1/moments/' + encodeURIComponent(id), { method: 'DELETE' }).then(null, function () {});
+    }
+  });
   var layout = null;
   var runtime = null;
   var notes = [];

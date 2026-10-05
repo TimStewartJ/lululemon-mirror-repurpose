@@ -1364,8 +1364,32 @@ def check_moments(ctx: Context) -> None:
             api.expect("DELETE", "/api/v1/moments/tea")
             api.expect("DELETE", "/api/v1/moments/tea", status=404)
             wait_for("the countdown to leave when it is taken down", lambda: shown("countdown") is None, timeout=15)
-            if api.expect("DELETE", "/api/v1/moments")["removed"] != 1:
-                raise CheckFailed("Clearing the glass did not remove the one moment left")
+            # A glass with no room left lets the oldest go for the newest, and the Mirror then lists what shows.
+            for number in range(1, 6):
+                api.expect(
+                    "POST", "/api/v1/moments",
+                    {"id": f"big-{number}", "kind": "text", "size": "large", "text": f"Number {number}", "seconds": 120},
+                    status=201,
+                )
+                time.sleep(1.0)
+
+            def words() -> str:
+                return " ".join(moment["text"] for moment in glass()["moments"])
+
+            wait_for("the newest of the large words to have arrived", lambda: "Number 5" in words(), timeout=20)
+            wait_for(
+                "the Mirror to list as many moments as the glass shows",
+                lambda: len(api.expect("GET", "/api/v1/moments")["moments"]) == len(glass()["moments"]),
+                timeout=20,
+            )
+            ctx.screenshot("moments-full")
+            full = glass()["moments"]
+            if any(boxes_share(moment["box"], other["box"]) for index, moment in enumerate(full) for other in full[:index]):
+                raise CheckFailed(f"On a full glass, moments lie over one another: {describe(full, 2000)}")
+            if "Number 1" in words() or "Redrawn" in words():
+                raise CheckFailed(f"The oldest moments did not make room for the newest: {describe(full, 2000)}")
+            if api.expect("DELETE", "/api/v1/moments")["removed"] != len(full):
+                raise CheckFailed("Clearing the glass did not remove the moments it showed")
             wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
     finally:
         api.call("DELETE", "/api/v1/moments")

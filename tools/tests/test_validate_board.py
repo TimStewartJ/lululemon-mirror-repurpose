@@ -332,5 +332,18 @@ class BoardChecksAreListedTest(unittest.TestCase):
         self.assertIn("board", [name for name, _, _, _ in validate.EXERCISE_CHECKS])
 
 
+class MomentsCheckTest(unittest.TestCase):
+    def test_the_suite_looks_at_moments_after_the_board(self):
+        names = [name for name, _, _, _ in validate.EMULATOR_CHECKS]
+        self.assertEqual("moments", names[names.index("board-glass") + 1])
+
+    def test_boxes_that_only_touch_do_not_lie_over_one_another(self):
+        # Each box is left, top, right, bottom, as the glass reports them.
+        self.assertTrue(validate.boxes_share([0, 0, 100, 100], [50, 50, 150, 150]))
+        self.assertTrue(validate.boxes_share([0, 0, 100, 100], [20, 20, 30, 30]))
+        self.assertFalse(validate.boxes_share([0, 0, 100, 100], [100, 0, 200, 100]))
+        self.assertFalse(validate.boxes_share([0, 0, 100, 100], [0, 101, 100, 200]))
+
+
 if __name__ == "__main__":
     unittest.main()

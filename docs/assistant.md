@@ -154,7 +154,8 @@ A plain answer, such as the time or a confirmation, gets none.
 A moment arrives and leaves with a fade, as a widget does. It goes where the
 glass is free: near the middle, clear of the clock and the other widgets, of
 other moments and of where the answer appears; when room is short it is
-drawn a size smaller. Ask for a place ("at the top", "on the left") to have
+drawn a size smaller, and on a glass with no room left the oldest moments
+leave for the newest. Ask for a place ("at the top", "on the left") to have
 it there instead. It stays for about a minute unless told how long, six
 hours at most; a countdown stays until it has run out and twenty seconds
 more, with its digits pulsing at the end. The glass holds six at a time.

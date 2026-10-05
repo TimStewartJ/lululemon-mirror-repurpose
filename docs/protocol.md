@@ -189,8 +189,11 @@ out. Moments are held in memory only.
 The answer to `POST` is `{moment, replaced, shown}`, 201 for a new moment
 and 200 for one that took another's place; `shown` is false while the
 display is dark. A moment that is refused answers 400 with `{error, field}`.
-A seventh moment takes the place of the oldest. `status.assistant` now also
-carries `place`, which is how the glass knows where the answer appears.
+A seventh moment takes the place of the oldest. When the glass has no room
+left for a new moment, the oldest ones leave until it has, and the glass
+tells the Mirror with `DELETE /api/v1/moments/{id}`, which loopback may call
+without a credential, so that the list is what shows. `status.assistant` now
+also carries `place`, which is how the glass knows where the answer appears.
 
 ### Board
 

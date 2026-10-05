@@ -155,6 +155,12 @@ public final class ControlServer extends NanoHTTPD {
                     && (isLoopback(session) || authorized(session))) {
                 return response(Response.Status.OK, moments.document(System.currentTimeMillis()));
             }
+            if (Method.DELETE.equals(session.getMethod())
+                    && uri.startsWith("/api/v1/moments/")
+                    && isLoopback(session)) {
+                // The glass says that a moment made room for a newer one.
+                return momentsReply(session, uri);
+            }
             if (Method.GET.equals(session.getMethod())
                     && "/api/v1/dashboard/ambient-video".equals(uri)) {
                 return response(
