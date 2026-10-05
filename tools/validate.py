@@ -1251,6 +1251,126 @@ def check_board_api(ctx: Context) -> None:
     require(ctx.api.expect("GET", BOARD)["counts"]["total"] == 0, "The board was not left empty")
 
 
+# What the glass shows of its moments: each one's kind, words and box, and the boxes of what the widgets draw.
+MOMENTS_ON_GLASS = """JSON.stringify((function () {
+  var box = function (element) {
+    var rect = element.getBoundingClientRect();
+    return [rect.left, rect.top, rect.right, rect.bottom].map(Math.round);
+  };
+  var all = function (selector, read) { return [].map.call(document.querySelectorAll(selector), read); };
+  return {
+    moments: all('.mr-moment:not(.mr-leaving)', function (element) {
+      return {
+        kind: element.className.replace(/.*mr-m-/, ''),
+        text: element.textContent,
+        box: box(element),
+        shapes: element.querySelectorAll('svg > *').length,
+        opacity: Number(getComputedStyle(element).opacity)
+      };
+    }),
+    drawn: all('.mr-widget:not(.mr-leaving) .mr-inner', box)
+  };
+}()))"""
+
+
+def boxes_share(first: list[int], second: list[int]) -> bool:
+    """Whether two boxes, each left, top, right, bottom, lie over one another."""
+    return first[0] < second[2] and second[0] < first[2] and first[1] < second[3] and second[1] < first[3]
+
+
+def check_moments(ctx: Context) -> None:
+    ctx.require_inspectable()
+    api = ctx.api
+    api.expect("DELETE", "/api/v1/moments")
+    try:
+        with ctx.page() as page:
+            def glass() -> dict:
+                return json.loads(page.evaluate(MOMENTS_ON_GLASS))
+
+            def shown(kind: str) -> dict | None:
+                found = [moment for moment in glass()["moments"] if moment["kind"] == kind and moment["opacity"] > 0.9]
+                return found[0] if found else None
+
+            # The Mirror's own clock says when a countdown ends; the computer's may differ.
+            now = api.expect("GET", "/api/v1/moments")["now"]
+            first = api.expect(
+                "POST", "/api/v1/moments",
+                {"id": "tea", "kind": "countdown", "title": "Tea", "endsAt": now + 95_000}, status=201,
+            )
+            if first["replaced"] or not first["shown"] or first["moment"]["until"] != now + 115_000:
+                raise CheckFailed(f"The countdown was not taken as sent: {describe(first)}")
+            api.expect("POST", "/api/v1/moments", {"kind": "text", "text": "Validation moment", "seconds": 8}, status=201)
+            api.expect(
+                "POST", "/api/v1/moments",
+                {
+                    "id": "art", "kind": "drawing", "title": "Drawn", "color": "#ff8fa3", "motion": "pulse",
+                    "shapes": [
+                        {"shape": "circle", "x": 50, "y": 50, "r": 40},
+                        {"shape": "line", "x1": 10, "y1": 90, "x2": 90, "y2": 90},
+                        {"shape": "rect", "x": 30, "y": 30, "w": 40, "h": 40, "round": 4},
+                        {"shape": "path", "d": "M50 30 L70 70 L30 70 Z", "fill": "#ffd9a0"},
+                        {"shape": "text", "x": 50, "y": 55, "text": "ok", "size": 9},
+                    ],
+                },
+                status=201,
+            )
+            wait_for(
+                "the three moments to have arrived on the glass",
+                lambda: all(shown(kind) for kind in ("countdown", "text", "drawing")),
+                timeout=30,
+            )
+            ctx.screenshot("moments")
+            seen = glass()
+            if shown("drawing")["shapes"] != 5:
+                raise CheckFailed(f"The drawing has {shown('drawing')['shapes']} shapes on the glass, not the 5 sent")
+            # The glass found each a place: over nothing that a widget draws, and not over one another.
+            for index, moment in enumerate(seen["moments"]):
+                others = seen["drawn"] + [other["box"] for other in seen["moments"][:index]]
+                if any(boxes_share(moment["box"], other) for other in others):
+                    raise CheckFailed(f"The {moment['kind']} at {moment['box']} lies over something drawn: {describe(seen)}")
+            running = re.search(r"Tea(\d):(\d\d)", shown("countdown")["text"])
+            if not running:
+                raise CheckFailed(f"The countdown shows {shown('countdown')['text']!r}, not the time left")
+            wait_for(
+                "the countdown to run on",
+                lambda: shown("countdown")["text"] != running.group(0),
+                timeout=10,
+            )
+            wait_for(
+                "the words to leave when their eight seconds are up",
+                lambda: all(moment["kind"] != "text" for moment in glass()["moments"]),
+                timeout=30,
+            )
+            # The same id takes the place of what is showing, where it stands.
+            before = shown("drawing")["box"]
+            second = api.expect(
+                "POST", "/api/v1/moments",
+                {"id": "art", "kind": "drawing", "title": "Redrawn", "shapes": [{"shape": "circle", "x": 50, "y": 50, "r": 20}]},
+            )
+            if not second["replaced"]:
+                raise CheckFailed(f"The second drawing did not take the first one's place: {describe(second)}")
+            wait_for("the drawing to change", lambda: "Redrawn" in (shown("drawing") or {"text": ""})["text"], timeout=15)
+            if shown("drawing")["box"] != before or shown("drawing")["shapes"] != 1:
+                raise CheckFailed(f"The redrawn drawing moved or kept its shapes: {describe(shown('drawing'))}, was at {before}")
+            # What could be more than a drawing is refused, with the field at fault.
+            refused = api.expect(
+                "POST", "/api/v1/moments",
+                {"kind": "drawing", "shapes": [{"shape": "path", "d": "M0 0\"/><script>alert(1)</script>"}]}, status=400,
+            )
+            if refused.get("field") != "shapes":
+                raise CheckFailed(f"The refusal does not name the shapes: {describe(refused)}")
+            if api.call("POST", "/api/v1/moments", {"kind": "text", "text": "No"}, token=None).status != 401:
+                raise CheckFailed("A moment was taken from a caller without a credential")
+            api.expect("DELETE", "/api/v1/moments/tea")
+            api.expect("DELETE", "/api/v1/moments/tea", status=404)
+            wait_for("the countdown to leave when it is taken down", lambda: shown("countdown") is None, timeout=15)
+            if api.expect("DELETE", "/api/v1/moments")["removed"] != 1:
+                raise CheckFailed("Clearing the glass did not remove the one moment left")
+            wait_for("the glass to be clear of moments", lambda: glass()["moments"] == [], timeout=15)
+    finally:
+        api.call("DELETE", "/api/v1/moments")
+
+
 def check_board_glass(ctx: Context) -> None:
     """More items than fit: every one of them has to come round, unclipped."""
     ctx.require_inspectable()
@@ -2181,7 +2301,11 @@ def check_assistant_off(ctx: Context) -> None:
         f"A Mirror's answers do not start low and in the middle, or cannot be moved: "
         f"{describe(state.get('place'))} of {describe(places)}",
     )
-    require(ctx.status()["assistant"] == {"enabled": False, "state": "off"}, "The status does not say that the assistant is off")
+    # The status also says where the answers stand: the glass keeps what it places by itself clear of them.
+    require(
+        ctx.status()["assistant"] == {"enabled": False, "state": "off", "place": FIRST_PLACE},
+        "The status does not say that the assistant is off",
+    )
     health = ctx.health()["assistant"]
     require(health["state"] == "off" and "recent" not in health, f"The health report says of the assistant: {describe(health)}")
     for path in ("/api/v1/assistant", "/api/v1/screenshot"):
@@ -3036,6 +3160,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("notes", "A note posted from the controls appears on the glass", check_notes, False),
     ("board-api", "A program with only the address can learn the board, post to it and clear it", check_board_api, False),
     ("board-glass", "A board with more than fits turns its pages until everything was shown", check_board_glass, False),
+    ("moments", "A countdown, words and a drawing appear where the glass is free, run, and leave when their time is up", check_moments, False),
     ("offline-fallback", "An unreachable web page falls back to the offline clock", check_offline_fallback, False),
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),

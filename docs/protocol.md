@@ -54,6 +54,10 @@ PUT  /api/v1/board/items/{id}
 PATCH /api/v1/board/items/{id}
 DELETE /api/v1/board/items/{id}
 DELETE /api/v1/board/items?...
+GET  /api/v1/moments
+POST /api/v1/moments
+DELETE /api/v1/moments
+DELETE /api/v1/moments/{id}
 GET  /api/v1/preferences
 PUT  /api/v1/preferences
 GET  /api/v1/weather
@@ -158,6 +162,35 @@ newest first and is readable from loopback so the glass can fetch it; the
 mutating routes require authentication and take `{text}`. `status` and
 `dashboard/runtime` carry `notesVersion`, a counter that changes with every
 mutation, so clients re-fetch notes only when something changed.
+
+### Moments
+
+A moment is something on the glass for a while: `GET /api/v1/moments` lists
+what is showing as `{moments, version, now}` and is readable from loopback so
+the glass can fetch it; `POST /api/v1/moments` puts one there, or replaces
+the one with its `id`; `DELETE /api/v1/moments/{id}` takes one down and
+`DELETE /api/v1/moments` all of them. `status` and `dashboard/runtime` carry
+`momentsVersion`, which changes with every moment that comes, goes or runs
+out. Moments are held in memory only.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `text`, `countdown`, `list`, `chart` or `drawing`. |
+| `id` | Up to 32 small letters, digits and dashes; made up if left out. |
+| `seconds` | How long it stays: 5 to 21600, 45 if left out. |
+| `size`, `height`, `side` | `small`, `medium` (default) or `large`; and, to place it, one of the heights and sides that the assistant's answers have. Without a height the glass finds free room itself. |
+| `title`, `color`, `motion` | A heading of up to 40 characters; `#rrggbb`; `none`, `pulse`, `float` or `spin`. |
+| `text` | For `text`: 1 to 280 characters on up to six lines. |
+| `endsAt` | For `countdown`: the instant it runs to, in epoch milliseconds, within six hours. Without `seconds` it stays until 20 seconds after that. |
+| `rows` | For `list`: 1 to 8 of `{label, text}`, a label of up to 14 characters and a text of up to 60. |
+| `values`, `chart` | For `chart`: 2 to 12 of `{label, value}`, and `bars` (default) or `line`. |
+| `shapes` | For `drawing`: 1 to 40 shapes on a square 100 units wide and high: `line` `{x1, y1, x2, y2}`, `circle` `{x, y, r}`, `rect` `{x, y, w, h, round}`, `path` `{d}` (SVG path commands and numbers only, up to 800 characters), `text` `{x, y, text, size}`. Each may have `stroke` and `fill` (`#rrggbb` or `none`) and `width`. |
+
+The answer to `POST` is `{moment, replaced, shown}`, 201 for a new moment
+and 200 for one that took another's place; `shown` is false while the
+display is dark. A moment that is refused answers 400 with `{error, field}`.
+A seventh moment takes the place of the oldest. `status.assistant` now also
+carries `place`, which is how the glass knows where the answer appears.
 
 ### Board
 

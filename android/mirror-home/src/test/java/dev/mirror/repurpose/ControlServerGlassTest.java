@@ -13,6 +13,8 @@ public class ControlServerGlassTest {
         assertTrue(ControlServer.changesGlass(Method.PUT, "/api/v1/dashboard/layout", 200));
         assertTrue(ControlServer.changesGlass(Method.POST, "/api/v1/board", 201));
         assertTrue(ControlServer.changesGlass(Method.DELETE, "/api/v1/board/abc", 200));
+        assertTrue(ControlServer.changesGlass(Method.POST, "/api/v1/moments", 201));
+        assertTrue(ControlServer.changesGlass(Method.DELETE, "/api/v1/moments/tea", 200));
         assertTrue(ControlServer.changesGlass(Method.PUT, "/api/v1/notes/main", 200));
         assertTrue(ControlServer.changesGlass(Method.PUT, "/api/v1/background-videos/active", 200));
         assertTrue(ControlServer.changesGlass(Method.PUT, "/api/v1/weather", 204));

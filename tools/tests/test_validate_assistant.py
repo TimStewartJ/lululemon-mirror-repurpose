@@ -241,7 +241,9 @@ class AssistingMirror(SpeakingMirror):
             return Reply(202, {"accepted": True}, {})
         reply = super().call(method, path, body, **options)
         if route == ("GET", "/api/v1/status"):
-            reply.body["assistant"] = {"enabled": self.assistant_on, "state": self.assistant_state()}
+            reply.body["assistant"] = {
+                "enabled": self.assistant_on, "state": self.assistant_state(), "place": dict(self.place),
+            }
         if route == ("GET", "/api/v1/health"):
             reply.body["assistant"] = self.assistant()
             if "tells-all-in-health" not in self.faults:

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Let the assistant put more on the glass than its line of words: moments. A
+  moment is something that shows for a while and then leaves by itself: a
+  countdown that runs ("set a timer for five minutes"), words written large
+  ("write happy birthday Sam really big"), a list ("show me how to make
+  pour-over coffee"), a small chart ("how does the temperature go over the
+  next hours?") or a line drawing ("draw me a heart"). The companion's model
+  has two tools for it, `show_moment` and `end_moment`, and describes a
+  moment rather than programming one: Mirror Home checks every field and
+  draws the five kinds itself (`GET`, `POST` and `DELETE /api/v1/moments`).
+  The glass decides where a moment goes, since it alone knows where
+  something is drawn: near the middle, clear of the widgets' words, of other
+  moments and of where the answer appears, and a size smaller when room is
+  short. A moment arrives and leaves with a fade, stays about a minute
+  unless told otherwise and six hours at most, and is replaced where it
+  stands when it is sent again under its id. A timer is both a countdown and
+  a reminder on the board, so that it is still announced if Mirror Home
+  restarts. The emulator suite has a check for it, `moments`.
 - Let the assistant change the Mirror's standing settings when asked, where
   it could only be asked about them. The companion's model has seven more
   tools: `set_clock` (12 or 24 hours, and the time zone: "use military

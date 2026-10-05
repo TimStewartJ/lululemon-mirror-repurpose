@@ -365,7 +365,11 @@ public final class AssistantManager {
 
     /** Where the assistant stands, in brief: for the status, which the controls ask for every few seconds. */
     public JSONObject summary() throws JSONException {
-        return new JSONObject().put("enabled", configStore.isAssistantEnabled()).put("state", state());
+        // Where the answers stand is told as well: the glass keeps what it places by itself clear of them.
+        return new JSONObject()
+                .put("enabled", configStore.isAssistantEnabled())
+                .put("state", state())
+                .put("place", configStore.getPanelPlace().toJson());
     }
 
     public synchronized JSONObject snapshot() throws JSONException {

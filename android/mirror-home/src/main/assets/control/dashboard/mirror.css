@@ -100,6 +100,121 @@
   transition: opacity 0.3s ease;
 }
 
+/* Moments: what is on the glass for a while, over the widgets. They arrive
+   and leave as a widget does. Words carry a soft dark edge, which a mirror
+   does not show and a bright film behind them needs. */
+.mr-moments { z-index: 3; pointer-events: none; }
+.mr-moment {
+  position: absolute;
+  line-height: 1.12;
+  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.6);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.mr-moment.mr-entering {
+  opacity: 0;
+  -webkit-transform: translateY(14px);
+  transform: translateY(14px);
+  transition: none;
+}
+.mr-moment.mr-leaving {
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+.mr-m-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  text-align: center;
+}
+.mr-m-title {
+  flex-shrink: 0;
+  margin-bottom: 0.45em;
+  font-size: 0.3em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+.mr-m-text { max-width: 100%; white-space: pre-line; }
+.mr-m-count { line-height: 1; white-space: nowrap; }
+.mr-m-track {
+  flex-shrink: 0;
+  width: 60%;
+  height: 2px;
+  margin-top: 0.14em;
+  background: rgba(255, 255, 255, 0.16);
+}
+.mr-m-track span {
+  display: block;
+  height: 100%;
+  margin: 0 auto;
+  background: currentColor;
+  transition: width 1s linear;
+}
+.mr-m-list .mr-m-title { font-size: 0.7em; }
+.mr-m-rows { max-width: 100%; text-align: left; }
+.mr-m-row { padding: 0.2em 0; white-space: nowrap; }
+.mr-m-label {
+  display: inline-block;
+  min-width: 1.6em;
+  margin-right: 0.7em;
+  font-size: 0.72em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.mr-m-chart .mr-m-title { font-size: 1em; }
+.mr-m-cells { display: flex; flex-shrink: 0; width: 100%; white-space: nowrap; }
+.mr-m-cells span { flex: 1 1 0; min-width: 0; padding: 0.35em 0; }
+.mr-m-cells:last-child span { opacity: 0.6; }
+.mr-m-plot, .mr-m-canvas {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+}
+.mr-m-plot svg, .mr-m-canvas svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.mr-m-bar { position: absolute; bottom: 0; background: currentColor; opacity: 0.85; }
+.mr-m-dot {
+  position: absolute;
+  width: 0.5em;
+  height: 0.5em;
+  margin: 0 0 -0.25em -0.25em;
+  border-radius: 50%;
+  background: currentColor;
+}
+.mr-m-drawing .mr-m-title { order: 2; margin: 0.45em 0 0; font-size: 1em; }
+.mr-m-pulse, .mr-m-done .mr-m-count {
+  -webkit-animation: mr-m-pulse 2.4s ease-in-out infinite;
+  animation: mr-m-pulse 2.4s ease-in-out infinite;
+}
+.mr-m-done .mr-m-count { -webkit-animation-duration: 1.2s; animation-duration: 1.2s; }
+.mr-m-float {
+  -webkit-animation: mr-m-float 5s ease-in-out infinite;
+  animation: mr-m-float 5s ease-in-out infinite;
+}
+.mr-m-spin {
+  -webkit-animation: mr-m-spin 14s linear infinite;
+  animation: mr-m-spin 14s linear infinite;
+}
+@-webkit-keyframes mr-m-pulse { 50% { opacity: 0.45; } }
+@keyframes mr-m-pulse { 50% { opacity: 0.45; } }
+@-webkit-keyframes mr-m-float { 50% { -webkit-transform: translateY(-3%); } }
+@keyframes mr-m-float { 50% { transform: translateY(-3%); } }
+@-webkit-keyframes mr-m-spin { to { -webkit-transform: rotate(360deg); } }
+@keyframes mr-m-spin { to { transform: rotate(360deg); } }
+
 .mr-align-start { align-items: flex-start; text-align: left; }
 .mr-align-center { align-items: center; text-align: center; }
 .mr-align-end { align-items: flex-end; text-align: right; }

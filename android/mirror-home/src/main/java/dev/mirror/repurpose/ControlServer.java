@@ -38,6 +38,7 @@ public final class ControlServer extends NanoHTTPD {
     private final ConfigStore configStore;
     private final AutomationManager automation;
     private final BoardStore board;
+    private final Moments moments = Moments.getInstance();
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
     private final NoteStore notes;
@@ -91,6 +92,7 @@ public final class ControlServer extends NanoHTTPD {
         // Not the parts of a film on their way in: there are hundreds, and none of them shows.
         return (uri.startsWith("/api/v1/dashboard/")
                 || uri.startsWith("/api/v1/board")
+                || uri.startsWith("/api/v1/moments")
                 || uri.startsWith("/api/v1/notes")
                 || uri.startsWith("/api/v1/weather")
                 || uri.startsWith("/api/v1/background-videos"))
@@ -149,6 +151,11 @@ public final class ControlServer extends NanoHTTPD {
                 return boardReply(session, uri);
             }
             if (Method.GET.equals(session.getMethod())
+                    && "/api/v1/moments".equals(uri)
+                    && (isLoopback(session) || authorized(session))) {
+                return response(Response.Status.OK, moments.document(System.currentTimeMillis()));
+            }
+            if (Method.GET.equals(session.getMethod())
                     && "/api/v1/dashboard/ambient-video".equals(uri)) {
                 return response(
                         Response.Status.OK,
@@ -192,6 +199,9 @@ public final class ControlServer extends NanoHTTPD {
             }
             if (!authorized(session)) {
                 return error(Response.Status.UNAUTHORIZED, "Authentication required");
+            }
+            if ("/api/v1/moments".equals(uri) || uri.startsWith("/api/v1/moments/")) {
+                return momentsReply(session, uri);
             }
             if (Method.POST.equals(session.getMethod())
                     && "/api/v1/background-videos/bootstrap/confirm".equals(uri)) {
@@ -567,7 +577,43 @@ public final class ControlServer extends NanoHTTPD {
         result.put("weather", weather.snapshot(false));
         result.put("notesVersion", notes.version());
         result.put("boardVersion", board.version());
+        result.put("momentsVersion", moments.version(now));
         return result;
+    }
+
+    /** What is on the glass for a while: see {@link Moments}. */
+    private Response momentsReply(IHTTPSession session, String uri)
+            throws IOException, ResponseException, JSONException {
+        long now = System.currentTimeMillis();
+        String id = uri.length() > "/api/v1/moments/".length() ? uri.substring("/api/v1/moments/".length()) : null;
+        if (Method.POST.equals(session.getMethod()) && id == null) {
+            try {
+                JSONObject body = readJson(session);
+                boolean replaced = moments.shows(body.optString("id", ""), now);
+                JSONObject moment = moments.put(body, now);
+                // Whoever put it there learns whether it took another's place, and whether anyone can see it.
+                return response(
+                        replaced ? Response.Status.OK : Response.Status.CREATED,
+                        new JSONObject()
+                                .put("moment", moment)
+                                .put("replaced", replaced)
+                                .put("shown", !automation.isSleeping()));
+            } catch (Moments.Refusal refusal) {
+                return response(
+                        Response.Status.BAD_REQUEST,
+                        new JSONObject().put("error", refusal.getMessage()).put("field", refusal.field));
+            }
+        }
+        if (Method.DELETE.equals(session.getMethod())) {
+            if (id == null) {
+                return response(Response.Status.OK, new JSONObject().put("removed", moments.clear()));
+            }
+            boolean removed = moments.remove(id, now);
+            return response(
+                    removed ? Response.Status.OK : Response.Status.NOT_FOUND,
+                    new JSONObject().put("removed", removed ? 1 : 0));
+        }
+        return error(Response.Status.METHOD_NOT_ALLOWED, "Moments take GET, POST and DELETE");
     }
 
     private JSONObject bootstrap() throws JSONException {

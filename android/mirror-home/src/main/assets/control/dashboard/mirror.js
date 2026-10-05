@@ -206,9 +206,14 @@
     shadeLayer.className = 'mr-layer mr-shade';
     var widgetLayer = document.createElement('div');
     widgetLayer.className = 'mr-layer mr-widgets';
+    /* Moments lie over the widgets: what is on the glass for a while. */
+    var momentLayer = document.createElement('div');
+    momentLayer.className = 'mr-layer mr-moments';
+    var momentNodes = {};
     container.appendChild(photoLayer);
     container.appendChild(shadeLayer);
     container.appendChild(widgetLayer);
+    container.appendChild(momentLayer);
 
     function stageSize() {
       return { width: container.clientWidth || 1, height: container.clientHeight || 1 };
@@ -1022,6 +1027,314 @@
       }
     }
 
+    /* Moments. A moment is described, never programmed: the Mirror checks
+       what one may hold (Moments.java), and every word of it is escaped
+       here. Each of the five kinds is drawn from its fields. */
+
+    /* Width and height of each kind at each size, in thousandths of the
+       glass. The glass is portrait, so a drawing that is square to the eye
+       is about half as many units high as wide. A list is as high as its rows. */
+    var MOMENT_BOXES = {
+      text: { small: [460, 90], medium: [640, 140], large: [880, 220] },
+      countdown: { small: [300, 100], medium: [440, 150], large: [640, 220] },
+      chart: { small: [460, 150], medium: [640, 200], large: [880, 270] },
+      drawing: { small: [300, 169], medium: [460, 259], large: [700, 394] },
+      list: { small: [460, 34], medium: [580, 42], large: [760, 54] }
+    };
+    var MOMENT_SIZES = ['large', 'medium', 'small'];
+    var MOMENT_EDGE = 40;
+    var MOMENT_GAP = 15;
+    /* The middle of each named height, and the band the answer takes at each. */
+    var MOMENT_CENTRES = { upper: 300, middle: 480, lower: 660 };
+    var ANSWER_BANDS = { top: [0, 260], upper: [150, 410], middle: [370, 630], lower: [590, 850], bottom: [720, 1000] };
+
+    function momentSize(moment, size) {
+      var box = MOMENT_BOXES[moment.kind][size];
+      if (moment.kind !== 'list') return { w: box[0], h: box[1] };
+      return { w: box[0], h: Math.min(600, Math.round((moment.rows.length + (moment.title ? 1.2 : 0)) * box[1] + 16)) };
+    }
+
+    /* What is drawn on the glass now, in thousandths of it: the words and
+       pictures of the widgets, not their boxes, which are often far larger,
+       and the other moments. */
+    function drawnBoxes(exceptMoment) {
+      var stage = container.getBoundingClientRect();
+      var boxes = [];
+      Object.keys(nodes).forEach(function (id) {
+        var node = nodes[id];
+        if (node.leaving) return;
+        var rect = (node.type === 'photo' ? node.element : node.inner).getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return;
+        boxes.push({
+          x: (rect.left - stage.left) * 1000 / stage.width,
+          y: (rect.top - stage.top) * 1000 / stage.height,
+          w: rect.width * 1000 / stage.width,
+          h: rect.height * 1000 / stage.height
+        });
+      });
+      Object.keys(momentNodes).forEach(function (id) {
+        if (id !== exceptMoment && !momentNodes[id].leaving && momentNodes[id].box) boxes.push(momentNodes[id].box);
+      });
+      return boxes;
+    }
+
+    /* Where a moment goes. A height that was named is taken as said.
+       Otherwise it gets the free room nearest to a little above the middle,
+       where the eye rests on a tall glass: clear of what is drawn and of
+       where the answer appears, one size smaller if that is what fits, and
+       only then where the answer will lie over it for a while. */
+    function placeMoment(moment) {
+      var across = function (size, side) {
+        return side === 'left' ? MOMENT_EDGE : side === 'right' ? 1000 - MOMENT_EDGE - size.w : Math.round((1000 - size.w) / 2);
+      };
+      var asked = momentSize(moment, moment.size);
+      var middle = function (height) {
+        var y = height === 'top' ? MOMENT_EDGE : height === 'bottom' ? 1000 : Math.round(MOMENT_CENTRES[height] - asked.h / 2);
+        return { x: across(asked, moment.side), y: Math.max(MOMENT_EDGE, Math.min(1000 - MOMENT_EDGE - asked.h, y)), w: asked.w, h: asked.h };
+      };
+      if (moment.height) return middle(moment.height);
+      var drawn = drawnBoxes(moment.id);
+      var assistant = runtime && runtime.assistant;
+      var band = assistant && assistant.enabled && assistant.place && ANSWER_BANDS[assistant.place.height];
+      var answer = band ? { x: 0, y: band[0], w: 1000, h: band[1] - band[0] } : null;
+      var sizes = MOMENT_SIZES.slice(MOMENT_SIZES.indexOf(moment.size));
+      var columns = moment.side ? [moment.side] : ['center', 'left', 'right'];
+      var free = function (box, keepAnswerClear) {
+        if (keepAnswerClear && answer && box.y < answer.y + answer.h && answer.y < box.y + box.h) return false;
+        return !drawn.some(function (other) {
+          return box.x < other.x + other.w + MOMENT_GAP && other.x < box.x + box.w + MOMENT_GAP
+            && box.y < other.y + other.h + MOMENT_GAP && other.y < box.y + box.h + MOMENT_GAP;
+        });
+      };
+      for (var pass = answer ? 0 : 1; pass < 2; pass++) {
+        for (var s = 0; s < sizes.length; s++) {
+          var size = momentSize(moment, sizes[s]);
+          var rows = [];
+          for (var y = MOMENT_EDGE; y + size.h <= 1000 - MOMENT_EDGE; y += 20) rows.push(y);
+          rows.sort(function (a, b) { return Math.abs(a + size.h / 2 - 450) - Math.abs(b + size.h / 2 - 450); });
+          for (var c = 0; c < columns.length; c++) {
+            for (var r = 0; r < rows.length; r++) {
+              var box = { x: across(size, columns[c]), y: rows[r], w: size.w, h: size.h };
+              if (free(box, pass === 0)) return box;
+            }
+          }
+        }
+      }
+      return middle('middle');
+    }
+
+    function countdownText(left) {
+      var seconds = Math.max(0, Math.ceil(left / 1000));
+      var hours = Math.floor(seconds / 3600);
+      var minutes = Math.floor(seconds % 3600 / 60);
+      return (hours ? hours + ':' + pad(minutes) : String(minutes)) + ':' + pad(seconds % 60);
+    }
+
+    function rowsHtml(moment) {
+      return '<div class="mr-m-rows">' + moment.rows.map(function (row) {
+        return '<div class="mr-m-row">' +
+          (row.label ? '<span class="mr-m-label">' + escapeHtml(row.label) + '</span>' : '') +
+          '<span>' + escapeHtml(row.text) + '</span></div>';
+      }).join('') + '</div>';
+    }
+
+    function chartHtml(moment) {
+      var values = moment.values.map(function (entry) { return Number(entry.value); });
+      var high = Math.max.apply(null, values);
+      var low = Math.min.apply(null, values);
+      /* The bars stand on zero where their difference still shows; where it
+         would not, as with a day's temperatures, on a floor a little under the least. */
+      var floor = low >= 0 && low <= high * 0.5 ? 0 : low - ((high - low) || 1) * 0.25;
+      var span = (high - floor) || 1;
+      var line = moment.chart === 'line';
+      var step = 100 / values.length;
+      var cells = function (name) {
+        return '<div class="mr-m-cells">' + moment.values.map(function (entry) {
+          return '<span>' + escapeHtml(name === 'value' ? String(Math.round(entry.value * 10) / 10) : entry.label) + '</span>';
+        }).join('') + '</div>';
+      };
+      var points = [];
+      var marks = values.map(function (value, index) {
+        var share = (value - floor) / span * 100;
+        var middle = (index + 0.5) * step;
+        points.push(middle.toFixed(2) + ',' + (100 - share).toFixed(2));
+        /* Where a mark stands: from the left, from the bottom, and for a bar how wide and how high. */
+        return line
+          ? '<span class="mr-m-dot" data-place="' + middle.toFixed(2) + ' ' + share.toFixed(2) + '"></span>'
+          : '<span class="mr-m-bar" data-place="' + (middle - step * 0.3).toFixed(2) + ' 0 ' + (step * 0.6).toFixed(2) +
+            ' ' + share.toFixed(2) + '"></span>';
+      }).join('');
+      var path = line
+        ? '<svg viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="' + points.join(' ') +
+          '" fill="none" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>'
+        : '';
+      return cells('value') + '<div class="mr-m-plot">' + path + marks + '</div>' + cells('label');
+    }
+
+    function shapeHtml(shape) {
+      var words = shape.shape === 'text';
+      var number = function (name) { return String(Number(shape[name]) || 0); };
+      var paint = ' stroke="' + escapeHtml(shape.stroke || (words ? 'none' : 'currentColor')) +
+        '" fill="' + escapeHtml(shape.fill || (words ? 'currentColor' : 'none')) +
+        '" stroke-width="' + (Number(shape.width) || 1.2) + '"';
+      switch (shape.shape) {
+        case 'line':
+          return '<line x1="' + number('x1') + '" y1="' + number('y1') + '" x2="' + number('x2') + '" y2="' + number('y2') + '"' + paint + '/>';
+        case 'circle':
+          return '<circle cx="' + number('x') + '" cy="' + number('y') + '" r="' + number('r') + '"' + paint + '/>';
+        case 'rect':
+          return '<rect x="' + number('x') + '" y="' + number('y') + '" width="' + number('w') + '" height="' + number('h') +
+            '" rx="' + number('round') + '" ry="' + number('round') + '"' + paint + '/>';
+        case 'path':
+          return '<path d="' + escapeHtml(shape.d) + '"' + paint + '/>';
+        default:
+          return '<text x="' + number('x') + '" y="' + number('y') + '" font-size="' + number('size') +
+            '" text-anchor="middle"' + paint + '>' + escapeHtml(shape.text) + '</text>';
+      }
+    }
+
+    /* What a moment holds, and the size its words start from: a share of
+       its box, which they then shrink from until they fit. */
+    function momentBody(moment, box) {
+      switch (moment.kind) {
+        case 'countdown':
+          return {
+            html: '<div class="mr-m-count mr-thin"></div><div class="mr-m-track"><span></span></div>',
+            size: Math.min(box.height * 0.58, box.width * 0.27)
+          };
+        case 'list':
+          return {
+            html: rowsHtml(moment),
+            size: Math.min(box.height / (moment.rows.length + (moment.title ? 1.2 : 0)) * 0.58, box.width * 0.075)
+          };
+        case 'chart':
+          return { html: chartHtml(moment), size: Math.min(box.height * 0.1, box.width / moment.values.length * 0.3) };
+        case 'drawing':
+          return {
+            html: '<div class="mr-m-canvas"><svg viewBox="0 0 100 100" stroke-linecap="round" stroke-linejoin="round">' +
+              moment.shapes.map(shapeHtml).join('') + '</svg></div>',
+            size: box.height * 0.09
+          };
+        default:
+          return {
+            html: '<div class="mr-m-text">' + escapeHtml(moment.text) + '</div>',
+            size: Math.min(box.height * 0.6, box.width * 0.22)
+          };
+      }
+    }
+
+    function drawMoment(node) {
+      var moment = node.moment;
+      var element = node.element;
+      var stage = stageSize();
+      /* It keeps its place while it shows, unless what decides its place has changed. */
+      var placed = [moment.kind, moment.size, moment.height, moment.side, moment.rows ? moment.rows.length : 0, Boolean(moment.title)].join('|');
+      if (node.placed !== placed) {
+        node.placed = placed;
+        node.box = placeMoment(moment);
+      }
+      var box = { width: stage.width * node.box.w / 1000, height: stage.height * node.box.h / 1000 };
+      element.style.left = (node.box.x / 10) + '%';
+      element.style.top = (node.box.y / 10) + '%';
+      element.style.width = (node.box.w / 10) + '%';
+      element.style.height = (node.box.h / 10) + '%';
+      element.style.color = moment.color || layout.textColor;
+      var body = momentBody(moment, box);
+      node.done = false;
+      node.inner.className = 'mr-m-inner' + (moment.motion && moment.motion !== 'none' ? ' mr-m-' + moment.motion : '');
+      node.inner.innerHTML = (moment.title ? '<div class="mr-m-title">' + escapeHtml(moment.title) + '</div>' : '') + body.html;
+      /* The page takes no style that is written into markup, so a chart's marks are placed here. */
+      Array.prototype.forEach.call(node.inner.querySelectorAll('[data-place]'), function (mark) {
+        var place = mark.getAttribute('data-place').split(' ');
+        mark.style.left = place[0] + '%';
+        mark.style.bottom = place[1] + '%';
+        if (place.length > 2) {
+          mark.style.width = place[2] + '%';
+          mark.style.height = place[3] + '%';
+        }
+      });
+      var size = body.size;
+      element.style.fontSize = size + 'px';
+      if (moment.kind === 'countdown') tickMoment(node, Date.now());
+      for (var tries = 0; tries < 24
+          && (node.inner.scrollHeight > box.height + 1 || node.inner.scrollWidth > box.width + 1); tries++) {
+        size *= 0.9;
+        element.style.fontSize = size + 'px';
+      }
+    }
+
+    /* A countdown shows what is left, and a line under it that shortens. */
+    function tickMoment(node, time) {
+      var moment = node.moment;
+      var left = moment.endsAt - time;
+      var digits = node.inner.querySelector('.mr-m-count');
+      var text = countdownText(left);
+      if (digits.textContent !== text) digits.textContent = text;
+      var share = Math.max(0, Math.min(1, left / Math.max(1, moment.endsAt - moment.createdAt)));
+      node.inner.querySelector('.mr-m-track span').style.width = (share * 100).toFixed(2) + '%';
+      if (left <= 0 && !node.done) {
+        node.done = true;
+        node.inner.className += ' mr-m-done';
+      }
+    }
+
+    /* A moment that is no longer wanted, or whose time is up, fades out and is then taken away. */
+    function dismissMoment(id) {
+      var node = momentNodes[id];
+      if (node.leaving) return;
+      node.leaving = true;
+      node.element.className += ' mr-leaving';
+      node.leaveTimer = window.setTimeout(function () {
+        if (momentNodes[id] !== node || !node.leaving) return;
+        momentLayer.removeChild(node.element);
+        delete momentNodes[id];
+      }, LEAVE_MS);
+    }
+
+    function renderMoments() {
+      var list = (!editing && runtime && runtime.moments) || [];
+      var time = Date.now();
+      var stage = stageSize();
+      var seen = {};
+      list.forEach(function (moment) {
+        if (moment.until <= time) return;
+        seen[moment.id] = true;
+        var node = momentNodes[moment.id];
+        var arriving = !node;
+        if (arriving) {
+          node = momentNodes[moment.id] = { element: document.createElement('div'), inner: document.createElement('div') };
+          node.element.className = 'mr-moment mr-entering';
+          node.element.appendChild(node.inner);
+          momentLayer.appendChild(node.element);
+        }
+        var key = JSON.stringify(moment) + layout.textColor + stage.width + 'x' + stage.height;
+        if (node.key !== key) {
+          node.key = key;
+          node.moment = moment;
+          drawMoment(node);
+        }
+        /* It is laid out once unseen, or it would simply be there. */
+        if (arriving) void node.element.offsetWidth;
+        window.clearTimeout(node.leaveTimer);
+        node.leaving = false;
+        node.element.className = 'mr-moment mr-m-' + moment.kind;
+      });
+      Object.keys(momentNodes).forEach(function (id) {
+        if (!seen[id]) dismissMoment(id);
+      });
+    }
+
+    function tickMoments() {
+      var time = Date.now();
+      Object.keys(momentNodes).forEach(function (id) {
+        var node = momentNodes[id];
+        if (node.leaving) return;
+        /* The glass lets a moment go at its second; the Mirror forgets it by itself. */
+        if (node.moment.until <= time) dismissMoment(id);
+        else if (node.moment.kind === 'countdown') tickMoment(node, time);
+      });
+    }
+
     function render(force) {
       if (!layout) return;
       var local = localDate(now, runtime);
@@ -1069,12 +1382,15 @@
           delete nodes[id];
         }
       });
+      /* After the widgets, so that a new moment finds what is drawn where it is. */
+      renderMoments();
       drawn = true;
     }
 
     function tick(date) {
       now = date || new Date();
       if (!layout) return;
+      tickMoments();
       var local = localDate(now, runtime);
       layout.widgets.forEach(function (widget) {
         /* The board keeps time too: its pages turn and its countdowns run. */

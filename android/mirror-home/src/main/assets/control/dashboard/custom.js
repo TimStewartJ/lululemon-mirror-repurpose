@@ -13,6 +13,9 @@
   var boardVersion = null;
   var boardFetchedAt = 0;
   var boardPending = false;
+  var moments = [];
+  var momentsVersion = null;
+  var momentsPending = false;
   /* The Mirror orders the board by the clock, so ask again now and then
      even when nothing was posted. */
   var BOARD_REFRESH_MS = 60000;
@@ -54,8 +57,22 @@
     if (value) {
       value.notes = notes;
       value.board = board;
+      value.moments = moments;
     }
     return value;
+  }
+
+  /* What is on the glass for a while. A Mirror Home without moments has no
+     version to tell, and is never asked. */
+  function refreshMoments(version) {
+    if (momentsPending) return Promise.resolve();
+    momentsPending = true;
+    return fetchJson('/api/v1/moments').then(function (result) {
+      momentsPending = false;
+      moments = result.moments || [];
+      momentsVersion = typeof result.version === 'number' ? result.version : version;
+      renderer.update(layout, withNotes(runtime));
+    }).then(null, function () { momentsPending = false; });
   }
 
   function refreshBoard(version) {
@@ -91,6 +108,9 @@
       if (next.notesVersion !== notesVersion) pending.push(refreshNotes(next.notesVersion));
       if (next.boardVersion !== boardVersion || Date.now() - boardFetchedAt >= BOARD_REFRESH_MS) {
         pending.push(refreshBoard(next.boardVersion));
+      }
+      if (typeof next.momentsVersion === 'number' && next.momentsVersion !== momentsVersion) {
+        refreshMoments(next.momentsVersion);
       }
       return Promise.all(pending).then(reveal);
     });
