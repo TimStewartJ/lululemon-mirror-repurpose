@@ -9,6 +9,7 @@ import { defaultAuthPath, readableByOthers } from "./config.js";
 import { createHabits } from "./habits.js";
 import { createHealth } from "./health.js";
 import { createLog, describeError } from "./log.js";
+import { createMcp, serveLines } from "./mcp.js";
 import { createMemory } from "./memory.js";
 import { createMirror } from "./mirror.js";
 import { createProactive } from "./proactive.js";
@@ -22,14 +23,22 @@ import { createTools } from "./tools.js";
  * Puts the parts together and runs the companion until it is told to stop.
  * Tests pass their own brain, speech-to-text, clock or log in `parts`.
  *
+ * With `toolsOnly` it serves the mirror's tools to programs on the network and nothing else: no model is
+ * started, no speech-to-text, and it does nothing unasked.
+ *
  * @param {import("./config.js").Config} config
  * @param {Object} [parts]
+ * @param {boolean} [parts.toolsOnly]
  * @returns {Promise<{ server: import("node:http").Server, port: number, stop: () => Promise<void>, proactive: object, habits: import("./habits.js").Habits }>}
  */
 export async function serve(config, parts = {}) {
   const clock = parts.clock ?? systemClock;
-  const log = parts.log ?? createLog({ secrets: [config.secret, config.mirror.token] });
-  const version = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+  const log = parts.log ?? createLog({ secrets: [config.secret, config.mirror.token, config.mcp.key] });
+  const version = companionVersion();
+  const toolsOnly = parts.toolsOnly === true;
+  if (toolsOnly && !config.mcp.key) {
+    throw new Error("To serve the tools only, programs need a key to come with. Make one with: node src/cli.js mcp-key");
+  }
 
   fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
   if (readableByOthers(config.path)) {
@@ -71,8 +80,10 @@ export async function serve(config, parts = {}) {
   const assistant = createAssistant({ brain, stt, mirror, tools, memory, activity, recordings, queue, briefings, log, clock });
   const proactive = createProactive({ settings: habits.settings, brain, mirror, tools, memory, activity, queue, briefings, log, clock });
   habits.onChange(() => proactive.settingsChanged());
-  const health = createHealth({ version, provider: config.provider, model: config.model, brain, stt, mirror, queue, activity, clock });
-  const server = createServer({ secret: config.secret, assistant, proactive, activity, queue, health, log, clock });
+  // The same tools for programs on the network, which wait in the same queue as people do.
+  const mcp = config.mcp.key ? createMcp({ tools, mirror, queue, clock, version, log, activity }) : null;
+  const health = createHealth({ version, provider: config.provider, model: config.model, brain, stt, mirror, queue, activity, clock, mcp, toolsOnly });
+  const server = createServer({ secret: config.secret, assistant, proactive, activity, queue, health, log, clock, mcp, mcpKey: config.mcp.key });
 
   await new Promise((resolve, reject) => {
     server.once("error", (error) => {
@@ -87,13 +98,18 @@ export async function serve(config, parts = {}) {
     server.listen(config.listen.port, config.listen.host, resolve);
   });
   const port = server.address().port;
-  log("listening", { host: config.listen.host, port, version, provider: config.provider, model: config.model });
+  log("listening", { host: config.listen.host, port, version, provider: config.provider, model: config.model, mcp: Boolean(mcp), toolsOnly });
 
-  // The port answers at once; the model and the speech worker come up behind it
-  // and the health report says how far they are.
-  stt.start();
-  brain.start().catch((error) => log("brain.start_failed", { detail: describeError(error) }));
-  proactive.start();
+  if (toolsOnly) {
+    // Nothing looks at the mirror now and then in this mode, so one look says whether it is there.
+    mirror.get("/api/v1/status").catch(() => {});
+  } else {
+    // The port answers at once; the model and the speech worker come up behind it
+    // and the health report says how far they are.
+    stt.start();
+    brain.start().catch((error) => log("brain.start_failed", { detail: describeError(error) }));
+    proactive.start();
+  }
 
   let stopping = null;
   return {
@@ -116,4 +132,38 @@ export async function serve(config, parts = {}) {
       return stopping;
     },
   };
+}
+
+/**
+ * Runs the mirror's tools for one MCP client on standard input and output,
+ * which is how a client talks to a server it starts itself. It goes straight
+ * to the mirror: no companion has to run, and no model or speech-to-text is
+ * needed. What it changes does not wait behind a request that a companion is
+ * serving at that moment.
+ *
+ * @param {import("./config.js").Config} config
+ * @param {Object} [parts]
+ * @returns {Promise<void>} settles when the client has closed its end
+ */
+export async function serveStdio(config, parts = {}) {
+  if (!config.mirror.host || !config.mirror.token) {
+    throw new Error("Not paired with a mirror yet. Run: node src/cli.js pair --host MIRROR_ADDRESS --code CODE");
+  }
+  const clock = parts.clock ?? systemClock;
+  // Standard output carries the protocol, so the log goes to standard error.
+  const log = parts.log ?? createLog({ write: (line) => process.stderr.write(line + "\n"), secrets: [config.secret, config.mirror.token, config.mcp.key] });
+  const version = companionVersion();
+  const mirror = parts.mirror ?? createMirror({ ...config.mirror, log });
+  const tools = createTools({ mirror, memory: createMemory(config.stateDir), clock, log });
+  const mcp = createMcp({ tools, mirror, queue: createQueue(), clock, version, log });
+  log("mcp.stdio", { version, mirror: config.mirror.host });
+  try {
+    await serveLines(mcp, { input: parts.input, output: parts.output });
+  } finally {
+    mirror.close();
+  }
+}
+
+function companionVersion() {
+  return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 }

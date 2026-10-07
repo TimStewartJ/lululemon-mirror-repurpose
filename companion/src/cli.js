@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { parseArgs } from "node:util";
 import { SHORTCUTS } from "./briefing.js";
-import { defaultAuthPath, defaultConfigPath, freshConfig, loadConfig, updateConfigFile, writeConfig } from "./config.js";
+import { defaultAuthPath, defaultConfigPath, freshConfig, freshKey, loadConfig, updateConfigFile, writeConfig } from "./config.js";
 import { describeError } from "./log.js";
 import { pairWithMirror } from "./mirror.js";
 
@@ -17,7 +17,12 @@ Usage: node src/cli.js <command>
   login [PROVIDER] [--key]      Sign in to a provider and keep the sign-in. With --key a key is asked for, where
                                 the provider also has a sign-in in the browser.
   logout [PROVIDER]             Forget a sign-in that "login" kept.
-  serve                         Run the companion.
+  serve [--tools-only]          Run the companion. With --tools-only it serves the mirror's tools over MCP and
+                                nothing else: no model, no speech-to-text, nothing done unasked.
+  mcp-key [--new]               Print the key that MCP clients on the network send. Makes one if there is none,
+                                which switches MCP on; --new replaces it.
+  mcp                           Serve the mirror's tools to one MCP client on standard input and output. A client
+                                starts this itself; no companion has to run.
   health                        Ask a running companion how it is.
   ask "text"                    Send typed words to a running companion. With --shortcut NAME they are sent as a
                                 greeting the mirror recognised itself: ${SHORTCUTS.join(", ")}.
@@ -191,9 +196,10 @@ const commands = {
     print(`The sign-in to ${chosen.provider} is forgotten.`);
   },
 
-  async serve() {
+  async serve(argv) {
+    const { values } = parseArgs({ args: argv, options: { "tools-only": { type: "boolean", default: false } } });
     const { serve } = await import("./serve.js");
-    const running = await serve(loadConfig());
+    const running = await serve(loadConfig(), { toolsOnly: values["tools-only"] });
     const stop = (signal) => {
       // A second signal ends the process without waiting.
       process.once(signal, () => process.exit(1));
@@ -203,16 +209,43 @@ const commands = {
     process.once("SIGTERM", () => stop("SIGTERM"));
   },
 
+  async mcp() {
+    const { serveStdio } = await import("./serve.js");
+    await serveStdio(loadConfig());
+  },
+
+  "mcp-key"(argv) {
+    const { values } = parseArgs({ args: argv, options: { new: { type: "boolean", default: false } } });
+    const config = loadConfig();
+    const made = values.new || !config.mcp.key;
+    const key = made ? freshKey() : config.mcp.key;
+    if (made) {
+      updateConfigFile(config.path, (raw) => {
+        raw.mcp = { ...raw.mcp, key };
+      });
+    }
+    // The key alone on standard output, so that a script can take it; the rest is for the person.
+    print(key);
+    const note = (line) => process.stderr.write(line + "\n");
+    note(`MCP clients on the network connect to http://THIS_MACHINE:${config.listen.port}/mcp and send this key as a bearer token.`);
+    if (made) note(`The key is new and is stored in ${config.path}. If the companion is running, restart it so that it takes the key.`);
+  },
+
   async health() {
     const report = await request("GET", "/v1/health");
     const part = (name, ready, detail) => print(`${name}: ${ready ? "ready" : "not ready"}${detail ? `. ${detail}` : ""}`);
     print(`${report.name} ${report.version} is ${report.ok ? "well" : "not ready"}. It has been up for ${report.uptimeSeconds} seconds.`);
-    part(report.model ? `Model ${report.model}${report.provider ? ` of ${report.provider}` : ""}` : "Model", report.brain.ready, report.brain.detail);
-    part(`Speech-to-text ${report.stt.model} on ${report.stt.device || "an unknown device"}`, report.stt.ready, report.stt.detail);
+    if (report.mcp?.toolsOnly) {
+      print("It serves its tools only: no model and no speech-to-text run.");
+    } else {
+      part(report.model ? `Model ${report.model}${report.provider ? ` of ${report.provider}` : ""}` : "Model", report.brain.ready, report.brain.detail);
+      part(`Speech-to-text ${report.stt.model} on ${report.stt.device || "an unknown device"}`, report.stt.ready, report.stt.detail);
+    }
     print(
       `Mirror: ${report.mirror.reachable ? `reachable, Mirror Home ${report.mirror.version || "of unknown version"}` : "not reachable"}` +
         `${report.mirror.detail ? `. ${report.mirror.detail}` : ""}`,
     );
+    if (report.mcp) print(report.mcp.on ? `MCP: on, ${report.mcp.calls} tool calls since the start.` : 'MCP: off. "mcp-key" switches it on.');
     if (report.last) print(`Last heard: "${report.last.heard}". Answered: "${report.last.reply}" in ${report.last.ms} ms.`);
     if (!report.ok) process.exitCode = 1;
   },

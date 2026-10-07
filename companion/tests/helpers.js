@@ -14,6 +14,7 @@ import { startFakeMirror } from "./fakes/mirror.js";
 import { fakeStt } from "./fakes/stt.js";
 
 export const SECRET = "test-secret-0123456789";
+export const MCP_KEY = "test-mcp-key-0123456789";
 
 export function temporaryDirectory(t) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "companion-test-"));
@@ -28,24 +29,27 @@ export function temporaryDirectory(t) {
  * @param {import("node:test").TestContext} t
  * @param {object[]} [script] The scripted brain's turns.
  * @param {object} [proactive] Proactive settings; everything is off unless given.
+ * @param {{ mcp?: boolean, toolsOnly?: boolean }} [options] With `mcp`, programs on the network are served with
+ *   {@link MCP_KEY}; with `toolsOnly`, they and nothing else.
  */
-export async function startCompanion(t, script = [], proactive = {}) {
+export async function startCompanion(t, script = [], proactive = {}, options = {}) {
   const clock = fakeClock();
   const mirror = await startFakeMirror({ now: clock.now });
   const lines = [];
-  const log = createLog({ write: (line) => lines.push(line), clock, secrets: [SECRET, mirror.token] });
+  const log = createLog({ write: (line) => lines.push(line), clock, secrets: [SECRET, MCP_KEY, mirror.token] });
   const config = parseConfig({
     secret: SECRET,
     mirror: { host: mirror.host, port: mirror.port, token: mirror.token },
     provider: "a-provider",
     model: "a-model",
     proactive: { greet: false, morningBriefing: false, reminders: false, tend: false, ...proactive },
+    mcp: { key: options.mcp || options.toolsOnly ? MCP_KEY : "" },
     stateDir: temporaryDirectory(t),
   });
   config.listen = { host: "127.0.0.1", port: 0 };
   const brain = scriptedBrain(clock, script);
   const stt = fakeStt(clock);
-  const running = await serve(config, { clock, log, brain, stt });
+  const running = await serve(config, { clock, log, brain, stt, toolsOnly: options.toolsOnly });
   t.after(async () => {
     await running.stop();
     await mirror.close();
@@ -67,6 +71,7 @@ export async function startCompanion(t, script = [], proactive = {}) {
     lines,
     config,
     running,
+    base,
     call,
     /** Says something to the mirror: posts a recording of the words. */
     say: (wav, { addressed = "name", id = "utt-1" } = {}) =>

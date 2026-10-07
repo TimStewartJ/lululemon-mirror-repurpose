@@ -30,8 +30,12 @@ export function fakeStt(clock) {
     /** How long a transcription takes on the fake clock. */
     takesMs: 0,
     heard: 0,
+    /** How often it was started. */
+    started: 0,
 
-    start() {},
+    start() {
+      stt.started += 1;
+    },
     async stop() {},
     health: () => ({ ready: stt.ready, model: "small.en", device: stt.device, detail: "" }),
 

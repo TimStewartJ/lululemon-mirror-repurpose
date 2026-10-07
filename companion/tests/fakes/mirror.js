@@ -139,6 +139,10 @@ export async function startFakeMirror({
     places: { heights: ["top", "upper", "middle", "lower", "bottom"], sides: ["left", "center", "right"] },
     /** Captions shown or asked for, oldest first: { text, kind, seconds, shown }, and details when rows came along. */
     said: [],
+    /** What the mirror's assistant answers to typed words, as a function of them; null for one that is switched off. */
+    assistantAnswers: null,
+    /** The words that were handed to the mirror's assistant, oldest first. */
+    asked: [],
     /** Every request received: { method, path, body }. */
     requests: [],
     /** How many of the next connections are dropped without an answer, as a sleeping radio does. */
@@ -430,6 +434,15 @@ export async function startFakeMirror({
       return [200, { enabled: true, state: "connected", mascot: state.mascot, mascots: state.mascots, place: state.place, places: state.places }];
     }
     if (is("POST", "/api/v1/assistant/say")) return say(body);
+    if (is("POST", "/api/v1/assistant/ask")) {
+      // As on the mirror: it passes the words to its companion and answers with what that answered.
+      if (typeof body.text !== "string" || body.text.trim().length === 0 || body.text.length > 500) {
+        return [400, { error: "text must be 1 to 500 characters" }];
+      }
+      if (!state.assistantAnswers) return [503, { error: "The assistant is switched off" }];
+      state.asked.push(body.text.trim());
+      return [200, state.assistantAnswers(body.text.trim())];
+    }
     if (is("GET", "/api/v1/screenshot")) {
       const width = query.get("width");
       if (width !== null && !(Number(width) >= 180 && Number(width) <= 1080)) return [400, { error: "width must be 180 to 1080" }];

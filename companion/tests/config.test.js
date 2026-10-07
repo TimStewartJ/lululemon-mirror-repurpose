@@ -120,3 +120,12 @@ test("pairing changes the mirror's entry and nothing else", (t) => {
   assert.equal(loaded.model, "kept-model");
   assert.equal(loaded.secret, fresh.secret);
 });
+
+test("programs on the network are not served until a key is given, and the key is neither short nor the mirror's secret", () => {
+  assert.deepEqual(parseConfig({ secret: "test-secret-0123456789" }).mcp, { key: "" });
+  assert.deepEqual(freshConfig().mcp, { key: "" });
+  assert.equal(parseConfig({ secret: "test-secret-0123456789", mcp: { key: "a-key-for-programs-0123" } }).mcp.key, "a-key-for-programs-0123");
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", mcp: { key: "short" } }), /mcp\.key: must be at least 16 characters without spaces; "mcp-key" writes a good one/);
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", mcp: { key: "a key with spaces in it" } }), /mcp\.key: must be at least 16 characters without spaces/);
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", mcp: { key: "test-secret-0123456789" } }), /mcp\.key: must differ from secret/);
+});

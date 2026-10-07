@@ -276,6 +276,13 @@ people type in the controls and the Note widget shows. They are still there
 and work as before. The board is the one for programs: its items say what
 they are, when they are due, who sent them and when they should go.
 
+## For agents that speak MCP
+
+An agent that takes its tools over the Model Context Protocol need not call
+these routes itself. The [companion](../companion/README.md) offers the board
+as the tools `board_add`, `board_update` and `board_remove`, beside the
+rest of the Mirror; see [MCP](mcp.md).
+
 ## What it does not do yet
 
 - A token cannot be limited to the board.

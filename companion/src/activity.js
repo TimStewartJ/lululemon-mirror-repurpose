@@ -11,7 +11,8 @@ const KEPT = 200;
  *
  * @typedef {Object} ActivityEntry
  * @property {number} at
- * @property {"voice"|"controls"|"shortcut"|"presence"|"reminder"|"tend"|"test"} source
+ * @property {"voice"|"controls"|"shortcut"|"presence"|"reminder"|"tend"|"test"|"mcp"} source "mcp" is a change
+ *   that a program on the network made with one of the tools; it has no words, only the tool in `acted`.
  * @property {string} heard
  * @property {string} reply
  * @property {{ label: string, text: string }[]} [details] The rows of a card, when the reply was the headline of one.

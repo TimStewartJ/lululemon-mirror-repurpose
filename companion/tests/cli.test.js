@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { until } from "./fakes/clock.js";
 import { speech } from "./fakes/stt.js";
 import { SECRET, startCompanion, temporaryDirectory } from "./helpers.js";
 
@@ -97,7 +98,8 @@ test("init writes a config with a fresh secret and does not overwrite one", asyn
   const written = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.ok(written.secret.length >= 32);
   assert.ok(!first.stdout.includes(written.secret), "init does not print the secret");
-  assert.deepEqual(Object.keys(written), ["listen", "secret", "mirror", "provider", "model", "reasoningEffort", "stt", "proactive", "keepUtterances", "stateDir"]);
+  assert.deepEqual(Object.keys(written), ["listen", "secret", "mirror", "provider", "model", "reasoningEffort", "stt", "proactive", "keepUtterances", "mcp", "stateDir"]);
+  assert.deepEqual(written.mcp, { key: "" }, "MCP is off until a key is made");
   assert.deepEqual([written.provider, written.model], ["", ""]);
   assert.match(first.stdout, /And choose a model: "node src\/cli\.js providers" lists where one can come from/);
 
@@ -223,4 +225,53 @@ test("ask sends a shortcut with --shortcut, and the rows of a card are printed u
   assert.equal(wrong.stderr, "--shortcut must be one of: good-morning, good-afternoon, good-evening, good-night, home.\n");
   assert.match((await cli(file, "ask", "--shortcut", "home")).stderr, /Give the words to send/);
   assert.match((await cli(file, "help")).stdout, /ask "text" +Send typed words to a running companion\. With --shortcut NAME/);
+});
+
+test("mcp-key makes a key once, prints it alone, and --new replaces it", async (t) => {
+  const file = path.join(temporaryDirectory(t), "config.json");
+  await cli(file, "init");
+  const first = await cli(file, "mcp-key");
+  assert.equal(first.code, 0, first.stderr);
+  const key = first.stdout.trim();
+  assert.match(key, /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(first.stdout, key + "\n", "the key stands alone, for a script to take");
+  assert.match(first.stderr, /MCP clients on the network connect to http:\/\/THIS_MACHINE:8790\/mcp and send this key as a bearer token\./);
+  assert.match(first.stderr, /The key is new and is stored in .*config\.json\. If the companion is running, restart it/);
+  const written = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(written.mcp, { key });
+  assert.notEqual(key, written.secret);
+
+  const again = await cli(file, "mcp-key");
+  assert.equal(again.stdout, key + "\n");
+  assert.doesNotMatch(again.stderr, /The key is new/);
+  const replaced = await cli(file, "mcp-key", "--new");
+  assert.notEqual(replaced.stdout, first.stdout);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).mcp.key, replaced.stdout.trim());
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).secret, written.secret, "the mirror's secret is left as it is");
+});
+
+test("health says whether programs on the network are served, and what a companion that serves its tools only leaves out", async (t) => {
+  const usual = await startCompanion(t);
+  const folder = temporaryDirectory(t);
+  const file = path.join(folder, "config.json");
+  fs.writeFileSync(file, JSON.stringify({ secret: SECRET, listen: { host: "127.0.0.1", port: usual.running.port }, stateDir: usual.config.stateDir }));
+  assert.match((await cli(file, "health")).stdout, /^MCP: off\. "mcp-key" switches it on\.$/m);
+
+  const toolsOnly = await startCompanion(t, [], {}, { toolsOnly: true });
+  await until(() => toolsOnly.events().some((line) => line.event === "mirror.reachable"), "the mirror to be found");
+  fs.writeFileSync(file, JSON.stringify({ secret: SECRET, listen: { host: "127.0.0.1", port: toolsOnly.running.port }, stateDir: toolsOnly.config.stateDir }));
+  const health = await cli(file, "health");
+  assert.equal(health.code, 0, health.stderr);
+  assert.match(health.stdout, /mirror-companion 0\.1\.0 is well\./);
+  assert.match(health.stdout, /^It serves its tools only: no model and no speech-to-text run\.$/m);
+  assert.doesNotMatch(health.stdout, /^(Model|Speech-to-text)/m);
+  assert.match(health.stdout, /^MCP: on, 0 tool calls since the start\.$/m);
+});
+
+test("serve --tools-only without a key says how to make one", async (t) => {
+  const file = path.join(temporaryDirectory(t), "config.json");
+  fs.writeFileSync(file, JSON.stringify({ secret: SECRET, listen: { host: "127.0.0.1", port: 9 }, stateDir: temporaryDirectory(t) }));
+  const refused = await cli(file, "serve", "--tools-only");
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /To serve the tools only, programs need a key to come with\. Make one with: node src\/cli\.js mcp-key/);
 });

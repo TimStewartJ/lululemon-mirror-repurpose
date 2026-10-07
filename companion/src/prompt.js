@@ -210,7 +210,7 @@ export function tendingSystem(memory) {
 export function tendingMessage({ requests, snapshot }) {
   const lines =
     requests.length > 0
-      ? requests.map((request) => `- ${request.time} "${request.heard}" (${request.acted.join(", ") || "no tool"})`)
+      ? requests.map((request) => `- ${request.time} ${request.heard ? `"${request.heard}"` : "a program on the network"} (${request.acted.join(", ") || "no tool"})`)
       : ["- Nothing."];
   return `What people asked for in the last 12 hours:\n${lines.join("\n")}\n\n${stateBlock(snapshot)}`;
 }

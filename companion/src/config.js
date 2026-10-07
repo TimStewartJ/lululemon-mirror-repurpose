@@ -64,6 +64,16 @@ const schema = z.object({
     })
     .prefault({}),
   keepUtterances: z.number().int().min(0).max(1000).default(20),
+  // For programs on the home network that use the mirror's tools over MCP: the key they have to send.
+  // Left empty, they are not served. "mcp-key" writes one.
+  mcp: z
+    .object({
+      key: z
+        .string()
+        .refine((key) => key === "" || (key.length >= 16 && !/\s/.test(key)), 'must be at least 16 characters without spaces; "mcp-key" writes a good one')
+        .default(""),
+    })
+    .prefault({}),
   stateDir: z.string().min(1).default("~/.local/state/mirror-companion"),
 });
 
@@ -110,6 +120,10 @@ export function parseConfig(raw, file = "config.json") {
     throw new Error(`${file} is not usable. ${problems.join("; ")}. Correct it and start again.`);
   }
   const config = result.data;
+  // The mirror's secret lets a caller speak as the mirror; a program that only uses the tools is not to hold it.
+  if (config.mcp.key && config.mcp.key === config.secret) {
+    throw new Error(`${file} is not usable. mcp.key: must differ from secret; "mcp-key --new" writes one. Correct it and start again.`);
+  }
   const stateDir = path.resolve(expandHome(config.stateDir));
   return {
     ...config,
@@ -143,7 +157,7 @@ export function loadConfig(file = defaultConfigPath()) {
 export function freshConfig() {
   return {
     listen: { host: "0.0.0.0", port: 8790 },
-    secret: crypto.randomBytes(24).toString("base64url"),
+    secret: freshKey(),
     mirror: { host: "", port: 8787, token: "" },
     provider: "",
     model: "",
@@ -151,8 +165,14 @@ export function freshConfig() {
     stt: { model: "small.en", device: "auto", python: "" },
     proactive: { greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] },
     keepUtterances: 20,
+    mcp: { key: "" },
     stateDir: "~/.local/state/mirror-companion",
   };
+}
+
+/** A key for MCP clients, as long as the secret "init" writes. */
+export function freshKey() {
+  return crypto.randomBytes(24).toString("base64url");
 }
 
 /**

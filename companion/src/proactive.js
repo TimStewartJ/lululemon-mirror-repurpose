@@ -313,7 +313,8 @@ export function createProactive({ settings, brain, mirror, tools, memory, activi
       if (quiet(state.now, state.offsetMinutes)) return "quiet-hours";
       const requests = activity
         .since(started - TEND_LOOKS_BACK_MS)
-        .filter((entry) => ["voice", "controls", "test"].includes(entry.source) && !entry.ignored)
+        // What a program on the network changed with a tool was asked for as well, and is left alone like the rest.
+        .filter((entry) => ["voice", "controls", "test", "mcp"].includes(entry.source) && !entry.ignored)
         .map((entry) => ({
           time: localTime(entry.at + skew, state.offsetMinutes),
           heard: entry.heard,

@@ -2,23 +2,27 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { SHORTCUTS } from "./briefing.js";
 import { describeError } from "./log.js";
+import { rpcFailure } from "./mcp.js";
 import { readWav } from "./wav.js";
 
 export const MAX_UTTERANCE_BYTES = 1_500_000;
+export const MAX_MCP_BYTES = 256 * 1024;
 const MAX_JSON_BYTES = 64 * 1024;
 const FLOOD_BYTES = 8 * 1024 * 1024;
 const ADDRESSED = ["name", "window", "follow-up"];
 
 /** An answer that is not 200, with the sentence that explains it. */
 class Refusal extends Error {
-  constructor(status, message) {
+  constructor(status, message, headers = {}) {
     super(message);
     this.status = status;
+    this.headers = headers;
   }
 }
 
 /**
- * The companion's HTTP side: what Mirror Home calls.
+ * The companion's HTTP side: what Mirror Home calls, and at /mcp what
+ * programs on the home network call.
  *
  * @param {Object} parts
  * @param {string} parts.secret The bearer secret shared with the mirror.
@@ -29,16 +33,43 @@ class Refusal extends Error {
  * @param {() => object} parts.health Builds the health report from what is already known.
  * @param {(event: string, fields?: object) => void} parts.log
  * @param {import("./clock.js").Clock} parts.clock
+ * @param {import("./mcp.js").Mcp | null} [parts.mcp] The mirror's tools for programs on the network; null when they are not served.
+ * @param {string} [parts.mcpKey] The bearer key those programs send, which is not the mirror's secret.
  * @returns {http.Server}
  */
-export function createServer({ secret, assistant, proactive, activity, queue, health, log, clock }) {
-  const expected = crypto.createHash("sha256").update(`Bearer ${secret}`).digest();
+export function createServer({ secret, assistant, proactive, activity, queue, health, log, clock, mcp = null, mcpKey = "" }) {
+  const digest = (given) => crypto.createHash("sha256").update(String(given ?? "")).digest();
+  const expected = digest(`Bearer ${secret}`);
+  const expectedOutside = mcp && mcpKey ? digest(`Bearer ${mcpKey}`) : null;
   let counter = 0;
 
   /** Compares in constant time; hashing first makes the lengths equal. */
-  function authorized(request) {
-    const given = crypto.createHash("sha256").update(String(request.headers.authorization ?? "")).digest();
-    return crypto.timingSafeEqual(given, expected);
+  function authorized(request, wanted = expected) {
+    return crypto.timingSafeEqual(digest(request.headers.authorization), wanted);
+  }
+
+  /**
+   * What a program on the network sent to /mcp: JSON-RPC messages, each
+   * answered by itself. No stream is kept open and no session is kept, so
+   * only POST is taken.
+   */
+  async function outside(request) {
+    if (!expectedOutside) {
+      throw new Refusal(404, 'MCP is not switched on in this companion. On its machine, "node src/cli.js mcp-key" makes a key; then restart it.');
+    }
+    if (!authorized(request, expectedOutside)) {
+      throw new Refusal(401, 'This needs the companion\'s MCP key as a bearer token: "Authorization: Bearer KEY". "node src/cli.js mcp-key" prints it.');
+    }
+    if (request.method !== "POST") throw new Refusal(405, "This route takes POST only: it keeps no stream open and no session.", { Allow: "POST" });
+    const body = await readBody(request, MAX_MCP_BYTES, "The request body is larger than 256 KB.");
+    let delivered;
+    try {
+      delivered = JSON.parse(body.toString("utf8"));
+    } catch {
+      return [400, rpcFailure(null, -32700, "The request body must be JSON.")];
+    }
+    const answer = await mcp.receive(delivered);
+    return answer ? [200, answer] : [202, null];
   }
 
   async function route(request, url) {
@@ -123,8 +154,12 @@ export function createServer({ secret, assistant, proactive, activity, queue, he
   return http.createServer((request, response) => {
     const started = clock.now();
     const url = new URL(request.url ?? "/", "http://companion");
+    const program = url.pathname === "/mcp";
+    // At /mcp a refusal is written as a JSON-RPC error, which is where a client of that protocol looks.
+    const refusal = (message) => (program ? rpcFailure(null, -32000, message) : { error: message });
     Promise.resolve()
       .then(() => {
+        if (program) return outside(request);
         if (!authorized(request)) throw new Refusal(401, "Unauthorized");
         return route(request, url);
       })
@@ -135,12 +170,13 @@ export function createServer({ secret, assistant, proactive, activity, queue, he
             // A body that was not read to its end would be taken for the next
             // request, so that connection is closed after the answer.
             if (!request.complete) response.setHeader("Connection", "close");
-            send(response, error.status, { error: error.message });
+            for (const [name, value] of Object.entries(error.headers)) response.setHeader(name, value);
+            send(response, error.status, refusal(error.message));
             if (error.status !== 401) log("request.refused", { path: url.pathname, status: error.status, detail: error.message });
             return;
           }
           log("request.failed", { path: url.pathname, detail: describeError(error) });
-          send(response, 500, { error: "The companion could not handle the request." });
+          send(response, 500, refusal("The companion could not handle the request."));
         },
       )
       .finally(() => {
@@ -156,6 +192,12 @@ function requireMethod(request, method) {
 
 function send(response, status, body) {
   if (response.headersSent || response.destroyed) return;
+  // A message that gets no answer is accepted with nothing after it.
+  if (body === null) {
+    response.writeHead(status, { "Content-Length": 0, "Cache-Control": "no-store" });
+    response.end();
+    return;
+  }
   const payload = Buffer.from(JSON.stringify(body), "utf8");
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",

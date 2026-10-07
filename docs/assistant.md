@@ -407,6 +407,12 @@ or one whose dashboard is not in front, answers `409`.
 The Mirror's side is `GET` and `PUT /api/v1/assistant` and `POST
 /api/v1/assistant/ask`; see [Control protocol](protocol.md#assistant).
 
+## Other agents
+
+The tools the assistant has are also offered to AI agents of your own, over
+the Model Context Protocol; among them is one that hands a wish in words to
+this assistant. See [MCP](mcp.md).
+
 ## For developers
 
 The characters are `Mascot*.java`. They know nothing of Android: each

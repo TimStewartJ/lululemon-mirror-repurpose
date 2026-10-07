@@ -337,6 +337,9 @@ export function settingsTools({ mirror, clock, habits }) {
       description:
         "Gives the mirror the name it shows on the glass (in the name widget) and in the phone controls: name in the state. " +
         "It does not change the word people call you by: that stays \"Mirror\". Say so if the person seems to expect otherwise.",
+      outside:
+        "Gives the mirror the name it shows on the glass (in the name widget) and in the phone controls: name in the state. " +
+        "It does not change the word the mirror listens for: that stays \"Mirror\".",
       schema: z.object({ name: z.string().min(1).max(64) }),
       changes: true,
       async handler({ name }) {

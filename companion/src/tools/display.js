@@ -123,6 +123,10 @@ export function displayTools({ mirror, clock }) {
         "Reads the mirror afresh: its local time and zone, whether the display is awake, the widgets and where they are, " +
         "the background and films, the board's items, the weather and voice. " +
         "The state is already in each message, so call this only to check after a change.",
+      outside:
+        "Reads the mirror: its local time and zone, whether the display is awake, the widgets and where they are, " +
+        "the background and films, the board's items, the weather, what is on the glass for a while (moments) and voice. " +
+        "Call it before you change anything, and again to check afterwards: the other tools call what it returns the state.",
       schema: z.object({}),
       async handler(_args, turn) {
         const state = await fetchState(mirror, clock);

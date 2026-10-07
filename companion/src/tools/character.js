@@ -64,6 +64,11 @@ export function characterTools({ mirror }) {
         "the face people see when you answer. Give one of character.choices from the state by its name or by what it is " +
         "(\"Mochi\" or \"cat\"), \"next\" for the one after the present one, or \"none\" for words alone. " +
         "Blink is two eyes, Wisp a ghost, Mochi a cat, Lune a moon.",
+      outside:
+        "Chooses the small character that stands above the words of the mirror's assistant and acts out what it does: " +
+        "the face people see when the mirror answers. Give one of character.choices from the state by its name or by what it is " +
+        "(\"Mochi\" or \"cat\"), \"next\" for the one after the present one, or \"none\" for words alone. " +
+        "Blink is two eyes, Wisp a ghost, Mochi a cat, Lune a moon.",
       schema: z.object({ character: z.string().min(1) }),
       changes: true,
       async handler({ character }) {
@@ -101,6 +106,11 @@ export function characterTools({ mirror }) {
         "Moves where on the glass your words appear: the panel with your answer and your character. " +
         "height is top, upper, middle, lower or bottom, or \"up\" or \"down\" for one step from where it is; " +
         "side is left, center or right. Give height, side or both; what you leave out stays as it is. " +
+        "answersAt in the state is the present place. The mirror shows a line at the new place by itself.",
+      outside:
+        "Moves where on the glass the mirror's assistant shows its answers, and the lines that say shows: the panel with the words and the character. " +
+        "height is top, upper, middle, lower or bottom, or \"up\" or \"down\" for one step from where it is; " +
+        "side is left, center or right. Give height, side or both; what is left out stays as it is. " +
         "answersAt in the state is the present place. The mirror shows a line at the new place by itself.",
       schema: z.object({
         height: z.enum([...HEIGHTS, "up", "down"]).optional(),

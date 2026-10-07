@@ -25,8 +25,12 @@ export function scriptedBrain(clock, script = []) {
     ready: true,
     detail: "",
     script,
+    /** How often it was started. */
+    started: 0,
 
-    async start() {},
+    async start() {
+      brain.started += 1;
+    },
     async stop() {},
     health: () => ({ ready: brain.ready, detail: brain.detail }),
     prepare: (run) => brain.prepared.push(run.fresh),

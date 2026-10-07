@@ -18,6 +18,9 @@ import { talkTools } from "./tools/talk.js";
  * @typedef {Object} Tool
  * @property {string} name
  * @property {string} description
+ * @property {string} [outside] The description for a program on the network, which is not the mirror's own
+ *   assistant: given where `description` speaks of "your words" or of a state that comes with each message.
+ *   Without it, `description` serves both.
  * @property {import("zod").ZodType} schema
  * @property {boolean} [changes] True when it alters what the mirror shows or holds.
  * @property {boolean} [endsTurn] True when a successful call leaves nothing more to say.

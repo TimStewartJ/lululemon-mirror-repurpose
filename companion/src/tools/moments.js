@@ -56,6 +56,23 @@ const shape = z.object({
   width: z.number().optional().describe("Line width; 1.2 if left out."),
 });
 
+// How a moment is made, which reads the same whoever makes one.
+const HOW_IT_IS_MADE =
+  "kind is one of: " +
+  "text (text: up to 280 characters, a line break for a new line); " +
+  "countdown (countdownSeconds from now, or countdownTo as an ISO time with the mirror's UTC offset; it runs on the glass and stays 20 seconds after it has run out); " +
+  "list (rows: up to 8 of {label, text}; a label is a number, a time or nothing); " +
+  "chart (values: 2 to 12 of {label, value}; chart: bars, or line for how something goes over time); " +
+  "drawing (shapes on a square 100 units wide and high, 0,0 at its top left: line {x1,y1,x2,y2}, circle {x,y,r}, " +
+  "rect {x,y,w,h,round}, path {d}, text {x,y,text,size} centred on x; thin lines in one or two colours suit this glass, where black is mirror). " +
+  "title is a small heading over it. Letters, digits and plain punctuation only, in every text of it: this glass draws no emoji or pictographs. " +
+  "seconds is how long it stays (5 to 21600); left out, about a minute. A countdown needs none. " +
+  "You need not place it: moments stand in a column in the middle of the glass in the order they came, and widgets under them " +
+  "step back until they leave. Give height (top, upper, middle, lower, bottom) or side (left, center, right) only when asked for a place. " +
+  "size is small, medium (if left out) or large, which is for when something big is asked for. color is #rrggbb; motion is pulse, float or spin, for a drawing or a word that should live. " +
+  "id names it: showing the same id again replaces it where it stands (a score that changes); moments in the state lists what is showing. " +
+  "Nothing else is needed for it: the display need not be woken and no widget moved.";
+
 /** @returns {import("../tools.js").Tool[]} */
 export function momentTools({ mirror, clock }) {
   /** The mirror's own clock at this moment, as far as the turn knows it. */
@@ -67,21 +84,14 @@ export function momentTools({ mirror, clock }) {
       description:
         "Puts something on the glass for a while, beside your line of words, and the mirror takes it away by itself. " +
         "Use it when seeing serves better than a sentence, or to delight: a timer that can be watched running down, " +
-        "a few words written large, the steps of a recipe, numbers as a chart, a small drawing. kind is one of: " +
-        "text (text: up to 280 characters, a line break for a new line); " +
-        "countdown (countdownSeconds from now, or countdownTo as an ISO time with the mirror's UTC offset; it runs on the glass and stays 20 seconds after it has run out); " +
-        "list (rows: up to 8 of {label, text}; a label is a number, a time or nothing); " +
-        "chart (values: 2 to 12 of {label, value}; chart: bars, or line for how something goes over time); " +
-        "drawing (shapes on a square 100 units wide and high, 0,0 at its top left: line {x1,y1,x2,y2}, circle {x,y,r}, " +
-        "rect {x,y,w,h,round}, path {d}, text {x,y,text,size} centred on x; thin lines in one or two colours suit this glass, where black is mirror). " +
-        "title is a small heading over it. Letters, digits and plain punctuation only, in every text of it: this glass draws no emoji or pictographs. " +
-        "seconds is how long it stays (5 to 21600); left out, about a minute. A countdown needs none. " +
-        "You need not place it: moments stand in a column in the middle of the glass in the order they came, and widgets under them " +
-        "step back until they leave. Give height (top, upper, middle, lower, bottom) or side (left, center, right) only when asked for a place. " +
-        "size is small, medium (if left out) or large, which is for when something big is asked for. color is #rrggbb; motion is pulse, float or spin, for a drawing or a word that should live. " +
-        "id names it: showing the same id again replaces it where it stands (a score that changes); moments in the state lists what is showing. " +
-        "Nothing else is needed for it: the display need not be woken and no widget moved. " +
-        "Your line of words still shows: keep it to a few words and do not repeat what the moment says.",
+        "a few words written large, the steps of a recipe, numbers as a chart, a small drawing. " +
+        HOW_IT_IS_MADE +
+        " Your line of words still shows: keep it to a few words and do not repeat what the moment says.",
+      outside:
+        "Puts something on the glass for a while, and the mirror takes it away by itself. " +
+        "Use it when seeing serves better than a sentence: a timer that can be watched running down, " +
+        "a few words written large, the steps of a recipe, numbers as a chart, a small drawing. " +
+        HOW_IT_IS_MADE,
       schema: z.object({
         kind: z.enum(KINDS),
         id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/, "takes up to 32 small letters, digits and dashes").optional(),

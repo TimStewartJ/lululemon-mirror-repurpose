@@ -50,6 +50,7 @@ test("health reports every part from what is known, without asking anyone", asyn
     brain: { ready: true, detail: "" },
     stt: { ready: true, model: "small.en", device: "cuda", detail: "" },
     mirror: { reachable: true, version: "2.3.0", detail: "" },
+    mcp: { on: false, toolsOnly: false, calls: 0 },
     busy: false,
     uptimeSeconds: 5,
     last: null,

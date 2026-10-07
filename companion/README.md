@@ -19,6 +19,10 @@ after a reminder went unseen with what was missed, and otherwise with a line
 from the model. It shows a card when a reminder on the board falls due. And
 once an hour it looks over the display and may tidy one small thing.
 
+It has a second job, which can be had without the first: it offers the
+mirror's tools to other AI agents on the home network over the Model Context
+Protocol. See [For other agents: MCP](#for-other-agents-mcp).
+
 ## What it needs
 
 - A Linux machine on the same network as the mirror. It is built for and
@@ -218,6 +222,7 @@ plain requests.
 | `proactive.tendMinutes` | How often it looks over the display. |
 | `proactive.quietHours` | From when to when, on the mirror's clock, it shows nothing by itself and changes nothing. `null` for never. |
 | `keepUtterances` | How many recordings to keep. 0 keeps none. |
+| `mcp.key` | The key that agents on the network send to use the mirror's tools. Empty, they are not served. `mcp-key` writes one. See [For other agents: MCP](#for-other-agents-mcp). |
 | `stateDir` | Where the companion keeps what it stores. |
 
 The `proactive` settings can also be changed by asking the mirror ("stop
@@ -424,6 +429,37 @@ or lost it in transcription, are left to the model, which may drop them as
 talk between people; before it does, it is asked to weigh them a second
 time, because asked once it dropped about one real request in four.
 
+## For other agents: MCP
+
+The tools the model has are also offered to agents of your own, over the
+Model Context Protocol: an agent on another machine can read the mirror,
+look at the glass, show a moment, add to the board, change the background
+and the settings, or hand a wish in words to the mirror's assistant.
+[MCP: the Mirror's tools for other agents](../docs/mcp.md) is the guide. In
+short:
+
+```bash
+node src/cli.js mcp-key              # makes the key agents send, and prints it
+systemctl --user restart mirror-companion
+```
+
+Agents then connect to `http://THIS_MACHINE:8790/mcp` with the key as a
+bearer token. What they change waits its turn with what people ask the
+mirror, and `GET /v1/activity` shows it. `mcp-key --new` replaces the key.
+
+Two more ways to run it:
+
+```bash
+node src/cli.js serve --tools-only   # for agents alone: no model, no speech-to-text, nothing done unasked
+node src/cli.js mcp                  # for one agent that starts it itself, on standard input and output
+```
+
+Neither needs a model, Python or the install script: Node, `npm ci
+--omit=dev`, `init` and `pair` are enough. An agent gets 21 tools: the
+model's own, less the household's memory, the companion's habits and the
+cards that are the model's answers, and with a `say` and an `ask` of its
+own.
+
 ## What leaves the house, and what is stored
 
 The sound stays on this machine. It is turned into words here, by Whisper.
@@ -445,14 +481,15 @@ another, the companion keeps:
 - `utterances/`: the last 20 recordings, so that a mishearing can be listened
   to. Set `keepUtterances` to 0 to keep none.
 - `activity.jsonl`: the last 200 exchanges, with what was heard and answered,
-  the rows of a card included. `GET /v1/activity` shows them.
+  the rows of a card included, and what agents changed over MCP.
+  `GET /v1/activity` shows them.
 - `memory.txt`: what it was asked to remember, one line each. You can read
   and edit it.
 - `venv/` and `models/`: the Python environment and the speech model.
 
 The log goes to standard output, one JSON line per event, and holds what was
-heard and answered. The secret and the mirror's token are never logged, and
-neither is a sign-in to a model provider. Sign-ins made with `login` are in
+heard and answered. The secret, the MCP key and the mirror's token are never
+logged, and neither is a sign-in to a model provider. Sign-ins made with `login` are in
 `auth.json` beside the config.
 
 ## Test
@@ -488,7 +525,8 @@ and `say-wav` can be tried from end to end without a mirror.
 |---|---|
 | `src/cli.js` | The command line. |
 | `src/serve.js` | Puts the parts together and starts them. |
-| `src/server.js` | The HTTP routes the mirror calls, with their checks and limits. |
+| `src/server.js` | The HTTP routes the mirror calls, with their checks and limits, and the route for agents. |
+| `src/mcp.js` | The Model Context Protocol: which tools agents get, the two only they have, and the messages. |
 | `src/assistant.js` | One exchange: recording or typed words in, answer out. |
 | `src/proactive.js` | The greeting, the morning card, the reminders and the hourly look. |
 | `src/briefing.js` | The briefing and the other cards that code builds, without the model. |
@@ -501,7 +539,7 @@ and `say-wav` can be tried from end to end without a mirror.
 | `src/state.js` | The summary of the mirror that the model reads. |
 | `src/mirror.js` | The client for the mirror's API. |
 | `src/stt.js`, `src/stt_worker.py` | Speech-to-text: the Python worker and what keeps it running. |
-| `src/queue.js` | One agent run at a time. |
+| `src/queue.js` | One agent run at a time, and one change by an agent on the network at a time with it. |
 | `src/config.js`, `src/log.js`, `src/memory.js`, `src/activity.js`, `src/recordings.js`, `src/health.js`, `src/time.js`, `src/wav.js`, `src/reply.js`, `src/clock.js` | One small job each, named by the file. |
 
 The wire formats between the mirror and the companion are in
@@ -510,4 +548,6 @@ The wire formats between the mirror and the companion are in
 `GET /v1/activity`, which lists the latest exchanges. An answer always has
 `details`, the rows of a card, empty for one line, and may have `seconds`,
 how long the glass should show it. A shortcut is `POST /v1/ask` with
-`"source": "shortcut"` and `"shortcut"` set to its name.
+`"source": "shortcut"` and `"shortcut"` set to its name. `POST /mcp` is
+for agents and takes the MCP key, not the secret; see
+[MCP](../docs/mcp.md#for-developers).
