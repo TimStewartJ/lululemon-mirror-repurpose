@@ -6,7 +6,7 @@ import test from "node:test";
 import { z } from "zod";
 import { BrainError, createBrain } from "../src/brain.js";
 import { COPILOT_CLI, copilotCliProvider, credentialFile, endpointProvider, findCopilotCliSignIn, openModels } from "../src/providers.js";
-import { responsesOverSocket } from "../src/responses-socket.js";
+import { responsesOverSocket, sequel } from "../src/responses-socket.js";
 import { newTurn } from "../src/tools.js";
 import { until } from "./fakes/clock.js";
 import { startResponsesServer } from "./fakes/responses-server.js";
@@ -167,7 +167,7 @@ test("a sign-in GitHub does not accept is reported in words that say what to do"
   assert.equal(await none.getAuth("github-copilot"), undefined);
 });
 
-test("a model that can be asked over a socket is, on one socket for as long as the requests are alike", async (t) => {
+test("a model that can be asked over a socket is, on a socket that stays open", async (t) => {
   const server = await startResponsesServer();
   t.after(() => server.close());
   const events = [];
@@ -187,24 +187,100 @@ test("a model that can be asked over a socket is, on one socket for as long as t
   const { headers, body } = server.requests[0];
   assert.equal(headers.authorization, "Bearer gho_token");
   assert.equal(headers["copilot-integration-id"], "copilot-developer-cli");
-  assert.equal(headers["x-initiator"], "user");
+  // Who began the request is said in the message, as the service reads it there, and not when the socket is opened.
+  assert.equal(headers["x-initiator"], undefined);
+  assert.equal(body.initiator, "user");
   assert.equal(body.type, "response.create");
   assert.equal(body.model, "gpt-6-luna");
   assert.equal("stream" in body, false);
   assert.deepEqual(body.reasoning.effort, "low");
+  // Two requests that have nothing to do with one another: the second brings its whole conversation.
+  assert.equal(server.requests[1].body.previous_response_id, undefined);
 
-  // A request that is not begun by a person says so in a header, and so goes over a socket of its own.
-  const followUp = {
-    systemPrompt: "You are a test.",
-    messages: [...question.messages, second, { role: "toolResult", toolCallId: "call_1", toolName: "look", content: [{ type: "text", text: "{}" }], isError: false, timestamp: 2 }],
-  };
-  await models.completeSimple(model, followUp, { reasoning: "low" });
-  assert.equal(server.requests[2].headers["x-initiator"], "agent");
-  assert.equal(server.socketsOpened, 2);
-  // A model that is not said to take a socket is asked in the plain way.
+  // A model that is not said to take a socket is asked in the plain way, with the header.
   await models.completeSimple(models.getModel("github-copilot", "gpt-5-mini"), question);
-  assert.equal(server.requests[3].over, "http");
+  assert.equal(server.requests[2].over, "http");
+  assert.equal(server.requests[2].headers["x-initiator"], "user");
+  assert.equal(server.requests[2].body.initiator, undefined);
   assert.deepEqual(events, []);
+});
+
+test("a call that follows the one before on its socket brings only what is new", async (t) => {
+  const server = await startResponsesServer();
+  t.after(() => server.close());
+  const events = [];
+  const { provider, close } = copilotCliProvider({ env: { COPILOT_GITHUB_TOKEN: "gho_token" }, home: folder(t), fetch: server.fetch, log: (event, fields) => events.push({ event, ...fields }) });
+  t.after(close);
+  const models = createModels();
+  models.setProvider(provider);
+  const model = models.getModel("github-copilot", "gpt-6-luna");
+  const options = { reasoning: "low", sessionId: "one-conversation" };
+  const tools = [{ name: "look", description: "Looks.", parameters: { type: "object", properties: {} } }];
+  const context = { systemPrompt: "You are a test.", tools, messages: [{ role: "user", content: "what do you see?", timestamp: 1 }] };
+
+  server.answers.push({ call: ["look", {}] }, "A clock.", "Still a clock.");
+  const called = await models.completeSimple(model, context, options);
+  const call = called.content.find((block) => block.type === "toolCall");
+  context.messages.push(called, { role: "toolResult", toolCallId: call.id, toolName: "look", content: [{ type: "text", text: '{"seen":"a clock"}' }], isError: false, timestamp: 2 });
+  const answered = await models.completeSimple(model, context, options);
+  assert.equal(wordsOf(answered), "A clock.");
+  context.messages.push(answered, { role: "user", content: "and now?", timestamp: 3 });
+  assert.equal(wordsOf(await models.completeSimple(model, context, options)), "Still a clock.");
+
+  assert.equal(server.socketsOpened, 1, "one socket for the conversation, whoever began the request");
+  const [first, second, third] = server.requests.map((request) => request.body);
+  assert.deepEqual([first.initiator, second.initiator, third.initiator], ["user", "agent", "user"]);
+  assert.equal(first.previous_response_id, undefined);
+  assert.ok(first.input.length >= 2, "the first request brings the instructions and the question");
+  // The tool's answer alone, after the response that asked for it.
+  assert.equal(second.previous_response_id, "resp_1");
+  assert.deepEqual(second.input.map((item) => item.type), ["function_call_output"]);
+  assert.equal(second.input[0].call_id, "call_resp_1");
+  // The next thing a person says alone, after the response before.
+  assert.equal(third.previous_response_id, "resp_2");
+  assert.deepEqual(third.input.map((item) => item.role), ["user"]);
+  // The tools and the rest of the request go along every time.
+  assert.deepEqual(second.tools.map((tool) => tool.name), ["look"]);
+  assert.deepEqual(events, []);
+
+  // A service that has forgotten the response before is sent the whole conversation after all.
+  context.messages.push({ role: "assistant", ...(await models.completeSimple(model, context, options)) });
+  server.requests.length = 0;
+  context.messages.push({ role: "user", content: "once more?", timestamp: 5 });
+  server.answers.push({ error: "Previous response with id 'resp_4' not found.", code: "previous_response_not_found" }, "A clock, as before.");
+  assert.equal(wordsOf(await models.completeSimple(model, context, options)), "A clock, as before.");
+  assert.deepEqual(server.requests.map((request) => [request.over, request.body.previous_response_id !== undefined]), [["socket", true], ["socket", false]]);
+  assert.ok(server.requests[1].body.input.length > 6);
+  assert.deepEqual(events.map((entry) => entry.event), ["brain.socket_sequel_refused"]);
+  assert.equal(server.socketsOpened, 1);
+});
+
+test("a request is the sequel of the response before only when it plainly is", () => {
+  const item = (value) => JSON.stringify(value);
+  const system = { role: "developer", content: "You are a test." };
+  const asked = { role: "user", content: [{ type: "input_text", text: "sleep" }] };
+  const call = { type: "function_call", id: "fc_1", call_id: "call_1", name: "set_power", arguments: "{}" };
+  const output = { type: "function_call_output", call_id: "call_1", output: "{}" };
+  const said = { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done." }] };
+  const next = { role: "user", content: [{ type: "input_text", text: "thanks" }] };
+  const last = { id: "resp_1", model: "m", sent: [item(system), item(asked)], calls: new Set(["call_1"]) };
+  const request = (input, model = "m") => ({ model, input, tools: [] });
+
+  assert.deepEqual(sequel(last, request([system, asked, call, output])), { model: "m", tools: [], input: [output], previous_response_id: "resp_1" });
+  // After a response that called nothing, what a person says next.
+  const plain = { ...last, calls: new Set() };
+  assert.deepEqual(sequel(plain, request([system, asked, said, next])).input, [next]);
+
+  assert.equal(sequel(null, request([system, asked])), null, "nothing came before");
+  assert.equal(sequel(last, request([system, asked, call, output], "another-model")), null, "another model");
+  assert.equal(sequel(last, request([system, asked])), null, "nothing new");
+  assert.equal(sequel(last, request([system, asked, call])), null, "only what the model wrote");
+  assert.equal(sequel(last, request([{ ...system, content: "Changed." }, asked, call, output])), null, "what was sent before has changed");
+  assert.equal(sequel(last, request([system, asked, call, next])), null, "a call without its answer");
+  assert.equal(sequel(last, request([system, asked, call, { ...output, call_id: "call_2" }])), null, "an answer to another call");
+  assert.equal(sequel(plain, request([system, asked, call, output])), null, "a call the response before did not make");
+  assert.equal(sequel(last, request([system, asked, call, output, said, next])), null, "more than one response has passed");
+  assert.equal(sequel(last, request("a string")), null);
 });
 
 test("what the service refuses over the socket comes back as its refusal over HTTP would", async (t) => {

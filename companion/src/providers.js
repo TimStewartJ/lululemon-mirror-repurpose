@@ -167,8 +167,9 @@ export function findCopilotCliSignIn({ env = process.env, home = os.homedir() } 
  * integration id, so that is what this one sends. The models, and how each
  * is spoken to, are Pi's. One thing is done as the CLI does it and not as
  * Pi does: where a model can be asked over a socket that stays open, it is,
- * because each call then comes back about half a second sooner (see
- * responses-socket.js). MIRROR_COMPANION_NO_WEBSOCKET=1 switches that off.
+ * because each call then comes back sooner and does not grow slower as the
+ * conversation grows (see responses-socket.js).
+ * MIRROR_COMPANION_NO_WEBSOCKET=1 switches that off.
  *
  * @param {Object} [options]
  * @param {Record<string, string | undefined>} [options.env]
@@ -187,7 +188,8 @@ export function copilotCliProvider({ env = process.env, home = os.homedir(), fet
    */
   let account = null;
   let looking = null;
-  const sockets = env.MIRROR_COMPANION_NO_WEBSOCKET ? null : responsesOverSocket({ log });
+  // Who began a request is a header over HTTP; over a socket the service reads it from the message.
+  const sockets = env.MIRROR_COMPANION_NO_WEBSOCKET ? null : responsesOverSocket({ log, saidInTheMessage: { "x-initiator": "initiator" } });
   const responses = openAIResponsesApi();
   const withSocket = (model, options) => (sockets && account?.overSocket.has(model.id) ? { ...options, fetch: sockets.fetch } : options);
 

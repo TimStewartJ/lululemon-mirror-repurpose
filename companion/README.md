@@ -122,12 +122,11 @@ your Copilot allowance as the CLI would. If you would rather not, use
 `github-copilot` below, or a provider you have a key for.
 
 Where a model takes requests over a WebSocket that stays open, the companion
-asks it that way, as the CLI does: each call to the model then comes back
-about 0.3 seconds sooner. Set `MIRROR_COMPANION_NO_WEBSOCKET=1` in the
-companion's environment to keep to plain requests. The whole conversation is
-still sent with every call, so in a conversation that has grown past some
-20,000 tokens, which takes a dozen requests within two minutes of one
-another, a call takes about half a second longer than a short one.
+asks it that way, as the CLI does: one socket for a conversation, and each
+call brings only what is new since the one before. A call to the model then
+comes back about 0.3 seconds sooner than over plain requests, and does not
+grow slower as a conversation grows. Set `MIRROR_COMPANION_NO_WEBSOCKET=1`
+in the companion's environment to keep to plain requests.
 
 ### One of Pi's providers
 
@@ -496,7 +495,7 @@ and `say-wav` can be tried from end to end without a mirror.
 | `src/briefing.js` | The briefing and the other cards that code builds, without the model. |
 | `src/brain.js` | The model: sessions, retries and time limits on Pi's agent loop. The only file that knows Pi's agent. |
 | `src/providers.js` | Whose model: Pi's providers, the Copilot CLI's sign-in, a server of one's own, and the file of sign-ins. |
-| `src/responses-socket.js` | Requests to the Responses API over a WebSocket that stays open, where the service takes them. |
+| `src/responses-socket.js` | Requests to the Responses API over a WebSocket that stays open, each going on from the one before, where the service takes them. |
 | `src/prompt.js` | Every word the model is told. |
 | `src/tools.js`, `src/tools/` | The tools, independent of the harness. |
 | `src/layout.js` | The rules of the mirror's layout, and where a widget can go without covering another. |

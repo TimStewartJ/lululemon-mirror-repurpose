@@ -128,6 +128,7 @@ export async function startResponsesServer({ sockets = true, overSocket = ["gpt-
         const body = JSON.parse(data.toString("utf8"));
         fake.requests.push({ over: "socket", headers: request.headers, body });
         if (fake.silent) return;
+        if (body.type !== "response.create") return ws.send(JSON.stringify({ type: "error", status: 400, error: { code: "unknown_message", message: "Not a response.create message." } }));
         await send(eventsFor(body), (event) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(event)));
       });
     });
