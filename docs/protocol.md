@@ -35,6 +35,9 @@ POST /api/v1/clients/revoke
 POST /api/v1/wifi/configure
 GET  /api/v1/wifi/scan-guard
 PUT  /api/v1/wifi/scan-guard
+GET  /api/v1/journal
+POST /api/v1/journal/logs
+GET  /api/v1/journal/logs/{name}
 GET  /api/v1/dashboard
 PUT  /api/v1/dashboard
 GET  /api/v1/dashboard/layout
@@ -136,6 +139,55 @@ after the guard was applied (`sinceApplied`, which stays 0 where the guard
 works), and when the last one was (`lastAt`).
 Turning it on where `supported` is false answers 409. `status.wifi.scanGuard`
 carries `enabled`, `supported`, `state` and `detail`.
+
+`GET /api/v1/journal` returns what Mirror Home wrote down of what happened,
+which a restart of the Mirror does not erase; see
+[Afterwards: the journal](user-guide.md#afterwards-the-journal). `events`
+holds the lines, oldest first: `at` (epoch milliseconds), `up` (milliseconds
+since Android started), `boot` (different for every start of Android), `run`
+(the `runId` of the health report), `kind`, `what`, and `more` with the
+details where there are any. `?since=` leaves out lines from before a time,
+`?kind=` all but one kind, and `?limit=` (200 unless given, at most 5000) all
+but the newest. The kinds are `home` (`started`, with `version`, `code`,
+`previousEnd` and `deviceUpSeconds`), `wifi` (below), `log` (`copied`, with
+the copy's name) and `journal` (`left-out`, with how many `lines` were not
+written because more than 120 came within ten minutes). `lines`, `bytes`,
+`oldestAt`, `newestAt`, `leftOut` and `failures` describe the journal as a
+whole, `logs` lists the copies of Android's log as `{name, at, reason,
+bytes}`, and `wholeLog` says whether a copy taken now would hold Android's
+whole log or only Mirror Home's own lines. The journal is two files of 256
+KiB; when one is full the older is dropped.
+
+Lines of the kind `wifi` are written by the keeper that brings the Mirror
+back to its network: `connected` and `without` (how Mirror Home found Wi-Fi
+when it started), `lost`, `state` (what Wi-Fi is doing while it has no
+network, such as `SCANNING` or `ASSOCIATING`; each state once, and the steps
+towards a connection up to forty times per outage),
+`authentication-failed`, `rejoin` (Mirror Home asked Android to join the
+saved network again; the first ten times and every twelfth after),
+`switched-on`, `restart-wifi` and `wifi-on` (Wi-Fi switched off and on), and
+`back`, with how long it took (`after`, in seconds), how often Mirror Home
+asked and restarted Wi-Fi, and how often Wi-Fi was in each state. `lost`,
+`rejoin`, `restart-wifi` and `back` carry what Android said at that moment:
+whether `wifi` is on, what it is `doing`, whether the `display` is on,
+`freeMb`, the scan `guard`, the `network` and how many are `saved`, `held`
+(what Android holds against the saved network: its `status`, and from
+Android 6's own bookkeeping `disableReason`, `autoJoinStatus` and the counts
+of failed connections, addresses and passwords), and `inRange` (whether the
+last scan `seen` the network, its `rssi` and `frequenciesMhz`, among how many
+`networks`; `null` where Android will not say). `lost` adds `before`: the
+signal as it was last received, and how many `secondsAgo`.
+
+`POST /api/v1/journal/logs` takes `{reason}` and copies Android's log as it
+is now, answering 201 with `{name, at, reason, bytes, whole}`. Mirror Home
+makes such copies by itself when Wi-Fi is lost, when it first asks Android to
+join again, when it first switches Wi-Fi off and on, and when the network is
+back after more than a minute. `GET /api/v1/journal/logs/{name}` returns one
+as plain text: what the log says of Wi-Fi and the network (the newest 96
+KiB), then the last 300 lines of everything. The newest twelve taken at a
+loss are kept, and the newest twelve of all others, so that a network that
+comes and goes cannot push out what was kept of a long outage. A copy can
+name nearby Wi-Fi networks; it is given only to a paired client.
 
 `GET /api/v1/weather/locations?q=` looks a place up for the weather and
 answers `{results: [{label, latitude, longitude, timezone}]}` with up to five
@@ -330,7 +382,8 @@ a monitor that cannot see the glass. Times are epoch milliseconds.
 | `activity` | Whether the dashboard is `created`, `resumed`, `focused` and `visible`; `showing` is true only when nothing is drawn over it. `pausedForSeconds` and `unfocusedForSeconds` say for how long it has not been, `pauses` and `stops` count how often it was covered and wholly hidden, and `sleeping` says whether Mirror Home has darkened the display. `selectedHome` says whether Mirror Home is the HOME app Android would start. `front` lists the screens Android will name to an ordinary app, front first: Mirror Home's own and other HOME apps'. `recovery` is what Mirror Home did to stay in front (see [Architecture](architecture.md#staying-in-front)): `attended`, `wakeUps`, `relaunches`, the time, reason (`asleep` or `covered`) and `front` of the last one, and `otherHomeEnds`, how often it asked Android to end the idle processes of other HOME apps. |
 | `dashboard` | The dashboard page's load state and last failure, plus `consoleErrors`, `consoleWarnings` and `recentConsoleErrors` from its scripts. |
 | `api` | `unhandledErrors` and the last one's method, path and exception. |
-| `wifi` | `connected`, and when it is: `rssi`, `signalLevel` (0 to 4), `linkSpeedMbps` and `frequencyMhz`. `scanGuard` is the whole answer of `GET /api/v1/wifi/scan-guard`. |
+| `wifi` | `connected`, and when it is: `rssi`, `signalLevel` (0 to 4), `linkSpeedMbps` and `frequencyMhz`. `scanGuard` is the whole answer of `GET /api/v1/wifi/scan-guard`. `keeper` is what brings the Mirror back to its network: `state` (`connected`; `watching` for the first minute without a network; `rejoining`; `restarting-wifi`; `nothing-saved` on a Mirror that was never on a network; `unsupported` from Android 10 on), `supported`, `withoutNetworkSeconds` and `since` while there is none, the `rejoins` and `wifiRestarts` of this outage, the `outages` since Mirror Home started, `lastOutage` (`lostAt`, `backAt`, `seconds`, `rejoins`, `wifiRestarts`) and `lastAction`. |
+| `journal` | How much the [journal](#api-surface) holds: `lines`, `bytes`, `oldestAt`, `newestAt`, `writtenThisRun`, `leftOut` and `failures`; how many copies of Android's log there are (`logs`), and `wholeLog`. |
 | `clock` | `timeZone`, `utcOffsetMinutes`, `source`, `knownChanges`, `nextChange` and the IANA release of the bundled table. |
 | `pairing` | `open`, `lockedForSeconds`, `wrongCodes` and the number of paired `clients`. |
 | `otaSupervisor` | `installed`, and when it is: its version, whether it is `listening` on its port, and since when it has not been. Mirror Home looks every five minutes and whenever this report is read. `hold` says whether Mirror Home keeps the supervisor from being ended when memory is short: `state` is `held`, `waiting` (Android is starting it), `unsupported` (older than 1.3.0) or `refused` (signed with another key), with `since`, how often Mirror Home took hold (`binds`) and lost it (`losses`), and while held the supervisor's `pid` and its `oomScoreAdj` as the supervisor itself reads it: 58 when held, 294 or more when not. See [LAN OTA updates](ota-updates.md#kept-running-by-mirror-home). |

@@ -363,6 +363,9 @@ found without standing in front of it:
   last seconds; **brought back** says how often it has had to since it
   started. Script errors on the dashboard page are counted here.
 - **Memory** and **Storage**: what Mirror Home uses and what is left.
+- **Wi‑Fi**: whether the Mirror has lost its network since Mirror Home
+  started, when and for how long, and what brought it back. See
+  [When the network goes away](#when-the-network-goes-away).
 - Under **Uptime**, a line appears when the Mirror asks to be restarted. A
   Mirror has less than a gigabyte of memory, and its factory software leaks
   some of it every day. After a week or more, sooner with voice commands on,
@@ -400,7 +403,8 @@ looks. It is off until you turn it on. What changes:
   longer moves to a better one while the first still works.
 - A Mirror that loses its network looks for it and joins it again, as before.
   For as long as it has none, Mirror Home hands the switch back to Android,
-  and the line under it says that Android is looking for a network.
+  and the line under it says that Android is looking for a network. (In the
+  source of Android 6 the switch is consulted only while connected.)
 - Setting up Wi-Fi from the controls works as before.
 
 The line under the switch says whether Android took it. Android forgets the
@@ -415,9 +419,84 @@ well, once, over USB. Mirror Home then keeps the supervisor running even
 when memory is short, so an update or a rollback is never refused for that
 reason. See [Updating the supervisor](ota-updates.md#updating-the-supervisor).
 
+## When the network goes away
+
+A Mirror that loses its Wi-Fi network shows its setup screen: the clock, a
+pairing code, and **Wi-Fi disconnected, waiting for the network to return**.
+Nothing is lost: its settings and paired devices are as they were, and the
+dashboard returns when the network does.
+
+Android looks for the saved network by itself and nearly always finds it
+within seconds. When it does not, Mirror Home helps, because nobody can open
+Wi-Fi settings on a Mirror. One way it comes about: Android 6 sets a saved
+network aside once joining it has failed more than four times in a row, as
+happens while a router restarts or changes channel. It is meant to take the
+network back by itself; a Mirror has been seen not to for hours. So:
+
+- after a minute without a network Mirror Home picks the saved network
+  again, as a person would in Wi-Fi settings, which makes Android take it
+  back at once; then every two minutes, and after half an hour every five;
+- after ten minutes it switches Wi-Fi off and on, which takes every saved
+  network back and starts afresh the part of Android that may have got
+  stuck; again after half an hour, and then once an hour;
+- Wi-Fi that is switched off while there is a network to go back to is
+  switched on again after a minute.
+
+It goes on for as long as the network is away, so a Mirror comes back by
+itself after a router was restarted, replaced or out of power for a night.
+It cannot help when the network's name or password changed: connect a
+computer over USB and set Wi-Fi up again (see [Recovery](#recovery)). A
+Mirror that was never on a network is left alone.
+
+**Settings > Health > Wi‑Fi** says afterwards whether the network was lost,
+for how long, and whether it came back by itself or with that help.
+
+## Afterwards: the journal
+
+Android keeps its log in memory, so switching a Mirror off and on erases the
+only account of what went wrong before. Mirror Home therefore keeps a
+journal on the Mirror's own storage: a line when it starts, with how the run
+before ended; a line when Wi-Fi is lost, with how well the network was
+received just before, whether the display was on and how much memory was
+free; what Wi-Fi did while it searched; every time Mirror Home asked Android
+to join again, with whether the network was in range and what Android held
+against it; and when the network came back. It holds about two thousand
+lines in half a megabyte and drops the oldest when full.
+
+From a computer:
+
+```powershell
+.\tools\journal.ps1                      # the last two days
+.\tools\journal.ps1 --since 6h --kind wifi
+.\tools\journal.ps1 save build\journal   # everything, as files, to attach to a bug report
+```
+
+A Mirror without its network can still be read over USB: `adb forward
+tcp:18787 tcp:8787`, then add `--host 127.0.0.1 --port 18787`.
+
+The reason *why* Android dropped a network or would not join it stands only
+in Android's own log, which on a Mirror reaches back a few minutes. Mirror
+Home copies that log at the moment Wi-Fi is lost, when it first helps, and
+when the network is back; `.\tools\journal.ps1 logs` lists the copies and
+`save` fetches them. Android lets an app read only its own lines of the log
+unless a person allows more, once, from a computer with USB debugging:
+
+```powershell
+adb shell pm grant dev.mirror.repurpose android.permission.READ_LOGS
+adb shell am force-stop dev.mirror.repurpose   # Mirror Home starts again by itself
+```
+
+The permission stays through updates and restarts. Until it is given, a copy
+holds Mirror Home's lines only and says so in its first lines. A copy can
+contain the names of Wi-Fi networks nearby, so look before you share one.
+`.\tools\journal.ps1 copy "before I restart it"` makes a copy on request,
+which is worth doing before switching off a Mirror that misbehaves.
+
 ## Recovery
 
-If normal Wi-Fi is unavailable, use **Settings > Setup network > Start** in
+A Mirror that has lost its network tries to get back to it by itself; see
+[When the network goes away](#when-the-network-goes-away). If the network
+itself changed, use **Settings > Setup network > Start** in
 the paired page while connected through USB. Automatic group creation at
 startup requires both no managed SSID and no active Wi-Fi connection; reboot
 alone does not start it for an unreachable saved network. QR codes also

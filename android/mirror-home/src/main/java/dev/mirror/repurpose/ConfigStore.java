@@ -10,6 +10,7 @@ public final class ConfigStore {
     private static final String KEY_DASHBOARD_URL = "dashboard_url";
     private static final String KEY_DISPLAY_NAME = "display_name";
     private static final String KEY_MANAGED_WIFI_SSID = "managed_wifi_ssid";
+    private static final String KEY_LAST_WIFI_SSID = "last_wifi_ssid";
     private static final String KEY_TIME_ZONE = "time_zone";
     private static final String KEY_CLOCK_24_HOUR = "clock_24_hour";
     private static final String KEY_UTC_OFFSET_MINUTES = "utc_offset_minutes";
@@ -134,6 +135,15 @@ public final class ConfigStore {
 
     public void setManagedWifiSsid(String ssid) {
         preferences.edit().putString(KEY_MANAGED_WIFI_SSID, ssid).apply();
+    }
+
+    /** The network the Mirror was last on, however it got there; empty if it never was on one. */
+    public String getLastWifiSsid() {
+        return preferences.getString(KEY_LAST_WIFI_SSID, "");
+    }
+
+    public void setLastWifiSsid(String ssid) {
+        preferences.edit().putString(KEY_LAST_WIFI_SSID, ssid).apply();
     }
 
     public String getTimeZoneId() {

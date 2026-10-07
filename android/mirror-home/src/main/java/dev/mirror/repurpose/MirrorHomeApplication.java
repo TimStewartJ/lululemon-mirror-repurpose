@@ -4,6 +4,10 @@ import android.app.Application;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import dev.mirror.repurpose.health.ProcessHealth;
 
@@ -24,13 +28,23 @@ public final class MirrorHomeApplication extends Application {
             // and its runs are not the dashboard's.
             return;
         }
-        ProcessHealth.start(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
+        ProcessHealth health = ProcessHealth.start(this, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);
+        try {
+            Journal.note(this, "home", "started", new JSONObject()
+                    .put("version", BuildConfig.VERSION_NAME)
+                    .put("code", BuildConfig.VERSION_CODE)
+                    .put("previousEnd", health.previousEnd())
+                    .put("deviceUpSeconds", SystemClock.elapsedRealtime() / 1000L));
+        } catch (JSONException impossible) {
+            // Numbers and words always fit.
+        }
         if (BuildConfig.OTA_HEALTH_FAILURE_TEST) {
             return;
         }
         wifiProvisioner = new WifiProvisioner(this);
         ensureWifiConnection();
         ScanGuard.getInstance(this).start(this);
+        WifiKeeper.getInstance(this).start(this);
         SupervisorHold.getInstance(this).start();
         MirrorBinderClient.getInstance(this).connect();
         SystemHelperClient.getInstance(this).connect();

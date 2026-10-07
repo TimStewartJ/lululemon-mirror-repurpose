@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Bring the Mirror back to its Wi-Fi network when Android does not. One
+  evening a Mirror stood for hours with its network a room away, showing
+  its setup screen, until somebody looked: Mirror Home only asked Android to
+  join the saved network while it started, and after that left it to
+  Android, which normally finds it within seconds and that time did not.
+  Why not is not known, since the restart erased Android's log; the Mirror's
+  saved network carried the mark of having been set aside by Android after
+  more than four failed attempts to join it in a row.
+  Now, after a minute without a network, Mirror Home picks the saved network
+  again as a person would, which makes Android take it back, then every two minutes and after half an hour every
+  five; after ten minutes it switches Wi-Fi off and on, again after half an
+  hour and then hourly; and Wi-Fi that is off while there is a network to go
+  back to is switched on. A Mirror that was never on a network, and one
+  whose setup network is in use, are left alone. `health.wifi.keeper` and
+  **Settings > Health > Wi‑Fi** say whether the network was lost since
+  Mirror Home started, for how long, and what brought it back. The emulator
+  has no Wi-Fi to lose, so what the keeper does is tested against a stand-in
+  for Android.
+- Keep a journal that a restart does not erase. Android's log lives in
+  memory, so switching a Mirror off and on, which is how one that misbehaves
+  is brought back, erased the only account of what went wrong. Mirror Home
+  now writes to its own storage when it starts and how the run before ended,
+  when Wi-Fi is lost (with the signal just before, whether the display was
+  on and how much memory was free), what Wi-Fi does while it searches, each
+  time it asks Android to join again (with whether the network was in range
+  and what Android holds against it), and when the network is back: about
+  two thousand lines in half a megabyte, the oldest dropped first
+  (`GET /api/v1/journal`). At the moment Wi-Fi is lost, when it first helps
+  and when the network is back, it also copies Android's own log, which is
+  where the reason stands and which on a Mirror reaches back only minutes
+  (`POST /api/v1/journal/logs`, `GET /api/v1/journal/logs/{name}`; the newest
+  twelve of each sort are kept). A copy holds Android's whole log once a person has given
+  Mirror Home `READ_LOGS` from a computer (`adb shell pm grant
+  dev.mirror.repurpose android.permission.READ_LOGS`, then start it again);
+  until then it holds Mirror Home's own lines and says so.
+  `tools/journal.ps1` reads the journal and fetches the copies, over the
+  network or over USB. The emulator suite has a check for it, `journal`, and
+  `reboot` checks that the journal reaches back across a restart.
 - Let the assistant put more on the glass than its line of words: moments. A
   moment is something that shows for a while and then leaves by itself: a
   countdown that runs ("set a timer for five minutes"), words written large

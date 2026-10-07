@@ -150,6 +150,15 @@ See [LAN OTA updates](ota-updates.md) before changing device-owner state.
 
 ## Wi-Fi and pairing recovery
 
+A Mirror without its network shows the setup screen with **Wi-Fi
+disconnected**; its pairings and settings are intact. Mirror Home keeps
+asking Android to join the saved network and switches Wi-Fi off and on at
+intervals ([When the network goes away](user-guide.md#when-the-network-goes-away)),
+so first give it a quarter of an hour. Before switching the Mirror off and
+on, read what it wrote down, which says what happened and is the evidence a
+bug report needs: `adb forward tcp:18787 tcp:8787`, then
+`.\tools\journal.ps1 --host 127.0.0.1 --port 18787 save build\journal`.
+
 Use the [USB reference](provisioning.md#usb-access-and-recovery) to reach the
 installed Home over `http://127.0.0.1:18787/`. A previously paired browser still
 needs its own credential; ADB authorization is not browser pairing. Use

@@ -55,6 +55,7 @@ DEBUG_SUPERVISOR_APK = (
 )
 SUPERVISOR = "dev.mirror.repurpose.updater"
 SCAN_GUARD = "/api/v1/wifi/scan-guard"
+JOURNAL = "/api/v1/journal"
 # How readily the kernel of Android 6 ends a process ("oom_score_adj"): what the display
 # needs, and a background service. A supervisor that Mirror Home holds is ranked as the first.
 HELD_SCORE = 58
@@ -1889,6 +1890,139 @@ def check_updater_held(ctx: Context) -> None:
 
 
 # ---------------------------------------------------------------------------
+# What explains a bad night afterwards: the journal, which a restart does not
+# erase, and the copies of Android's log that are kept with it.
+# ---------------------------------------------------------------------------
+
+
+def journal_lines(ctx: Context, query: str = "") -> list[dict]:
+    return ctx.api.expect("GET", JOURNAL + query)["events"]
+
+
+def started_line(lines: list[dict], run: int) -> dict | None:
+    """The line with which a run of Mirror Home wrote that it had started."""
+    found = [line for line in lines if (line["kind"], line["what"], line["run"]) == ("home", "started", run)]
+    return found[-1] if found else None
+
+
+def log_copy(ctx: Context, name: str) -> str:
+    reply = ctx.api.call("GET", f"{JOURNAL}/logs/{name}")
+    require(
+        reply.status == 200 and "text/plain" in reply.headers.get("content-type", ""),
+        f"The copy of the log {name} answered {reply.status}: {describe(reply.body)}",
+    )
+    return reply.body.decode("utf-8", "replace")
+
+
+def check_journal(ctx: Context) -> None:
+    require(
+        ctx.api.call("GET", JOURNAL, token="not-a-credential").status == 401,
+        "The journal is given to whoever asks",
+    )
+    before = wait_past_start(ctx)
+    run = before["process"]["runId"]
+    keeper = before["wifi"].get("keeper") or {}
+    require(
+        keeper.get("supported") and keeper.get("state") in ("connected", "nothing-saved"),
+        f"On an Android that has not lost a network, the Wi-Fi keeper reports {describe(keeper)}",
+    )
+    require(
+        keeper["rejoins"] == 0 and keeper["wifiRestarts"] == 0 and keeper["outages"] == 0,
+        f"The Wi-Fi keeper did something where nothing was lost: {describe(keeper)}",
+    )
+    lines = journal_lines(ctx)
+    first = started_line(lines, run)
+    require(first is not None, f"Mirror Home did not write that run {run} started: {describe(lines, 600)}")
+    require(
+        first["more"]["version"] == before["appVersion"] and first["boot"] and first["at"] > 0,
+        f"The line for the start of run {run} reads {describe(first)}",
+    )
+    require(
+        any(line["kind"] == "wifi" and line["run"] == run and line["what"] in ("connected", "without")
+            for line in lines),
+        f"Nothing was written of how Mirror Home found Wi-Fi when it started: {describe(lines, 600)}",
+    )
+    require(
+        journal_lines(ctx, f"?since={first['at'] + 1}&kind=home") == [],
+        "Asked for what happened since, the journal gave what happened before",
+    )
+    for query, what in (("?limit=0", "No lines"), ("?since=yesterday", "A time that is no number")):
+        expect_refused(ctx.api.call("GET", JOURNAL + query), 400, f"{what} asked of the journal")
+
+    # Mirror Home starts again, as after an update or a crash. What it wrote before is still there.
+    ctx.restart_home()
+    wait_for_run(ctx, run + 1)
+    again = wait_for(
+        "the next run to write that it started",
+        lambda: (lambda seen: seen if started_line(seen, run + 1) else None)(journal_lines(ctx)),
+        timeout=30,
+    )
+    require(
+        started_line(again, run) == first,
+        f"After Mirror Home started again, the line of the run before reads {describe(started_line(again, run))}",
+    )
+    require(
+        started_line(again, run + 1)["more"]["previousEnd"] == "killed",
+        f"The new run does not say how the one before ended: {describe(started_line(again, run + 1))}",
+    )
+
+    # A copy of Android's log, as a person would ask for one before switching a Mirror off and on.
+    expect_refused(ctx.api.call("POST", JOURNAL + "/logs", {"reason": 7}), 400, "A reason that is no text")
+    quiet = f"mirror-check-quiet-{run}"
+    ctx.adb.shell("log", "-t", "wpa_supplicant", quiet)
+    own = ctx.api.expect("POST", JOURNAL + "/logs", {"reason": "Before I restart it!"}, status=201)
+    require(
+        re.fullmatch(r"log-\d+-before-i-restart-it\.txt", own["name"]) and own["bytes"] > 0,
+        f"The copy of the log is described as {describe(own)}",
+    )
+    text = log_copy(ctx, own["name"])
+    require(text.startswith("# Mirror Home "), f"The copy of the log begins {text[:120]!r}")
+    if not own["whole"]:
+        require(
+            quiet not in text and "Only Mirror Home's own lines" in text,
+            "Without READ_LOGS, a copy of the log holds another program's lines or does not say that it holds none",
+        )
+    for name in ("log-1-nothing.txt", "..%2Fjournal.jsonl", "journal.jsonl"):
+        expect_refused(ctx.api.call("GET", f"{JOURNAL}/logs/{name}"), 404, f"The copy of the log {name!r}")
+
+    # Given READ_LOGS over adb, which is how a person gives it, the copies hold what Android itself says.
+    ctx.adb.shell("pm", "grant", PACKAGE, "android.permission.READ_LOGS")
+    ctx.restart_home()
+    wait_for_run(ctx, run + 2)
+    said = f"mirror-check-said-{run}"
+    ctx.adb.shell("log", "-t", "wpa_supplicant", said)
+    whole = ctx.api.expect("POST", JOURNAL + "/logs", {"reason": "granted"}, status=201)
+    require(whole["whole"], "Given READ_LOGS and started again, Mirror Home still reads only its own lines")
+    require(
+        said in log_copy(ctx, whole["name"]),
+        "What Android's Wi-Fi wrote to the log is not in a copy taken a moment later",
+    )
+    journal = ctx.api.expect("GET", JOURNAL)
+    require(
+        journal["wholeLog"] and [copy["name"] for copy in journal["logs"]][-2:] == [own["name"], whole["name"]],
+        f"The journal lists the copies of the log as {describe(journal['logs'])}",
+    )
+    require(
+        any((line["kind"], line["what"]) == ("log", "copied") and line["more"]["name"] == whole["name"]
+            for line in journal["events"]),
+        "That a copy of the log was made is not written in the journal",
+    )
+    summary = ctx.health()["journal"]
+    require(
+        summary["lines"] >= len(journal["events"]) > 0 and summary["failures"] == 0 and summary["wholeLog"]
+        and summary["logs"] == len(journal["logs"]),
+        f"The health report says of the journal: {describe(summary)}",
+    )
+    ctx.wait_dashboard()
+    ctx.wait_lit("journal")
+    # Kept with the evidence: what a journal and a copy of the log look like.
+    (ctx.output / "journal.json").write_text(json.dumps(journal, indent=1), encoding="utf-8")
+    (ctx.output / "journal-log.txt").write_text(log_copy(ctx, whole["name"]), encoding="utf-8")
+    ctx.note("journal", {key: summary[key] for key in ("lines", "bytes", "logs", "wholeLog")})
+    ctx.note("wifiKeeper", keeper["state"])
+
+
+# ---------------------------------------------------------------------------
 # Voice commands. The suite speaks through two doors that only a debug build
 # has: one takes a recording in place of the microphone, the other a sentence
 # as if the recogniser had just heard it.
@@ -3244,6 +3378,15 @@ def check_reboot(ctx: Context) -> None:
         "The boot identifier did not change across a reboot",
     )
     ctx.note("bootIdKnown", None not in boots)
+    # What was written before the restart is still there, and tells the two starts of Android apart.
+    journal = ctx.api.call("GET", JOURNAL)
+    if journal.status == 200:
+        starts = [line for line in journal.body["events"] if (line["kind"], line["what"]) == ("home", "started")]
+        require(
+            len({line["boot"] for line in starts}) >= 2 and starts[-1]["more"]["previousEnd"] == "reboot",
+            f"After a reboot the journal tells of Mirror Home's starts: {describe(starts, 600)}",
+        )
+        ctx.note("journalReachesBack", round((journal.body["newestAt"] - journal.body["oldestAt"]) / 1000))
     require(after["device"]["uptimeSeconds"] < before["device"]["uptimeSeconds"], "The device did not restart")
     require(ctx.api.expect("GET", "/api/v1/bootstrap", token=None)["paired"], "Pairing was lost")
     require(ctx.api.expect("GET", "/api/v1/preferences")["timeZone"] == zone, "The clock was lost")
@@ -3292,6 +3435,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("health", "The health report describes this device and shows no faults", check_health, False),
     ("scan-guard", "Asked to, Android stops scanning for Wi-Fi while connected; asked again, it scans as before", check_scan_guard, False),
     ("updater-held", "Mirror Home keeps the OTA supervisor from being ended first, and the supervisor does not need it to", check_updater_held, False),
+    ("journal", "What happens is written where a restart does not erase it, and Android's log is copied when asked", check_journal, False),
     ("voice-off", "Voice commands are off until switched on, and nothing listens", check_voice_off, False),
     ("voice-model", "What is no speech model is refused; one that cannot be loaded harms nothing", check_voice_model, False),
     ("voice-listens", "With the speech model installed and voice on, a process of its own listens", check_voice_listens, False),
@@ -3938,7 +4082,15 @@ def mirror_health(ctx: MirrorContext) -> None:
     hold = supervisor.get("hold")
     if guard is not None:
         ctx.note("scanGuard", guard)
+    keeper = (health.get("wifi") or {}).get("keeper")
+    journal = health.get("journal")
+    if keeper is not None:
+        ctx.note("wifiKeeper", keeper)
+    if journal:
+        ctx.note("journal", journal)
     problems = []
+    if journal and journal.get("failures"):
+        problems.append(f"the journal could not be written {journal['failures']} times in this run")
     # Without a network the guard stands aside, so that Android finds one as it came.
     standing_aside = guard and guard.get("state") == "waiting" and not (health.get("wifi") or {}).get("connected")
     if guard and guard.get("enabled") and guard.get("state") != "applied" and not standing_aside:

@@ -151,6 +151,22 @@ public final class ProcessHealth {
         return instance;
     }
 
+    /** The number of this run; each start of the process counts one further. */
+    public long runId() {
+        return runId;
+    }
+
+    /** What the kernel calls this start of Android, or null if it does not say. */
+    public String bootId() {
+        return bootId;
+    }
+
+    /** How the run before this one ended, as {@link RunHistory} names it; empty if there was none. */
+    public String previousEnd() {
+        Object previous = stored(KEY_PREVIOUS_RUN);
+        return previous instanceof JSONObject ? ((JSONObject) previous).optString("end") : "";
+    }
+
     public void recordTrimMemory(int level) {
         trimCount++;
         lastTrimLevel = level;

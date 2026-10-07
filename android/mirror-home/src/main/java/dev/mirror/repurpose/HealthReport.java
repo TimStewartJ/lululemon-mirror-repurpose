@@ -9,6 +9,7 @@ import android.graphics.Point;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.WindowManager;
@@ -87,7 +88,9 @@ final class HealthReport {
                 .put("dashboard", DashboardDiagnostics.snapshot())
                 .put("api", ApiDiagnostics.snapshot())
                 .put("wifi", wifi(context)
-                        .put("scanGuard", ScanGuard.getInstance(context).snapshot()))
+                        .put("scanGuard", ScanGuard.getInstance(context).snapshot())
+                        .put("keeper", WifiKeeper.getInstance(context).snapshot(SystemClock.elapsedRealtime())))
+                .put("journal", journal(context))
                 .put("clock", new JSONObject()
                         .put("timeZone", configStore.getTimeZoneId())
                         .put("utcOffsetMinutes", clock.offsetMinutesAt(now))
@@ -151,6 +154,17 @@ final class HealthReport {
             }
         }
         return JSONObject.NULL;
+    }
+
+    /** How far back the journal reaches, and whether copies of Android's log hold all of it. */
+    private static Object journal(Context context) throws JSONException {
+        Journal journal = Journal.get(context);
+        if (journal == null) {
+            return JSONObject.NULL;
+        }
+        return journal.summary()
+                .put("logs", SystemLog.getInstance(context).list().length())
+                .put("wholeLog", SystemLog.whole());
     }
 
     private static JSONObject wifi(Context context) throws JSONException {

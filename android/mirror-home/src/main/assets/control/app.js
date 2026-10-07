@@ -1658,7 +1658,25 @@
       : updater.listening ? 'Ready' + updaterHoldText(updater)
         : silentFor < 60000 ? 'Not answering right now'
           : 'Not answering since ' + formatDate(updater.unreachableSince);
+    byId('health-wifi').textContent = wifiHealthText(health.wifi || {});
     byId('health-report').textContent = JSON.stringify(health, null, 2);
+  }
+
+  /* Whether the mirror lost its network since Mirror Home started, and what brought it back. */
+  function wifiHealthText(wifi) {
+    var keeper = wifi.keeper;
+    if (!keeper || keeper.state === 'unsupported') return wifi.connected ? 'Connected' : 'Not connected';
+    var text = keeper.state === 'connected' ? 'Connected'
+      : keeper.state === 'nothing-saved' ? 'No network set up'
+        : 'Without its network for ' + formatUptime(keeper.withoutNetworkSeconds) + ', trying to join it again';
+    var last = keeper.lastOutage;
+    if (last) {
+      text += '. Lost ' + (keeper.outages === 1 ? 'once' : keeper.outages + ' times')
+        + ' since Mirror Home started, last ' + formatDate(last.lostAt) + ' for ' + formatUptime(last.seconds)
+        + (last.wifiRestarts ? ', until Mirror Home switched Wi\u2011Fi off and on'
+          : last.rejoins ? ', until Mirror Home asked Android to join again' : '');
+    }
+    return text;
   }
 
   /* Whether Android would end the updater when memory runs short. */

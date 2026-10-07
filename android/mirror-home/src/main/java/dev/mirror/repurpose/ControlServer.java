@@ -413,6 +413,15 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/wifi/scan-guard".equals(uri)) {
                 return updateScanGuard(readJson(session));
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/journal".equals(uri)) {
+                return journal(session);
+            }
+            if (Method.POST.equals(session.getMethod()) && "/api/v1/journal/logs".equals(uri)) {
+                return copyLog(readJson(session));
+            }
+            if (Method.GET.equals(session.getMethod()) && uri.startsWith("/api/v1/journal/logs/")) {
+                return logCopy(uri.substring("/api/v1/journal/logs/".length()));
+            }
             if (Method.GET.equals(session.getMethod())
                     && "/api/v1/onboarding".equals(uri)) {
                 return response(Response.Status.OK, onboardingStatus());
@@ -1053,6 +1062,70 @@ public final class ControlServer extends NanoHTTPD {
             return error(Response.Status.CONFLICT, unsupported.getMessage());
         }
         return response(Response.Status.OK, scanGuard.snapshot());
+    }
+
+    /** What happened on this Mirror and when; see {@link Journal}. */
+    private Response journal(IHTTPSession session) throws JSONException {
+        Journal journal = Journal.get(context);
+        if (journal == null) {
+            return error(Response.Status.NOT_FOUND, "This process keeps no journal");
+        }
+        long since = 0L;
+        int limit = 200;
+        try {
+            String asked = parameter(session, "since");
+            if (!asked.isEmpty()) {
+                since = Long.parseLong(asked);
+            }
+            asked = parameter(session, "limit");
+            if (!asked.isEmpty()) {
+                limit = Integer.parseInt(asked);
+            }
+        } catch (NumberFormatException notANumber) {
+            return error(Response.Status.BAD_REQUEST, "since and limit must be whole numbers");
+        }
+        if (since < 0 || limit < 1 || limit > 5000) {
+            return error(Response.Status.BAD_REQUEST, "since must not be negative, and limit from 1 to 5000");
+        }
+        return response(Response.Status.OK, journal.summary()
+                .put("events", journal.read(since, parameter(session, "kind"), limit))
+                .put("logs", SystemLog.getInstance(context).list())
+                .put("wholeLog", SystemLog.whole()));
+    }
+
+    /** Keeps a copy of Android's log as it is now; see {@link SystemLog}. */
+    private Response copyLog(JSONObject body) throws JSONException {
+        Object reason = body.opt("reason");
+        if (reason != null && !(reason instanceof String)) {
+            return error(Response.Status.BAD_REQUEST, "reason must be text");
+        }
+        JSONObject copy = SystemLog.getInstance(context)
+                .capture(reason == null ? "asked" : (String) reason, System.currentTimeMillis());
+        if (copy == null) {
+            return error(Response.Status.INTERNAL_ERROR, "The log could not be copied");
+        }
+        Journal.note(context, "log", "copied", new JSONObject(copy.toString()));
+        return response(Response.Status.CREATED, copy);
+    }
+
+    private Response logCopy(String name) {
+        byte[] text = SystemLog.getInstance(context).read(name);
+        if (text == null) {
+            return error(Response.Status.NOT_FOUND, "There is no such copy of the log");
+        }
+        Response result = newFixedLengthResponse(
+                Response.Status.OK,
+                "text/plain; charset=utf-8",
+                new ByteArrayInputStream(text),
+                text.length);
+        result.addHeader("Cache-Control", "no-store");
+        result.addHeader("X-Content-Type-Options", "nosniff");
+        return result;
+    }
+
+    private static String parameter(IHTTPSession session, String name) {
+        java.util.List<String> values = session.getParameters().get(name);
+        return values == null || values.isEmpty() ? "" : values.get(0).trim();
     }
 
     private JSONObject onboardingStatus() throws JSONException {

@@ -123,6 +123,7 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `health` | The health report describes this device (Android 6, WebView 44, the whole 1080x1920 panel, a 128 MB app heap, no input devices, Mirror Home as the HOME app) and shows no crash, unhandled API error or covered dashboard. Its count of open files agrees with the kernel's own list. It carries what the kernel says of memory and the five processes that hold most, and a device that has just started does not ask to be restarted. |
 | `scan-guard` | Android 6 has the switch for scanning while connected and scans as it came. A scan guard that is neither on nor off is refused. Turned on, Android reports that it no longer scans while connected, the status says so, and the scans that still arrive are counted; after Mirror Home starts again it finds the switch as it left it and does not set it again. Turned off, Android scans as before. |
 | `updater-held` | With the OTA supervisor installed, Mirror Home takes hold of it and the kernel ranks its process with what the display needs (58, not a background service's 294). Ended as the kernel ends it, it is started and held again; replaced, it is held again; and while Mirror Home itself is stopped and started, the supervisor's process carries on. Removed again, Mirror Home reports no supervisor. |
+| `journal` | Nobody without a credential is given the journal. The Wi-Fi keeper reports an Android that has lost no network and has done nothing. Mirror Home has written that this run started, with its version, and how it found Wi-Fi. Asked for what happened since, the journal leaves out what happened before; no lines, or a time that is no number, are refused. After Mirror Home is stopped and starts again, the earlier lines read as before and the new run says how the one before ended. A copy of Android's log is made when asked and named by its reason; without `READ_LOGS` it holds none of another program's lines and says so. Given `READ_LOGS` over adb and started again, a copy holds what Android's Wi-Fi wrote a moment before. The copies are listed, noted in the journal and counted in the health report. Only a copy of the log can be read by name. |
 | `voice-off` | On a fresh installation voice commands are off, no speech model is installed and no recogniser runs. The controls are told what can be said, and the status and the health report say that voice is off. Switched on without a model, voice waits for one and still nothing runs. |
 | `voice-model` | An upload that is not a zip archive, holds no speech model, names a file outside itself or differs from its checksum is refused and leaves nothing behind. An archive with the right files and nothing in them installs; the recogniser then reports that it cannot load it, and Mirror Home carries on as the same process. |
 | `voice-listens` | The speech model installs with its checksum, and with voice switched on a process of its own loads it and listens, holding less than 250 MB and keeping up with the microphone. |
@@ -140,7 +141,7 @@ must not be a Mirror's. It checks all three before it changes anything.
 | `cold-start` | Starting Mirror Home never lights the whole screen, since on mirror glass a white starting window is a bright flash, and the dashboard then fades in. |
 | `restart` | A stopped process is recorded as the previous run, Android starts its HOME app again, Home comes back paired, and the dashboard returns to the glass. |
 | `quick-restart` | A process stopped within seconds of starting, as Android 6 does while it replaces a HOME app, is counted as an early stop and not reported as the previous run. |
-| `reboot` | After a reboot the dashboard comes to the front by itself, and pairing and the clock survive. |
+| `reboot` | After a reboot the dashboard comes to the front by itself, and pairing and the clock survive. The journal still holds what was written before, and tells the two starts of Android apart. |
 | `voice-returns` | After the restarts and the reboot before it, voice is still switched on, listens again by itself and follows a spoken command. Switched off, its process ends; the speech model is then removed. |
 | `script-errors` | The dashboard logged no script error and the API hit no unhandled error during the whole run. |
 
@@ -270,6 +271,12 @@ still need the real unit:
 - what stopping the scans does to a Wi-Fi connection and to the factory
   daemon that grows with them: the emulator has neither, and never scans.
   `scan-guard` checks that Android takes the switch and gives it back;
+- a Wi-Fi network that goes away, and Mirror Home bringing the Mirror back
+  to it: the emulator has no Wi-Fi to lose. What the keeper does and when is
+  checked against a stand-in for Android (`WifiKeeperTest`), and `journal`
+  checks that it leaves an Android alone that has lost nothing. On a Mirror
+  with USB debugging, `adb shell svc wifi disable` shows the first step: the
+  keeper switches Wi-Fi on again after a minute;
 - the system helper;
 - the factory launcher itself. The emulator's launcher takes its place as
   the second HOME app, but does nothing of its own accord, where the factory
@@ -341,14 +348,17 @@ with `host`, `port` and `token`.
 |---|---|
 | `reachable` | The Mirror does not answer on the network. |
 | `status` | Wi-Fi is disconnected, the background video reports an error or dropped 1% or more of its frames, presence sensing is on but not monitoring, or the weather shown is stale. |
-| `health` | A crash is recorded, Home was stopped more than twice while starting, the dashboard stays covered by another screen for 30 seconds, Mirror Home is not Android's HOME app, Android has put the display to sleep, the dashboard logged script errors, the API hit an unhandled error, Android reports low memory, the Mirror asks to be switched off and on, less than 256 MiB of storage is free, the OTA supervisor is installed but silent for 30 seconds, the scan guard is on and Android still scans while connected (by its own word, or because more than two scans arrived since; a guard that stands aside because Wi-Fi has no network is not that), the supervisor is signed with another key than Mirror Home or is held and still ranked as a background service, the clock keeps a fixed offset, or pairing is locked. |
+| `health` | A crash is recorded, Home was stopped more than twice while starting, the dashboard stays covered by another screen for 30 seconds, Mirror Home is not Android's HOME app, Android has put the display to sleep, the dashboard logged script errors, the API hit an unhandled error, Android reports low memory, the Mirror asks to be switched off and on, less than 256 MiB of storage is free, the OTA supervisor is installed but silent for 30 seconds, the scan guard is on and Android still scans while connected (by its own word, or because more than two scans arrived since; a guard that stands aside because Wi-Fi has no network is not that), the supervisor is signed with another key than Mirror Home or is held and still ranked as a background service, the journal could not be written, the clock keeps a fixed offset, or pairing is locked. |
 | `updater` | The OTA supervisor does not answer a signed request, is not the device owner, does not support the firmware, needs recovery, disagrees with Home about the installed version, or reports a crash of its own. Skipped when this computer has no `.secrets/mirror-ota.json`. |
 
 Mirror Home releases before 2.2.0 have no health report; `health` is then
 skipped rather than failed. The run prints what it read and writes it to
 `build/validation/mirror-<time>/report.json`. That includes which screens
 Android has in front (`front`), and how often Mirror Home had to wake the
-display or take it back (`recovery`).
+display or take it back (`recovery`). It also holds what the Wi-Fi keeper
+says (`wifiKeeper`: whether the network was lost since Mirror Home started,
+for how long, and what brought it back) and how far back the journal reaches
+(`journal`); `.\tools\journal.ps1` reads the journal itself.
 
 ### Exercising it
 
