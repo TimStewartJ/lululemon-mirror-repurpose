@@ -77,6 +77,17 @@ A debug build leaves out the same unused library code as a release build
 (`android/mirror-home/proguard-rules.pro`), so that code which was wrongly
 left out fails here and not on a Mirror.
 
+A release build is also rewritten by R8, and one thing it writes ends the
+app on this emulator, though not on a Mirror: Android 6 compiles an app as
+it installs it, and its compiler for x86 processors writes wrong code for a
+list or array of more than five objects that is made in one step
+(`Arrays.asList("a", "b", "c", "d", "e", "f")`), except in a class's static
+initializer, which it does not compile. A release build with such a list
+runs until that line is reached and is then ended with a segmentation
+fault; the debug build never shows it. `tools/dex_guard.py`, which
+`check.py` runs on the release APK, fails when Mirror Home's own code has
+one; the cure is to make the list a constant of its class.
+
 | Option | Effect |
 |---|---|
 | `--quick` | Skip the check that reboots the emulator. |

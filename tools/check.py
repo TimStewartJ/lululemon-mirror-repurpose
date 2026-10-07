@@ -74,6 +74,11 @@ def main() -> None:
             "--no-daemon",
         ]
     )
+    # What R8 wrote for the release build, which no emulator run of the debug build would show.
+    releases = sorted((REPO / "android" / "mirror-home" / "build" / "outputs" / "apk" / "release").glob("*.apk"))
+    if not releases:
+        raise SystemExit("The release build of Mirror Home left no APK to look into")
+    run([sys.executable, str(REPO / "tools" / "dex_guard.py"), *map(str, releases)])
     if options.emulator:
         run(
             [
