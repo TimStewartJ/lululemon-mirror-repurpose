@@ -45,6 +45,7 @@ test("health reports every part from what is known, without asking anyone", asyn
     ok: true,
     name: "mirror-companion",
     version: "0.1.0",
+    provider: "copilot-cli",
     model: "gpt-6-luna",
     brain: { ready: true, detail: "" },
     stt: { ready: true, model: "small.en", device: "cuda", detail: "" },
@@ -57,11 +58,11 @@ test("health reports every part from what is known, without asking anyone", asyn
   assert.equal(brain.runs.length, 0);
 
   brain.ready = false;
-  brain.detail = "GitHub Copilot is not usable.";
+  brain.detail = "The model gpt-6-luna of copilot-cli is not usable.";
   stt.device = "cpu";
   const worse = (await call("GET", "/v1/health")).body;
   assert.equal(worse.ok, false);
-  assert.deepEqual(worse.brain, { ready: false, detail: "GitHub Copilot is not usable." });
+  assert.deepEqual(worse.brain, { ready: false, detail: "The model gpt-6-luna of copilot-cli is not usable." });
   assert.equal(worse.stt.device, "cpu");
 });
 

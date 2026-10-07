@@ -1,12 +1,14 @@
 // Tries the real model against a fake mirror: says a set of requests to a
 // companion that runs in this process, and prints what was heard, which
 // tools ran, the reply and the timings, with a check of each outcome.
-// It needs the Copilot CLI login of the account it runs under, and nothing
-// else: speech-to-text is replaced by a stand-in, and no real mirror is used.
+// It needs a sign-in for the provider it is given, as the companion does (the
+// README's "Choosing a model"), and nothing else: speech-to-text is replaced
+// by a stand-in, and no real mirror is used.
 //
-//   node scripts/try-brain.mjs [--model NAME] [--effort LEVEL] [--offset MINUTES] [--zone NAME]
-//                              [--only WORD] [--calls] [--verbose]
+//   node scripts/try-brain.mjs [--provider NAME] [--model NAME] [--effort LEVEL] [--endpoint ADDRESS] [--api NAME]
+//                              [--offset MINUTES] [--zone NAME] [--only WORD] [--calls] [--verbose]
 //
+// --endpoint and --api are for a server of one's own, as "endpoint" in the config is.
 // --only runs the requests that contain one of the words, given with commas between them, or that belong to a group
 // of that name (settings, moments); --calls adds one line per call to the model; --verbose prints the companion's whole log.
 
@@ -23,7 +25,10 @@ import { fakeStt, speech } from "../tests/fakes/stt.js";
 
 const { values: options } = parseArgs({
   options: {
+    provider: { type: "string", default: "copilot-cli" },
     model: { type: "string", default: "gpt-6-luna" },
+    endpoint: { type: "string" },
+    api: { type: "string", default: "openai-completions" },
     offset: { type: "string", default: "-420" },
     zone: { type: "string", default: "America/Los_Angeles" },
     only: { type: "string" },
@@ -40,8 +45,10 @@ const mirror = await startFakeMirror({ timeZone: options.zone, utcOffsetMinutes:
 const config = parseConfig({
   secret: SECRET,
   mirror: { host: mirror.host, port: mirror.port, token: mirror.token },
+  provider: options.provider,
   model: options.model,
   reasoningEffort: options.effort,
+  ...(options.endpoint ? { endpoint: { baseUrl: options.endpoint, api: options.api, images: true } } : {}),
   // No quiet hours, so that the greeting and the tending run can be tried at any time of day.
   proactive: { greet: true, reminders: false, tend: true, quietHours: null },
   stateDir,
@@ -603,11 +610,11 @@ const steps = [
   },
 ];
 
-console.log(`Model ${options.model}, reasoning effort ${options.effort}. The fake mirror's zone is ${options.zone} (UTC offset ${offset} minutes); its clock reads ${local(Date.now())}.`);
-process.stdout.write("Waiting for GitHub Copilot");
+console.log(`Model ${options.model} of ${options.provider}, reasoning effort ${options.effort}. The fake mirror's zone is ${options.zone} (UTC offset ${offset} minutes); its clock reads ${local(Date.now())}.`);
+process.stdout.write("Waiting for the model");
 for (let waited = 0; !(await health()).brain.ready; waited++) {
   if (waited >= 90) {
-    console.log(`\nGitHub Copilot did not become ready: ${(await health()).brain.detail}`);
+    console.log(`\nThe model did not become ready: ${(await health()).brain.detail}`);
     await running.stop();
     process.exit(1);
   }

@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { defaultPython, expandHome, freshConfig, loadConfig, parseConfig, updateConfigFile, writeConfig } from "../src/config.js";
+import { defaultAuthPath, defaultPython, expandHome, freshConfig, loadConfig, parseConfig, updateConfigFile, writeConfig } from "../src/config.js";
 import { temporaryDirectory } from "./helpers.js";
 
 test("a config with only a secret gets every default", () => {
   const config = parseConfig({ secret: "test-secret-0123456789" });
   assert.deepEqual(config.listen, { host: "0.0.0.0", port: 8790 });
   assert.deepEqual(config.mirror, { host: "", port: 8787, token: "" });
+  assert.equal(config.provider, "copilot-cli");
+  assert.equal(config.endpoint, null);
   assert.equal(config.model, "gpt-6-luna");
   assert.equal(config.reasoningEffort, "low");
   assert.equal(config.stt.model, "small.en");
@@ -69,6 +71,22 @@ test("a mistake is named with where it is", () => {
     () => parseConfig({ secret: "test-secret-0123456789", proactive: { quietHours: ["22:30", "6.30"] } }),
     /proactive\.quietHours\.1: must be a time such as 22:30/,
   );
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", reasoningEffort: "hard" }), /reasoningEffort/);
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", endpoint: { baseUrl: "localhost" } }), /endpoint\.baseUrl: must be an address such as http:\/\/localhost:11434\/v1/);
+  assert.throws(() => parseConfig({ secret: "test-secret-0123456789", endpoint: { baseUrl: "http://localhost:1234/v1", api: "grpc" } }), /endpoint\.api/);
+});
+
+test("whose model answers is one of Pi's providers, the Copilot CLI's sign-in, or a server of one's own", () => {
+  const hosted = parseConfig({ secret: "test-secret-0123456789", provider: "anthropic", model: "claude-haiku-4-5", reasoningEffort: "minimal" });
+  assert.deepEqual([hosted.provider, hosted.model, hosted.reasoningEffort, hosted.endpoint], ["anthropic", "claude-haiku-4-5", "minimal", null]);
+  const own = parseConfig({ secret: "test-secret-0123456789", provider: "ollama", model: "llama3.2", endpoint: { baseUrl: "http://localhost:11434/v1" } });
+  assert.deepEqual(own.endpoint, {
+    baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKeyEnv: "", images: false, reasoning: false, contextWindow: 32_768, maxTokens: 4096, compat: {},
+  });
+  // A config from before there was a choice is one for the Copilot CLI's sign-in, as it was then.
+  assert.equal(parseConfig({ secret: "test-secret-0123456789", model: "gpt-6-luna", reasoningEffort: "low" }).provider, "copilot-cli");
+  assert.equal(defaultAuthPath({ MIRROR_COMPANION_CONFIG: path.join("somewhere", "config.json") }), path.join("somewhere", "auth.json"));
+  assert.equal(defaultAuthPath({ MIRROR_COMPANION_AUTH: "elsewhere.json" }), "elsewhere.json");
 });
 
 test("a missing or broken file says what to do", (t) => {

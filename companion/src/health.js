@@ -4,6 +4,7 @@
  *
  * @param {Object} parts
  * @param {string} parts.version
+ * @param {string} parts.provider
  * @param {string} parts.model
  * @param {{ health: () => { ready: boolean, detail: string } }} parts.brain
  * @param {{ health: () => { ready: boolean, model: string, device: string, detail: string } }} parts.stt
@@ -12,7 +13,7 @@
  * @param {{ lastExchange: () => object | null }} parts.activity
  * @param {{ now: () => number }} parts.clock
  */
-export function createHealth({ version, model, brain, stt, mirror, queue, activity, clock }) {
+export function createHealth({ version, provider, model, brain, stt, mirror, queue, activity, clock }) {
   const startedAt = clock.now();
   return function health() {
     const brainNow = brain.health();
@@ -23,6 +24,7 @@ export function createHealth({ version, model, brain, stt, mirror, queue, activi
       ok: brainNow.ready && sttNow.ready && mirrorNow.reachable,
       name: "mirror-companion",
       version,
+      provider,
       model,
       brain: { ready: brainNow.ready, detail: brainNow.detail },
       stt: { ready: sttNow.ready, model: sttNow.model, device: sttNow.device, detail: sttNow.detail },

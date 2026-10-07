@@ -10,14 +10,73 @@ import { SECRET, startCompanion, temporaryDirectory } from "./helpers.js";
 
 const CLI = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
-/** Runs the command line with its config in the given file. */
+/** Runs the command line with its config in the given file. Its sign-ins are kept beside that file. */
 function cli(config, ...args) {
+  return cliWith({ config }, ...args);
+}
+
+/** The same with words to type, or an environment of its own. */
+function cliWith({ config, typed, env = {} }, ...args) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { env: { ...process.env, MIRROR_COMPANION_CONFIG: config } }, (error, stdout, stderr) => {
+    // No sign-in of the machine the tests run on is to be found: no token, and a home without the Copilot CLI.
+    const clean = { ...process.env, MIRROR_COMPANION_CONFIG: config, COPILOT_GITHUB_TOKEN: "", COPILOT_HOME: path.join(path.dirname(config), "no-copilot-cli"), ...env };
+    delete clean.MIRROR_COMPANION_AUTH;
+    const child = execFile(process.execPath, [CLI, ...args], { env: clean }, (error, stdout, stderr) => {
       resolve({ code: error ? error.code : 0, stdout, stderr });
     });
+    child.stdin.end(typed ?? "");
   });
 }
+
+test("providers lists where a model can come from, and login keeps a key that models and logout then use", async (t) => {
+  const folder = temporaryDirectory(t);
+  const file = path.join(folder, "config.json");
+  await cli(file, "init");
+  const listed = await cli(file, "providers");
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.match(listed.stdout, /^\* copilot-cli +GitHub Copilot, with the Copilot CLI's sign-in +not signed in +\(sign in with: the Copilot CLI\)$/m);
+  assert.match(listed.stdout, /^ {2}anthropic +Anthropic +not signed in +\(sign in with: login \(browser\), login --key, environment\)$/m);
+  assert.match(listed.stdout, /^ {2}github-copilot +GitHub Copilot +not signed in/m);
+  assert.match(listed.stdout, /A server of your own .*"endpoint" in the config/);
+
+  // The provider in the config has nobody signed in: the commands say what to do.
+  const none = await cli(file, "models");
+  assert.equal(none.code, 1);
+  assert.match(none.stderr, /Nobody is signed in to copilot-cli\. The Copilot CLI has no config at .* Either sign in with the Copilot CLI/);
+  const elsewhere = await cli(file, "login");
+  assert.match(elsewhere.stderr, /"copilot-cli" uses the sign-in the Copilot CLI has: sign in there/);
+  assert.match((await cli(file, "login", "nowhere")).stderr, /There is no provider called "nowhere"/);
+
+  const signedIn = await cliWith({ config: file, typed: "a-key-for-the-test-0123456789\n" }, "login", "groq");
+  assert.equal(signedIn.code, 0, signedIn.stderr);
+  assert.match(signedIn.stdout, /Signed in to Groq\. The sign-in is kept in .*auth\.json, which only you can read\./);
+  assert.ok(!signedIn.stdout.includes("a-key-for-the-test"), "the key is not printed");
+  const authFile = path.join(folder, "auth.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(authFile, "utf8")), { groq: { type: "api_key", key: "a-key-for-the-test-0123456789" } });
+  if (process.platform !== "win32") assert.equal(fs.statSync(authFile).mode & 0o777, 0o600);
+  assert.match((await cli(file, "providers")).stdout, /^ {2}groq +Groq +signed in: stored credential$/m);
+
+  const models = await cli(file, "models", "groq");
+  assert.equal(models.code, 0, models.stderr);
+  assert.match(models.stdout, /The models of groq that this sign-in is offered \("model" in the config\):\n {2}\S+/);
+
+  const out = await cli(file, "logout", "groq");
+  assert.match(out.stdout, /The sign-in to groq is forgotten\./);
+  assert.deepEqual(JSON.parse(fs.readFileSync(authFile, "utf8")), {});
+  assert.match((await cli(file, "logout")).stderr, /Sign out in the Copilot CLI\./);
+});
+
+test("a provider that is signed in to through the environment is shown as such, and marked when it is the one in use", async (t) => {
+  const file = path.join(temporaryDirectory(t), "config.json");
+  await cli(file, "init");
+  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  fs.writeFileSync(file, JSON.stringify({ ...raw, provider: "anthropic", model: "claude-haiku-4-5" }));
+  const listed = await cliWith({ config: file, env: { ANTHROPIC_API_KEY: "sk-ant-a-key-for-the-test" } }, "providers");
+  assert.match(listed.stdout, /^\* anthropic +Anthropic +signed in: ANTHROPIC_API_KEY$/m);
+  assert.match(listed.stdout, /^ {2}copilot-cli /m);
+  const models = await cliWith({ config: file, env: { ANTHROPIC_API_KEY: "sk-ant-a-key-for-the-test" } }, "models");
+  assert.match(models.stdout, /^\* claude-haiku-4-5 +thinks, sees pictures$/m);
+});
 
 test("init writes a config with a fresh secret and does not overwrite one", async (t) => {
   const file = path.join(temporaryDirectory(t), "config.json");
@@ -27,7 +86,8 @@ test("init writes a config with a fresh secret and does not overwrite one", asyn
   const written = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.ok(written.secret.length >= 32);
   assert.ok(!first.stdout.includes(written.secret), "init does not print the secret");
-  assert.deepEqual(Object.keys(written), ["listen", "secret", "mirror", "model", "reasoningEffort", "stt", "proactive", "keepUtterances", "stateDir"]);
+  assert.deepEqual(Object.keys(written), ["listen", "secret", "mirror", "provider", "model", "reasoningEffort", "stt", "proactive", "keepUtterances", "stateDir"]);
+  assert.equal(written.provider, "copilot-cli");
 
   const second = await cli(file, "init");
   assert.equal(second.code, 1);

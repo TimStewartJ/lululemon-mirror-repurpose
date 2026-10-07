@@ -13,7 +13,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@github/copilot-sdk": "1.0.15",
+    "@earendil-works/pi-agent-core": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
     "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "ws": "8.22.0"
   }
 }

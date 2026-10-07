@@ -1,5 +1,6 @@
 node_modules/
 config.json
+auth.json
 state/
 __pycache__/
 *.log

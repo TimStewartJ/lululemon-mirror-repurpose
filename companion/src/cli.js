@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { parseArgs } from "node:util";
 import { SHORTCUTS } from "./briefing.js";
-import { defaultConfigPath, freshConfig, loadConfig, updateConfigFile, writeConfig } from "./config.js";
+import { defaultAuthPath, defaultConfigPath, freshConfig, loadConfig, updateConfigFile, writeConfig } from "./config.js";
 import { describeError } from "./log.js";
 import { pairWithMirror } from "./mirror.js";
 
@@ -12,6 +12,11 @@ Usage: node src/cli.js <command>
 
   init                          Write a config with a fresh secret. Does not overwrite one.
   pair --host H --code 123456   Pair with the mirror and store its token. Optional: --name, --port.
+  providers                     List where a model can come from, and which of them are signed in.
+  models [PROVIDER]             List the models a sign-in is offered. Without a name: the provider in the config.
+  login [PROVIDER] [--key]      Sign in to a provider and keep the sign-in. With --key a key is asked for, where
+                                the provider also has a sign-in in the browser.
+  logout [PROVIDER]             Forget a sign-in that "login" kept.
   serve                         Run the companion.
   health                        Ask a running companion how it is.
   ask "text"                    Send typed words to a running companion. With --shortcut NAME they are sent as a
@@ -20,7 +25,51 @@ Usage: node src/cli.js <command>
   secret                        Print the secret, to give it to the mirror.
 
 The config is read from ${defaultConfigPath()}
-(set MIRROR_COMPANION_CONFIG to use another file).`;
+(set MIRROR_COMPANION_CONFIG to use another file). Sign-ins are kept beside it, in auth.json.`;
+
+/** The provider a command is about: the one named, or the one in the config, with its endpoint if it has one. */
+function chosenProvider(named) {
+  const config = loadConfig();
+  const provider = named ?? config.provider;
+  return { provider, model: config.model, endpoint: provider === config.provider ? config.endpoint : null, authFile: defaultAuthPath(), config };
+}
+
+/** Asks in the terminal what a sign-in needs to know, and shows what it has to say. */
+async function inTheTerminal() {
+  const readline = await import("node:readline");
+  const ask = (question, { hidden = false } = {}) =>
+    new Promise((resolve, reject) => {
+      const lines = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
+      let answered = false;
+      // What is typed for a key is not shown.
+      if (hidden && process.stdin.isTTY) lines._writeToOutput = (text) => (text.includes(question) ? process.stdout.write(text) : undefined);
+      lines.question(question, (answer) => {
+        answered = true;
+        lines.close();
+        if (hidden && process.stdin.isTTY) process.stdout.write("\n");
+        resolve(answer.trim());
+      });
+      lines.on("close", () => answered || reject(new Error("Nothing was entered.")));
+    });
+  return {
+    async prompt(wanted) {
+      if (wanted.type === "select") {
+        wanted.options.forEach((option, at) => print(`  ${at + 1}  ${option.label}${option.description ? `: ${option.description}` : ""}`));
+        const chosen = wanted.options[Number(await ask(`${wanted.message} (1 to ${wanted.options.length}): `)) - 1];
+        if (!chosen) throw new Error("That is not one of the choices.");
+        return chosen.id;
+      }
+      const hint = wanted.placeholder ? ` (${wanted.placeholder})` : "";
+      return ask(`${wanted.message}${hint}: `, { hidden: wanted.type === "secret" });
+    },
+    notify(event) {
+      if (event.type === "device_code") print(`Open ${event.verificationUri} in a browser, on any machine, and enter the code ${event.userCode}. Waiting for that.`);
+      else if (event.type === "auth_url") print(`Open this address in a browser${event.instructions ? ` (${event.instructions})` : ""}:\n${event.url}`);
+      else if (event.message) print(event.message);
+      for (const link of event.links ?? []) print(`${link.label ?? "More"}: ${link.url}`);
+    },
+  };
+}
 
 const commands = {
   init() {
@@ -62,6 +111,83 @@ const commands = {
     print("If the companion is running, restart it so that it uses the new token.");
   },
 
+  async providers() {
+    const { COPILOT_CLI, findCopilotCliSignIn, piModels } = await import("./providers.js");
+    let configured = null;
+    try {
+      configured = loadConfig();
+    } catch {
+      // Without a config the list is as useful.
+    }
+    const models = piModels({ authFile: defaultAuthPath() });
+    const copilotCli = findCopilotCliSignIn();
+    const rows = [
+      { id: COPILOT_CLI, name: "GitHub Copilot, with the Copilot CLI's sign-in", how: "the Copilot CLI", state: copilotCli.token ? `signed in: ${copilotCli.source}` : "not signed in" },
+    ];
+    for (const provider of [...models.getProviders()].sort((a, b) => a.id.localeCompare(b.id))) {
+      const how = [provider.auth.oauth ? "login (browser)" : "", provider.auth.apiKey?.login ? "login --key" : "", "environment"].filter(Boolean).join(", ");
+      const auth = await models.checkAuth(provider.id).catch(() => undefined);
+      rows.push({ id: provider.id, name: provider.name, how, state: auth ? `signed in: ${auth.source ?? auth.type}` : "not signed in" });
+    }
+    if (configured?.endpoint) rows.push({ id: configured.provider, name: `the endpoint ${configured.endpoint.baseUrl}`, how: "the config", state: "" });
+    const wide = (key) => Math.max(...rows.map((row) => row[key].length));
+    print('Where a model can come from ("provider" in the config). The one in use is marked.');
+    for (const row of rows) {
+      print(`${row.id === configured?.provider ? "*" : " "} ${row.id.padEnd(wide("id"))}  ${row.name.padEnd(wide("name"))}  ${row.state}${row.state.startsWith("not") ? `  (sign in with: ${row.how})` : ""}`.trimEnd());
+    }
+    print('A server of your own (Ollama, LM Studio, vLLM): any other name, with "endpoint" in the config.');
+  },
+
+  async models(argv) {
+    const { openModels } = await import("./providers.js");
+    const chosen = chosenProvider(argv[0]);
+    const { models, providerId, signIn, close } = openModels(chosen);
+    try {
+      if (!(await models.getAuth(providerId))) throw new Error(`Nobody is signed in to ${chosen.provider}. ${signIn}`.trim());
+      await models.refresh({ providers: [providerId] });
+      const offered = await models.getAvailable(providerId);
+      if (offered.length === 0) throw new Error(`The sign-in to ${chosen.provider} is offered no model.`);
+      print(`The models of ${chosen.provider} that this sign-in is offered ("model" in the config):`);
+      const wide = Math.max(...offered.map((model) => model.id.length));
+      for (const model of offered) {
+        const notes = [model.reasoning ? "thinks" : "", model.input.includes("image") ? "sees pictures" : ""].filter(Boolean).join(", ");
+        print(`${chosen.provider === chosen.config.provider && model.id === chosen.config.model ? "*" : " "} ${model.id.padEnd(wide)}  ${notes}`.trimEnd());
+      }
+    } finally {
+      close();
+    }
+  },
+
+  async login(argv) {
+    const { values, positionals } = parseArgs({ args: argv, options: { key: { type: "boolean", default: false } }, allowPositionals: true });
+    const { COPILOT_CLI, openModels } = await import("./providers.js");
+    const chosen = chosenProvider(positionals[0]);
+    if (chosen.provider === COPILOT_CLI) {
+      throw new Error(
+        `"${COPILOT_CLI}" uses the sign-in the Copilot CLI has: sign in there ("copilot", then "/login"), or put a token in COPILOT_GITHUB_TOKEN. ` +
+          'To sign in here instead, set "provider" to "github-copilot" and run: login github-copilot',
+      );
+    }
+    const { models, providerId } = openModels(chosen);
+    const provider = models.getProvider(providerId);
+    const type = provider.auth.oauth && !values.key ? "oauth" : "api_key";
+    if (type === "api_key" && !provider.auth.apiKey?.login) {
+      throw new Error(`${provider.name} takes its credentials from the environment the companion runs in; there is nothing to sign in to here.`);
+    }
+    await models.login(providerId, type, await inTheTerminal());
+    print(`Signed in to ${provider.name}. The sign-in is kept in ${chosen.authFile}, which only you can read.`);
+    print("A running companion that was waiting for it finds it by itself within five minutes; restarting it is quicker.");
+  },
+
+  async logout(argv) {
+    const { COPILOT_CLI, openModels } = await import("./providers.js");
+    const chosen = chosenProvider(argv[0]);
+    if (chosen.provider === COPILOT_CLI) throw new Error(`"${COPILOT_CLI}" uses the sign-in the Copilot CLI has, which this command does not touch. Sign out in the Copilot CLI.`);
+    const { models, providerId } = openModels(chosen);
+    await models.logout(providerId);
+    print(`The sign-in to ${chosen.provider} is forgotten.`);
+  },
+
   async serve() {
     const { serve } = await import("./serve.js");
     const running = await serve(loadConfig());
@@ -78,7 +204,7 @@ const commands = {
     const report = await request("GET", "/v1/health");
     const part = (name, ready, detail) => print(`${name}: ${ready ? "ready" : "not ready"}${detail ? `. ${detail}` : ""}`);
     print(`${report.name} ${report.version} is ${report.ok ? "well" : "not ready"}. It has been up for ${report.uptimeSeconds} seconds.`);
-    part(`Model ${report.model}`, report.brain.ready, report.brain.detail);
+    part(`Model ${report.model}${report.provider ? ` of ${report.provider}` : ""}`, report.brain.ready, report.brain.detail);
     part(`Speech-to-text ${report.stt.model} on ${report.stt.device || "an unknown device"}`, report.stt.ready, report.stt.detail);
     print(
       `Mirror: ${report.mirror.reachable ? `reachable, Mirror Home ${report.mirror.version || "of unknown version"}` : "not reachable"}` +

@@ -5,7 +5,7 @@ import { createAssistant } from "./assistant.js";
 import { createBrain } from "./brain.js";
 import { createBriefingMemory } from "./briefing.js";
 import { systemClock } from "./clock.js";
-import { readableByOthers } from "./config.js";
+import { defaultAuthPath, readableByOthers } from "./config.js";
 import { createHabits } from "./habits.js";
 import { createHealth } from "./health.js";
 import { createLog, describeError } from "./log.js";
@@ -47,7 +47,18 @@ export async function serve(config, parts = {}) {
       log,
       clock,
     });
-  const brain = parts.brain ?? createBrain({ model: config.model, reasoningEffort: config.reasoningEffort === "default" ? undefined : config.reasoningEffort, workingDirectory: config.stateDir, log, clock });
+  const brain =
+    parts.brain ??
+    createBrain({
+      provider: config.provider,
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+      endpoint: config.endpoint,
+      authFile: defaultAuthPath(),
+      userAgent: `mirror-companion/${version}`,
+      log,
+      clock,
+    });
   const memory = createMemory(config.stateDir);
   const activity = createActivity(config.stateDir, log);
   const recordings = createRecordings(config.stateDir, config.keepUtterances, log);
@@ -60,7 +71,7 @@ export async function serve(config, parts = {}) {
   const assistant = createAssistant({ brain, stt, mirror, tools, memory, activity, recordings, queue, briefings, log, clock });
   const proactive = createProactive({ settings: habits.settings, brain, mirror, tools, memory, activity, queue, briefings, log, clock });
   habits.onChange(() => proactive.settingsChanged());
-  const health = createHealth({ version, model: config.model, brain, stt, mirror, queue, activity, clock });
+  const health = createHealth({ version, provider: config.provider, model: config.model, brain, stt, mirror, queue, activity, clock });
   const server = createServer({ secret: config.secret, assistant, proactive, activity, queue, health, log, clock });
 
   await new Promise((resolve, reject) => {
@@ -76,7 +87,7 @@ export async function serve(config, parts = {}) {
     server.listen(config.listen.port, config.listen.host, resolve);
   });
   const port = server.address().port;
-  log("listening", { host: config.listen.host, port, version, model: config.model });
+  log("listening", { host: config.listen.host, port, version, provider: config.provider, model: config.model });
 
   // The port answers at once; the model and the speech worker come up behind it
   // and the health report says how far they are.

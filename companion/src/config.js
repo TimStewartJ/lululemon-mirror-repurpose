@@ -21,11 +21,31 @@ const schema = z.object({
       token: z.string().default(""),
     })
     .prefault({}),
+  // Whose model answers: one of Pi's providers (the "providers" command lists them), "copilot-cli" for GitHub
+  // Copilot with the sign-in the Copilot CLI has, or any other name together with "endpoint".
+  provider: z.string().min(1).default("copilot-cli"),
   model: z.string().min(1).default("gpt-6-luna"),
   // How hard the model thinks before it answers. Measured with gpt-6-luna:
   // with "low" a typical answer takes 2 s, with the model's own default 3.3 s,
-  // and the answers are as good. "default" leaves the choice to the model.
-  reasoningEffort: z.enum(["default", "none", "low", "medium", "high", "xhigh", "max"]).default("low"),
+  // and the answers are as good. "default" and "none" ask for no thinking, which
+  // a model that cannot do without takes as its own default.
+  reasoningEffort: z.enum(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]).default("low"),
+  // A server Pi has no provider for (Ollama, LM Studio, vLLM, a proxy): where it is and which API it speaks.
+  endpoint: z
+    .object({
+      baseUrl: z.url("must be an address such as http://localhost:11434/v1"),
+      api: z.enum(["openai-completions", "openai-responses", "anthropic-messages"]).default("openai-completions"),
+      // The environment variable that holds its key; empty for a server that asks for none.
+      apiKeyEnv: z.string().default(""),
+      images: z.boolean().default(false),
+      reasoning: z.boolean().default(false),
+      contextWindow: z.number().int().min(1024).default(32_768),
+      maxTokens: z.number().int().min(256).default(4096),
+      // Pi's compatibility settings for the API, for a server that needs one changed.
+      compat: z.record(z.string(), z.unknown()).default({}),
+    })
+    .nullable()
+    .default(null),
   stt: z
     .object({
       model: z.string().min(1).default("small.en"),
@@ -55,6 +75,11 @@ const schema = z.object({
 
 export function defaultConfigPath(env = process.env) {
   return env.MIRROR_COMPANION_CONFIG || path.join(os.homedir(), ".config", "mirror-companion", "config.json");
+}
+
+/** Where the "login" command keeps its sign-ins: beside the config, readable by its owner only. */
+export function defaultAuthPath(env = process.env) {
+  return env.MIRROR_COMPANION_AUTH || path.join(path.dirname(defaultConfigPath(env)), "auth.json");
 }
 
 /** "~/x" becomes the full path below the home directory. */
@@ -120,6 +145,7 @@ export function freshConfig() {
     listen: { host: "0.0.0.0", port: 8790 },
     secret: crypto.randomBytes(24).toString("base64url"),
     mirror: { host: "", port: 8787, token: "" },
+    provider: "copilot-cli",
     model: "gpt-6-luna",
     reasoningEffort: "low",
     stt: { model: "small.en", device: "auto", python: "" },

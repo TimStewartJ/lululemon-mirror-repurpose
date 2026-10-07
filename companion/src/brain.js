@@ -1,11 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { systemClock } from "./clock.js";
 import { describeError } from "./log.js";
 import { runTool } from "./tools.js";
 
 /**
  * The agent harness as the rest of the companion sees it. The scripted brain
- * of the tests and the Copilot one below both fit it; another harness would
- * be a third.
+ * of the tests and the Pi one below both fit it; another harness would be a
+ * third.
  *
  * @typedef {Object} BrainRun
  * @property {"conversation"|"proactive"} session A conversation keeps its session between turns, so a
@@ -43,187 +44,304 @@ export class BrainError extends Error {
 
 const FIRST_RETRY_MS = 5000;
 const LONGEST_RETRY_MS = 5 * 60_000;
-const PING_EVERY_MS = 60_000;
+const CHECK_EVERY_MS = 60_000;
+const FIRST_ANSWER_WITHIN_MS = 20_000;
+const MODELS_NAMED = 40;
 
 /**
  * @param {Object} options
- * @param {"copilot"} [options.harness]
+ * @param {"pi"} [options.harness]
+ * @param {string} options.provider Whose model: one of Pi's providers, "copilot-cli", or the name of an endpoint.
  * @param {string} options.model
- * @param {string} [options.reasoningEffort] Passed to the model when given.
- * @param {string} options.workingDirectory Where the Copilot runtime runs; it is given no files to work on.
+ * @param {string} [options.reasoningEffort] How hard the model thinks; "default", "none" or nothing leaves thinking off.
+ * @param {import("./config.js").Config["endpoint"]} [options.endpoint]
+ * @param {string} [options.authFile] Where the "login" command keeps its sign-ins.
+ * @param {string} [options.userAgent]
  * @param {(event: string, fields?: object) => void} [options.log]
  * @param {import("./clock.js").Clock} [options.clock]
- * @param {() => Promise<any>} [options.loadSdk] Tests supply a stand-in for the SDK.
+ * @param {(options: object) => { models: any, providerId: string, signIn: string } | Promise<any>} [options.openModels]
+ *   Tests supply providers of their own.
  * @returns {Brain}
  */
-export function createBrain({ harness = "copilot", ...options }) {
-  if (harness !== "copilot") throw new Error(`There is no agent harness called "${harness}". The only one is "copilot".`);
-  return createCopilotBrain(options);
+export function createBrain({ harness = "pi", ...options }) {
+  if (harness !== "pi") throw new Error(`There is no agent harness called "${harness}". The only one is "pi".`);
+  return createPiBrain(options);
 }
 
-/** The brain on GitHub Copilot's SDK, using the Copilot CLI login of the account it runs under. */
-function createCopilotBrain({
-  model,
+/** Pi is loaded when the brain starts: it takes half a second, which the other commands need not spend. */
+async function loadPi() {
+  const [core, ai] = await Promise.all([import("@earendil-works/pi-agent-core"), import("@earendil-works/pi-ai")]);
+  return { Agent: core.Agent, clampThinkingLevel: ai.clampThinkingLevel };
+}
+
+/** What went wrong and what caused it: Pi wraps what a provider said in an error of its own. */
+function reason(error) {
+  const parts = [];
+  for (let at = error, depth = 0; at && depth < 4; at = at.cause, depth++) {
+    const text = describeError(at).trim().replace(/[.:]$/, "");
+    if (text && !parts.some((part) => part.includes(text))) parts.push(text);
+  }
+  return parts.join(": ");
+}
+
+/** The arguments of a call that was refused, short enough for a log line. */
+function brief(args) {
+  try {
+    return JSON.stringify(args ?? {}).slice(0, 300);
+  } catch {
+    return "(not printable)";
+  }
+}
+
+/**
+ * Two things in a request to the Responses API are not as the mirror needs
+ * them, and are put right before it is sent.
+ *
+ * A tool whose declaration does not say otherwise is taken as a strict one,
+ * and the model then gives every argument a value, those that are meant to
+ * be left out too ("text": "", "size": "auto"), which the mirror's tools
+ * refuse. Pi leaves the word out; here it is put in.
+ *
+ * Pi asks for a summary of the model's thinking with every answer. Nobody
+ * reads it here, and writing it costs time: measured with gpt-6-luna, a call
+ * without it comes back 0.15 to 0.4 s sooner.
+ */
+function asTheMirrorNeedsIt(payload) {
+  if (!payload || typeof payload !== "object" || !("input" in payload)) return undefined;
+  for (const tool of Array.isArray(payload.tools) ? payload.tools : []) {
+    if (tool?.type === "function" && typeof tool.name === "string" && tool.strict === undefined) tool.strict = false;
+  }
+  if (payload.reasoning && typeof payload.reasoning === "object") delete payload.reasoning.summary;
+  return payload;
+}
+
+/**
+ * The words of an answer. A model may write a remark on what it is about to
+ * do before its answer; where the provider tells the two apart, only the
+ * answer is taken.
+ */
+function wordsOf(message) {
+  const blocks = (message?.content ?? []).filter((block) => block.type === "text");
+  const final = blocks.filter((block) => {
+    try {
+      return JSON.parse(block.textSignature ?? "null")?.phase === "final_answer";
+    } catch {
+      return false;
+    }
+  });
+  return (final.length > 0 ? final : blocks).map((block) => block.text).join("");
+}
+
+/**
+ * The brain on Pi (@earendil-works/pi-agent-core): Pi's agent loop in this
+ * process, with the mirror's tools and no others, and whichever provider and
+ * model the config names.
+ */
+function createPiBrain({
+  provider,
+  model: modelId,
   reasoningEffort,
-  workingDirectory,
+  endpoint = null,
+  authFile,
+  userAgent,
   log = () => {},
   clock = systemClock,
-  loadSdk = () => import("@github/copilot-sdk"),
+  openModels = async (options) => (await import("./providers.js")).openModels(options),
 }) {
-  let sdk = null;
-  let client = null;
+  let pi = null;
+  /** The providers, once the model was found to answer. @type {{ models: any, providerId: string, signIn: string } | null} */
+  let source = null;
+  let model = null;
+  let level = "off";
   let ready = false;
   let stopped = true;
   let detail = "Not started.";
   let retryMs = FIRST_RETRY_MS;
   let timer = null;
-  /** @type {{ session: any, holder: { turn: any }, used: boolean } | null} */
+  let reconnecting = null;
+  /** @type {{ agent: any, holder: { turn: any }, used: boolean } | null} */
   let conversation = null;
-  /** @type {Promise<unknown> | null} */
-  let opening = null;
 
   async function connect() {
     timer = null;
     if (stopped) return;
+    let opened = null;
     try {
-      sdk ??= await loadSdk();
-      const next = new sdk.CopilotClient({ workingDirectory, logLevel: "error" });
-      await next.start();
-      const models = await next.listModels();
-      if (!models.some((offered) => offered.id === model)) {
-        await next.stop().catch(() => {});
+      pi ??= await loadPi();
+      opened = await openModels({ provider, model: modelId, endpoint, authFile, userAgent, log });
+      const { models, providerId } = opened;
+      const auth = await models.getAuth(providerId);
+      if (!auth) throw new Error(`nobody is signed in to ${provider}. ${opened.signIn}`.trim());
+      // A provider that lists its models itself is asked for them when the model is not among those known.
+      if (!models.getModel(providerId, modelId)) await models.refresh({ providers: [providerId] });
+      const offered = await models.getAvailable(providerId);
+      const found = offered.find((candidate) => candidate.id === modelId);
+      if (!found) {
+        const ids = offered.map((candidate) => candidate.id);
+        const more = ids.length > MODELS_NAMED ? `, and ${ids.length - MODELS_NAMED} more ("node src/cli.js models" lists them)` : "";
         throw new Error(
-          `the model ${model} is not offered to this Copilot login. Set "model" in the config to one of: ` +
-            models.map((offered) => offered.id).join(", "),
+          `the model ${modelId} is not ${models.getModel(providerId, modelId) ? "offered to this sign-in" : `one that ${provider} has`}. ` +
+            (ids.length > 0 ? `Set "model" in the config to one of: ${ids.slice(0, MODELS_NAMED).join(", ")}${more}` : "It is offered no model at all"),
         );
       }
-      client = next;
-      // The first session of a client takes over a second to open; later ones
-      // take a few hundredths. One is opened and thrown away now so that the
-      // first person does not wait for it.
-      await close(await open("You are a test. Answer with the word ready.", [])).catch(() => {});
+      const thinking = pi.clampThinkingLevel(found, !reasoningEffort || reasoningEffort === "default" || reasoningEffort === "none" ? "off" : reasoningEffort);
+      // One question is asked and its answer thrown away: a key that is not
+      // accepted shows now and not when the first person asks, and that
+      // person does not wait for the connection and the client library.
+      const first = await models.completeSimple(
+        found,
+        { systemPrompt: "You are a test. Answer with the word ready.", messages: [{ role: "user", content: "Are you ready?", timestamp: Date.now() }] },
+        { ...(thinking === "off" ? {} : { reasoning: thinking }), signal: AbortSignal.timeout(FIRST_ANSWER_WITHIN_MS) },
+      );
+      if (first.stopReason === "aborted") throw new Error(`it did not answer a first question within ${FIRST_ANSWER_WITHIN_MS / 1000} s`);
+      if (first.stopReason === "error") throw new Error(first.errorMessage || "it gave no answer to a first question");
+      if (stopped) return void opened.close?.();
+      source?.close?.();
+      source = opened;
+      model = found;
+      level = thinking;
       ready = true;
       detail = "";
       retryMs = FIRST_RETRY_MS;
-      log("brain.ready", { model });
-      timer = clock.setTimeout(ping, PING_EVERY_MS);
+      log("brain.ready", { provider, model: modelId, signIn: auth.source, reasoning: level });
+      timer = clock.setTimeout(check, CHECK_EVERY_MS);
     } catch (error) {
+      opened?.close?.();
+      if (stopped) return;
       ready = false;
-      client = null;
-      detail =
-        `GitHub Copilot is not usable: ${describeError(error)}. ` +
-        `Check the login with the Copilot CLI as this user. Trying again in ${Math.round(retryMs / 1000)} s.`;
-      log("brain.unavailable", { detail: describeError(error), retryMs });
+      source?.close?.();
+      source = null;
+      model = null;
+      detail = `The model ${modelId} of ${provider} is not usable: ${reason(error)}. Trying again in ${Math.round(retryMs / 1000)} s.`;
+      log("brain.unavailable", { detail: reason(error), retryMs });
       timer = clock.setTimeout(connect, retryMs);
       retryMs = Math.min(retryMs * 2, LONGEST_RETRY_MS);
     }
   }
 
-  /** Notices a Copilot runtime that has died while nobody was asking. */
-  async function ping() {
+  /**
+   * Every minute: a sign-in that is about to run out is renewed here and not
+   * in someone's turn, and one that has gone is noticed while nobody asks.
+   */
+  async function check() {
     timer = null;
-    if (stopped || !client) return;
+    if (stopped || !source) return;
     try {
-      await client.ping();
-      timer = clock.setTimeout(ping, PING_EVERY_MS);
+      if (!(await source.models.getAuth(source.providerId))) throw new Error("the sign-in is gone");
+      if (!stopped) timer = clock.setTimeout(check, CHECK_EVERY_MS);
     } catch (error) {
-      log("brain.lost", { detail: describeError(error) });
+      if (stopped) return;
+      log("brain.lost", { detail: reason(error) });
       await reconnect();
     }
   }
 
-  async function reconnect() {
-    clock.clearTimeout(timer);
-    const old = client;
-    ready = false;
-    client = null;
-    conversation = null;
-    detail = "GitHub Copilot is being started again.";
-    await old?.forceStop().catch(() => {});
-    await connect();
+  function reconnect() {
+    reconnecting ??= (async () => {
+      clock.clearTimeout(timer);
+      ready = false;
+      const old = conversation;
+      conversation = null;
+      close(old);
+      detail = "The model is being reached again.";
+      await connect();
+    })().finally(() => {
+      reconnecting = null;
+    });
+    return reconnecting;
+  }
+
+  /** A tool of the mirror in the form Pi runs: its schema as JSON Schema, its result as text or a picture. */
+  function adapt(tool, holder) {
+    return {
+      name: tool.name,
+      label: tool.name,
+      description: tool.description,
+      parameters: tool.schema.toJSONSchema(),
+      execute: async (callId, args) => {
+        holder.ran.add(callId);
+        const refusal = { error: "This request is over. Do nothing more." };
+        const result = holder.turn ? await runTool(tool, args, holder.turn, log) : refusal;
+        if (result.image) {
+          return {
+            content: [
+              { type: "text", text: result.text },
+              { type: "image", data: result.image.data, mimeType: result.image.mimeType },
+            ],
+            details: {},
+          };
+        }
+        const content = [{ type: "text", text: JSON.stringify(result) }];
+        // A refusal goes back as a failure, so the model reads why and can call again or answer.
+        if (result.error) return { content, details: {}, isError: true };
+        // A tool that ends the turn ends it only when it did what it was asked.
+        return { content, details: {}, terminate: tool.endsTurn === true };
+      },
+    };
   }
 
   function open(system, tools) {
-    const holder = { turn: null };
-    return client
-      .createSession({
-        model,
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-        streaming: true,
-        enableSessionStore: false,
-        // Only the tools given here: no shell, no files, no web.
-        availableTools: ["custom:*"],
-        // Measured: without these two a first turn starts about 0.8 s later.
-        disabledMcpServers: ["github-mcp-server"],
-        infiniteSessions: { enabled: false },
-        onPermissionRequest: sdk.approveAll,
-        systemMessage: { mode: "replace", content: system },
-        tools: tools.map((tool) =>
-          sdk.defineTool(tool.name, {
-            description: tool.description,
-            parameters: tool.schema,
-            skipPermission: true,
-            isTerminal: tool.endsTurn === true,
-            handler: (args) => call(tool, args, holder),
-          }),
-        ),
-      })
-      .then((session) => {
+    const { models } = source;
+    const holder = { turn: null, ran: new Set(), asked: new Map() };
+    const agent = new pi.Agent({
+      // Only the tools given here: Pi's agent core has none of its own.
+      initialState: { systemPrompt: system, model, thinkingLevel: level, tools: tools.map((tool) => adapt(tool, holder)) },
+      streamFn: (which, context, options) => models.streamSimple(which, context, options),
+      onPayload: asTheMirrorNeedsIt,
+      // What the provider keys its cache of the instructions on.
+      sessionId: randomUUID(),
+      // runTool takes the calls of a turn one at a time as well; here Pi is told so.
+      toolExecution: "sequential",
+    });
+    let asked = 0;
+    let first = 0;
+    agent.subscribe((event) => {
+      if (event.type === "turn_start") {
+        asked = Date.now();
+        first = 0;
+      } else if (event.type === "message_update") {
+        first ||= Date.now();
+      } else if (event.type === "message_end" && event.message.role === "assistant") {
         // One line per call to the model, to see where the time of a turn goes.
-        session.on?.("assistant.usage", (event) => {
-          const usage = event.data ?? {};
-          log("brain.model_call", {
-            ms: Math.round(usage.duration ?? 0),
-            firstTokenMs: Math.round(usage.timeToFirstTokenMs ?? 0),
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            reasoningTokens: usage.reasoningTokens,
-            cachedTokens: usage.cacheReadTokens,
-          });
+        const usage = event.message.usage ?? {};
+        const failed = event.message.stopReason === "error" ? { failed: String(event.message.errorMessage ?? "").slice(0, 200) } : {};
+        log("brain.model_call", {
+          ms: Date.now() - asked,
+          firstTokenMs: (first || Date.now()) - asked,
+          // All that was sent, whether the provider had it at hand from before or not.
+          inputTokens: (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0),
+          outputTokens: usage.output,
+          reasoningTokens: usage.reasoning,
+          cachedTokens: usage.cacheRead,
+          ...failed,
         });
-        return { session, holder, used: false };
-      });
+      } else if (event.type === "tool_execution_start") {
+        holder.asked.set(event.toolCallId, event.args);
+      } else if (event.type === "tool_execution_end") {
+        const args = holder.asked.get(event.toolCallId);
+        holder.asked.delete(event.toolCallId);
+        if (holder.ran.delete(event.toolCallId) || !event.isError || !holder.turn || holder.turn.closed) return;
+        // Pi checks the arguments against the schema first and answered the
+        // model itself. The call still counts as one the model made.
+        holder.turn.acted.push(event.toolName);
+        const refused = (event.result?.content ?? []).map((block) => block.text ?? "").join(" ").replace(/\s+/g, " ");
+        log("tool", { tool: event.toolName, ok: false, ms: 0, refused: refused.slice(0, 200), args: brief(args) });
+      }
+    });
+    return { agent, holder, used: false };
   }
 
-  async function call(tool, args, holder) {
-    if (!holder.turn) return { error: "This request is over. Do nothing more." };
-    const result = await runTool(tool, args, holder.turn, log);
-    if (result.image) {
-      return {
-        textResultForLlm: result.text,
-        binaryResultsForLlm: [{ type: "image", data: result.image.data, mimeType: result.image.mimeType }],
-        resultType: "success",
-      };
-    }
-    // A tool that ends the turn ends it only when it did what it was asked.
-    // The runtime goes by the result's type, so a refusal is marked as a
-    // failure: the model then reads why and can call again or answer.
-    if (result.error && tool.endsTurn) {
-      return { textResultForLlm: JSON.stringify(result), resultType: "failure" };
-    }
-    return result;
-  }
-
-  /** Disconnects a session and deletes it, so the owner's Copilot session list stays clean. */
-  async function close(live) {
+  /** Ends a session: what the model still asks for does nothing, and its work is stopped. */
+  function close(live) {
     if (!live) return;
     live.holder.turn = null;
-    const id = live.session.sessionId;
-    try {
-      await live.session.disconnect();
-      await client?.deleteSession(id);
-    } catch (error) {
-      log("brain.session_not_closed", { detail: describeError(error) });
-    }
+    live.agent.abort();
   }
 
-  async function conversationSession(fresh, system, tools) {
-    if (opening) await opening.catch(() => {});
+  function conversationSession(fresh, system, tools) {
     if (conversation && (!fresh || !conversation.used)) return conversation;
-    const old = conversation;
-    conversation = null;
-    void close(old);
-    conversation = await open(system, tools);
+    close(conversation);
+    conversation = open(system, tools);
     return conversation;
   }
 
@@ -236,10 +354,14 @@ function createCopilotBrain({
       if (signal?.aborted) return aborted();
       signal?.addEventListener("abort", aborted, { once: true });
       live.used = true;
-      live.session.sendAndWait({ prompt }, timeoutMs + 10_000).then(
-        (message) => finish(null, String(message?.data?.content ?? "")),
-        (error) => finish(error),
-      );
+      const from = live.agent.state.messages.length;
+      live.agent.prompt(prompt).then(() => {
+        const said = live.agent.state.messages.slice(from).findLast((message) => message.role === "assistant");
+        if (said?.stopReason === "error" || said?.stopReason === "aborted") {
+          return finish(new Error(said.errorMessage || `The model's answer ended as ${said.stopReason}.`));
+        }
+        finish(null, wordsOf(said));
+      }, finish);
       function finish(error, text) {
         if (settled) return;
         settled = true;
@@ -247,7 +369,7 @@ function createCopilotBrain({
         signal?.removeEventListener("abort", aborted);
         if (!error) return resolve(text);
         // Stops the model's work; without this it would go on calling tools.
-        if (error instanceof BrainError) live.session.abort().catch(() => {});
+        if (error instanceof BrainError) live.agent.abort();
         reject(error);
       }
     });
@@ -266,33 +388,18 @@ function createCopilotBrain({
       ready = false;
       detail = "Stopped.";
       clock.clearTimeout(timer);
-      if (opening) await opening.catch(() => {});
-      await close(conversation);
+      close(conversation);
       conversation = null;
-      const old = client;
-      client = null;
-      if (old) {
-        const stopping = old.stop().catch(() => {});
-        const slow = new Promise((resolve) => setTimeout(resolve, 5000, "slow").unref());
-        if ((await Promise.race([stopping, slow])) === "slow") await old.forceStop().catch(() => {});
-      }
+      source?.close?.();
+      source = null;
     },
 
     health: () => ({ ready, detail }),
 
+    // With Pi a session is made in no time, so there is nothing to wait for; it is made all the same, so that the
+    // turn finds it.
     prepare({ fresh, system, tools }) {
-      if (!ready || opening || (conversation && (!fresh || !conversation.used))) return;
-      const old = conversation;
-      conversation = null;
-      void close(old);
-      opening = open(system, tools)
-        .then((live) => {
-          conversation = live;
-        })
-        .finally(() => {
-          opening = null;
-        });
-      opening.catch((error) => log("brain.prepare_failed", { detail: describeError(error) }));
+      if (ready) conversationSession(fresh, system, tools);
     },
 
     async run({ session, fresh = false, system, prompt, tools, turn, timeoutMs, signal }) {
@@ -301,28 +408,25 @@ function createCopilotBrain({
       for (let attempt = 1; ; attempt++) {
         let live = null;
         try {
-          live =
-            session === "conversation"
-              ? await conversationSession(fresh || attempt > 1, system, tools)
-              : await open(system, tools);
+          live = session === "conversation" ? conversationSession(fresh || attempt > 1, system, tools) : open(system, tools);
           live.holder.turn = turn;
           const text = await exchange(live, prompt, deadline - clock.now(), signal);
-          if (session !== "conversation") void close(live);
+          if (session !== "conversation") close(live);
           return { text };
         } catch (error) {
           // A session that failed or was cut off is not trusted with another turn.
           if (live === conversation) conversation = null;
-          void close(live);
+          close(live);
           if (error instanceof BrainError) throw error;
-          const failure = describeError(error);
+          const failure = reason(error);
           log("brain.turn_failed", { attempt, detail: failure, acted: turn.acted.length });
           // One more try with a new session, but only if nothing has been
           // done yet: a tool that already acted must not act twice.
           const again = attempt === 1 && turn.acted.length === 0 && deadline - clock.now() > 3000 && !signal?.aborted;
           if (!again) throw new BrainError("failed", failure);
-          try {
-            await client.ping();
-          } catch {
+          // A sign-in that has gone, or cannot be renewed, is looked into before the second try.
+          const signedIn = await source?.models.getAuth(source.providerId).catch(() => null);
+          if (!signedIn) {
             await reconnect();
             if (!ready) throw new BrainError("not-ready", detail);
           }
@@ -331,10 +435,9 @@ function createCopilotBrain({
     },
 
     async endConversation() {
-      if (opening) await opening.catch(() => {});
       const old = conversation;
       conversation = null;
-      await close(old);
+      close(old);
     },
   };
 }
