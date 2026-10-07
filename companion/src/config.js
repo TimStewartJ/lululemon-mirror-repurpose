@@ -21,10 +21,10 @@ const schema = z.object({
       token: z.string().default(""),
     })
     .prefault({}),
-  // Whose model answers: one of Pi's providers (the "providers" command lists them), "copilot-cli" for GitHub
-  // Copilot with the sign-in the Copilot CLI has, or any other name together with "endpoint".
-  provider: z.string().min(1).default("copilot-cli"),
-  model: z.string().min(1).default("gpt-6-luna"),
+  // Whose model answers, and which: a provider the "providers" command lists, or any other name together with
+  // "endpoint". Nothing is chosen for anyone: left empty, the companion runs and says that a model is still to be chosen.
+  provider: z.string().default(""),
+  model: z.string().default(""),
   // How hard the model thinks before it answers. Measured with gpt-6-luna:
   // with "low" a typical answer takes 2 s, with the model's own default 3.3 s,
   // and the answers are as good. "default" and "none" ask for no thinking, which
@@ -145,8 +145,8 @@ export function freshConfig() {
     listen: { host: "0.0.0.0", port: 8790 },
     secret: crypto.randomBytes(24).toString("base64url"),
     mirror: { host: "", port: 8787, token: "" },
-    provider: "copilot-cli",
-    model: "gpt-6-luna",
+    provider: "",
+    model: "",
     reasoningEffort: "low",
     stt: { model: "small.en", device: "auto", python: "" },
     proactive: { greet: true, morningBriefing: true, reminders: true, tend: true, tendMinutes: 60, quietHours: ["22:30", "06:30"] },

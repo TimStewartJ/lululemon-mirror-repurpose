@@ -25,10 +25,10 @@ once an hour it looks over the display and may tidy one small thing.
   tried on Ubuntu 24.04 with an NVIDIA GPU of 4 GB. Without a GPU it works
   on the CPU, more slowly.
 - Node.js 24 and Python 3.10 or later.
-- A language model that can call tools. It can come from GitHub Copilot with
-  the sign-in the Copilot CLI already has, from a provider you have an
-  account or a key with (Anthropic, OpenAI, Google, OpenRouter and others),
-  or from a server of your own such as Ollama. See
+- A language model that can call tools, from wherever you have one: a
+  provider you have an account or a key with (Anthropic, OpenAI, Google,
+  OpenRouter and some forty others), or a server of your own such as Ollama.
+  The companion is tied to none of them. See
   [Choosing a model](#choosing-a-model).
 - Mirror Home 2.3.0 or later on the mirror, with the companion's address and
   secret entered in its controls.
@@ -56,7 +56,9 @@ node src/cli.js init
 
 writes `~/.config/mirror-companion/config.json` with a fresh secret. Only
 your account can read the file. Set `MIRROR_COMPANION_CONFIG` to keep it
-somewhere else. `config.example.json` shows every setting.
+somewhere else. `config.example.json` shows every setting. No model is
+chosen in it yet: that is the last step, under
+[Choosing a model](#choosing-a-model).
 
 Next, pair with the mirror. On a paired phone, open the mirror's controls,
 go to **Settings > Paired devices**, and choose **Show code**. Then:
@@ -93,42 +95,11 @@ node src/cli.js providers          # where a model can come from, and which are 
 node src/cli.js models anthropic   # the models a sign-in is offered
 ```
 
-A provider is one of three kinds.
+Nothing is chosen for you. Until both are set the companion runs, and
+`health` says that a model is still to be chosen. A provider is one of two
+kinds.
 
-### GitHub Copilot, with the Copilot CLI's sign-in
-
-```json
-"provider": "copilot-cli",
-"model": "gpt-6-luna",
-```
-
-This is what `init` writes. If the account the companion runs under is
-signed in to the [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli)
-(`copilot`, then `/login`), there is nothing more to do.
-
-The companion uses the token the CLI keeps in `~/.copilot/config.json`
-(or in the folder `COPILOT_HOME` names). The CLI writes it there on a
-machine without a keychain, as most servers are. On a desktop the CLI keeps
-it in the keychain, where the companion does not look. There, put a token in
-the environment variable `COPILOT_GITHUB_TOKEN`, which the CLI itself reads
-first, or use one of the other two kinds.
-
-Know what this does before you rely on it. The requests go to GitHub with
-the CLI's sign-in and name the CLI as the program they belong to (the header
-`Copilot-Integration-Id: copilot-developer-cli`), because GitHub offers that
-sign-in its models only to requests that do. GitHub does not document this
-for other programs, so it may stop working without notice, and it draws on
-your Copilot allowance as the CLI would. If you would rather not, use
-`github-copilot` below, or a provider you have a key for.
-
-Where a model takes requests over a WebSocket that stays open, the companion
-asks it that way, as the CLI does: one socket for a conversation, and each
-call brings only what is new since the one before. A call to the model then
-comes back about 0.3 seconds sooner than over plain requests, and does not
-grow slower as a conversation grows. Set `MIRROR_COMPANION_NO_WEBSOCKET=1`
-in the companion's environment to keep to plain requests.
-
-### One of Pi's providers
+### A provider you have an account or a key with
 
 ```json
 "provider": "anthropic",
@@ -136,8 +107,8 @@ in the companion's environment to keep to plain requests.
 ```
 
 `providers` lists them: Anthropic, OpenAI, Google, Mistral, Groq,
-OpenRouter, GitHub Copilot with Pi's own sign-in (`github-copilot`), Amazon
-Bedrock and over thirty more. Sign in once:
+OpenRouter, Amazon Bedrock, GitHub Copilot and over thirty more. Sign in
+once:
 
 ```bash
 node src/cli.js login anthropic          # in the browser, where the provider has a sign-in there
@@ -164,7 +135,7 @@ so `login` is the easier way. A stored sign-in comes before the environment.
 ```
 
 For Ollama, LM Studio, vLLM, llama.cpp or a proxy, give `provider` any name
-that is not one of Pi's and say where the server is. `endpoint` takes:
+that is not in the list and say where the server is. `endpoint` takes:
 
 | In `endpoint` | Meaning |
 |---|---|
@@ -184,10 +155,10 @@ and are sent with every request, so a context of 16,000 tokens is the least
 that works. Small local models often answer in words where they should have
 called a tool.
 
-Only `copilot-cli` with `gpt-6-luna` has been run for real, and the wording
-of the instructions was settled with that model. The other providers go
-through the same loop of Pi's and are covered by the tests with stand-ins.
-Before you rely on another model, let it answer the trial set:
+So far one model has been run for real, `gpt-6-luna`, and the wording of the
+instructions was settled with it. Every provider goes through the same loop
+of Pi's, and the others are covered by the tests with stand-ins only. Before
+you rely on a model, let it answer the trial set:
 
 ```bash
 node scripts/try-brain.mjs --provider anthropic --model claude-haiku-4-5
@@ -201,6 +172,34 @@ After a change of `provider`, `model` or `endpoint`, restart the companion.
 why: nobody signed in and how to sign in, a model the sign-in is not offered
 and which ones it is, or what the provider said to a first question.
 
+### If you already use the GitHub Copilot CLI
+
+One provider in the list needs no sign-in of its own: `copilot-cli` is
+GitHub Copilot with the sign-in the
+[Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) has on
+the same account (`copilot`, then `/login`). `models copilot-cli` lists what
+it is offered.
+
+The companion reads the token the CLI keeps in `~/.copilot/config.json` (or
+in the folder `COPILOT_HOME` names). The CLI writes it there on a machine
+without a keychain, as most servers are; on a desktop it is in the keychain,
+where the companion does not look, and a token in `COPILOT_GITHUB_TOKEN`
+serves instead.
+
+Know what this does before you rely on it. The requests go to GitHub with
+the CLI's sign-in and name the CLI as the program they belong to, because
+GitHub offers that sign-in its models only to requests that do. GitHub does
+not document this for other programs, so it may stop working without notice,
+and it draws on your Copilot allowance as the CLI would. `github-copilot`,
+in the same list, is Copilot with a sign-in made for the purpose
+(`login github-copilot`).
+
+With `copilot-cli` the companion asks over a WebSocket that stays open, where
+the model takes that, as the CLI does: a call comes back about 0.3 seconds
+sooner and does not grow slower as a conversation grows. Set
+`MIRROR_COMPANION_NO_WEBSOCKET=1` in the companion's environment to keep to
+plain requests.
+
 ### Settings
 
 | Setting | Meaning |
@@ -208,9 +207,9 @@ and which ones it is, or what the provider said to a first question.
 | `listen` | The address and port the companion listens on. |
 | `secret` | Shared with the mirror. Every request must carry it. |
 | `mirror` | The mirror's address, port and token. `pair` fills this in. |
-| `provider` | Whose model answers: `copilot-cli`, one of Pi's providers, or the name of a server of your own. See [Choosing a model](#choosing-a-model). |
-| `model` | The model, by the name its provider knows it by. `node src/cli.js models` lists them. |
-| `reasoningEffort` | How hard the model thinks: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, cut to what the model can do. `low` is the default: with `gpt-6-luna` it was measured to answer in about 2 seconds where the model's own default took 3.3. `default` and `none` ask for no thinking, which a model that cannot do without takes as its own default. |
+| `provider` | Whose model answers: a provider from the list `node src/cli.js providers` prints, or the name of a server of your own. Empty until you choose. See [Choosing a model](#choosing-a-model). |
+| `model` | The model, by the name its provider knows it by. `node src/cli.js models NAME` lists a provider's. Empty until you choose. |
+| `reasoningEffort` | How hard the model thinks: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, cut to what the model can do. `low` is the default: with the one model tried it was measured to answer in about 2 seconds where the model's own default took 3.3. `default` and `none` ask for no thinking, which a model that cannot do without takes as its own default. |
 | `endpoint` | Where a server of your own is; only with a `provider` that is not one of Pi's. |
 | `stt.model`, `stt.device` | The Whisper model, and `auto`, `cuda` or `cpu`. With `auto` the GPU is used if it works. |
 | `stt.python` | The Python that has the speech packages. Leave it empty for the one `install.sh` made. |
@@ -476,9 +475,9 @@ node scripts/fake-mirror.mjs
 ```
 
 `try-brain` says a set of requests to the real model against a fake mirror
-and checks what came of each, cards and briefings among them. It needs a
-sign-in for the provider it is given with `--provider` (`copilot-cli` unless
-you say otherwise). `try-stt` runs the
+and checks what came of each, cards and briefings among them. It tries the
+model in the companion's config unless `--provider` and `--model` name
+another, and needs that provider's sign-in. `try-stt` runs the
 real speech-to-text worker on recordings and prints the transcripts and
 times. `fake-mirror` runs the fake mirror by itself, so that `pair`, `serve`
 and `say-wav` can be tried from end to end without a mirror.
@@ -494,7 +493,7 @@ and `say-wav` can be tried from end to end without a mirror.
 | `src/proactive.js` | The greeting, the morning card, the reminders and the hourly look. |
 | `src/briefing.js` | The briefing and the other cards that code builds, without the model. |
 | `src/brain.js` | The model: sessions, retries and time limits on Pi's agent loop. The only file that knows Pi's agent. |
-| `src/providers.js` | Whose model: Pi's providers, the Copilot CLI's sign-in, a server of one's own, and the file of sign-ins. |
+| `src/providers.js` | Whose model: Pi's providers, a server of one's own, and the file of sign-ins. |
 | `src/responses-socket.js` | Requests to the Responses API over a WebSocket that stays open, each going on from the one before, where the service takes them. |
 | `src/prompt.js` | Every word the model is told. |
 | `src/tools.js`, `src/tools/` | The tools, independent of the harness. |

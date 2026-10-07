@@ -169,6 +169,23 @@ test("with nobody signed in it says how to sign in, and tries again, less and le
   assert.equal(source.opened.length, 3);
 });
 
+test("with no model chosen the brain says so and how to choose one, and looks for none", async (t) => {
+  for (const chosen of [{ provider: "", model: "" }, { provider: "faux", model: "" }, { provider: "", model: "gpt-6-luna" }]) {
+    const source = fauxSource();
+    const clock = fakeClock();
+    const brain = createBrain({ ...chosen, clock, openModels: source.open });
+    t.after(() => brain.stop());
+    await brain.start();
+    assert.equal(brain.health().ready, false);
+    assert.match(brain.health().detail, /^No model is chosen yet\. Set "provider" and "model" in the config and restart: "node src\/cli\.js providers" lists where a model can come from/);
+    await assert.rejects(brain.run({ session: "conversation", system: "", prompt: "hello", tools, turn: newTurn("conversation"), timeoutMs: 1000 }),
+      (error) => error instanceof BrainError && error.kind === "not-ready");
+    await clock.advance(600_000);
+    assert.equal(source.opened.length, 0);
+    assert.equal(clock.pending(), 0);
+  }
+});
+
 test("a key the provider does not accept shows at the start, in the provider's words", async (t) => {
   const source = fauxSource();
   source.answers.push(failed("401 invalid x-api-key"));

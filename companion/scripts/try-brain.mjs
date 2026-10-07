@@ -8,6 +8,7 @@
 //   node scripts/try-brain.mjs [--provider NAME] [--model NAME] [--effort LEVEL] [--endpoint ADDRESS] [--api NAME]
 //                              [--offset MINUTES] [--zone NAME] [--only WORD] [--calls] [--verbose]
 //
+// Without --provider and --model it tries the model the companion's own config names.
 // --endpoint and --api are for a server of one's own, as "endpoint" in the config is.
 // --only runs the requests that contain one of the words, given with commas between them, or that belong to a group
 // of that name (settings, moments); --calls adds one line per call to the model; --verbose prints the companion's whole log.
@@ -16,7 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { parseConfig } from "../src/config.js";
+import { loadConfig, parseConfig } from "../src/config.js";
 import { createLog } from "../src/log.js";
 import { serve } from "../src/serve.js";
 import { localIso } from "../src/time.js";
@@ -25,8 +26,8 @@ import { fakeStt, speech } from "../tests/fakes/stt.js";
 
 const { values: options } = parseArgs({
   options: {
-    provider: { type: "string", default: "copilot-cli" },
-    model: { type: "string", default: "gpt-6-luna" },
+    provider: { type: "string" },
+    model: { type: "string" },
     endpoint: { type: "string" },
     api: { type: "string", default: "openai-completions" },
     offset: { type: "string", default: "-420" },
@@ -37,6 +38,20 @@ const { values: options } = parseArgs({
     verbose: { type: "boolean", default: false },
   },
 });
+// What is not named here is what the companion on this machine uses, its endpoint included.
+let own = {};
+try {
+  own = loadConfig();
+} catch {
+  // No config here: then both must be named.
+}
+options.provider ??= own.provider;
+options.model ??= own.model;
+if (!options.provider || !options.model) {
+  console.error('Name the model to try: --provider NAME --model NAME ("node src/cli.js providers" and "models NAME" list them).');
+  process.exit(2);
+}
+const ownEndpoint = !options.endpoint && options.provider === own.provider ? own.endpoint : null;
 const offset = Number(options.offset);
 const SECRET = "try-brain-secret-not-a-real-one";
 
@@ -48,7 +63,7 @@ const config = parseConfig({
   provider: options.provider,
   model: options.model,
   reasoningEffort: options.effort,
-  ...(options.endpoint ? { endpoint: { baseUrl: options.endpoint, api: options.api, images: true } } : {}),
+  ...(options.endpoint ? { endpoint: { baseUrl: options.endpoint, api: options.api, images: true } } : ownEndpoint ? { endpoint: ownEndpoint } : {}),
   // No quiet hours, so that the greeting and the tending run can be tried at any time of day.
   proactive: { greet: true, reminders: false, tend: true, quietHours: null },
   stateDir,

@@ -31,6 +31,7 @@ The config is read from ${defaultConfigPath()}
 function chosenProvider(named) {
   const config = loadConfig();
   const provider = named ?? config.provider;
+  if (!provider) throw new Error('No provider is chosen in the config yet. Name one, as in "models anthropic"; "node src/cli.js providers" lists them.');
   return { provider, model: config.model, endpoint: provider === config.provider ? config.endpoint : null, authFile: defaultAuthPath(), config };
 }
 
@@ -85,6 +86,7 @@ const commands = {
     print(`A config with a fresh secret was written to ${file}.`);
     print("Next, pair with the mirror: node src/cli.js pair --host MIRROR_ADDRESS --code CODE");
     print("Then give the mirror the secret that this prints: node src/cli.js secret");
+    print('And choose a model: "node src/cli.js providers" lists where one can come from; "provider" and "model" in the config say which.');
   },
 
   async pair(argv) {
@@ -122,16 +124,17 @@ const commands = {
     const models = piModels({ authFile: defaultAuthPath() });
     const copilotCli = findCopilotCliSignIn();
     const rows = [
-      { id: COPILOT_CLI, name: "GitHub Copilot, with the Copilot CLI's sign-in", how: "the Copilot CLI", state: copilotCli.token ? `signed in: ${copilotCli.source}` : "not signed in" },
+      { id: COPILOT_CLI, name: "GitHub Copilot, with the sign-in of its CLI", how: "the Copilot CLI", state: copilotCli.token ? `signed in: ${copilotCli.source}` : "not signed in" },
     ];
-    for (const provider of [...models.getProviders()].sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const provider of models.getProviders()) {
       const how = [provider.auth.oauth ? "login (browser)" : "", provider.auth.apiKey?.login ? "login --key" : "", "environment"].filter(Boolean).join(", ");
       const auth = await models.checkAuth(provider.id).catch(() => undefined);
       rows.push({ id: provider.id, name: provider.name, how, state: auth ? `signed in: ${auth.source ?? auth.type}` : "not signed in" });
     }
+    rows.sort((a, b) => a.id.localeCompare(b.id));
     if (configured?.endpoint) rows.push({ id: configured.provider, name: `the endpoint ${configured.endpoint.baseUrl}`, how: "the config", state: "" });
     const wide = (key) => Math.max(...rows.map((row) => row[key].length));
-    print('Where a model can come from ("provider" in the config). The one in use is marked.');
+    print(`Where a model can come from ("provider" in the config). ${configured?.provider ? "The one in use is marked." : "None is chosen yet."}`);
     for (const row of rows) {
       print(`${row.id === configured?.provider ? "*" : " "} ${row.id.padEnd(wide("id"))}  ${row.name.padEnd(wide("name"))}  ${row.state}${row.state.startsWith("not") ? `  (sign in with: ${row.how})` : ""}`.trimEnd());
     }
@@ -204,7 +207,7 @@ const commands = {
     const report = await request("GET", "/v1/health");
     const part = (name, ready, detail) => print(`${name}: ${ready ? "ready" : "not ready"}${detail ? `. ${detail}` : ""}`);
     print(`${report.name} ${report.version} is ${report.ok ? "well" : "not ready"}. It has been up for ${report.uptimeSeconds} seconds.`);
-    part(`Model ${report.model}${report.provider ? ` of ${report.provider}` : ""}`, report.brain.ready, report.brain.detail);
+    part(report.model ? `Model ${report.model}${report.provider ? ` of ${report.provider}` : ""}` : "Model", report.brain.ready, report.brain.detail);
     part(`Speech-to-text ${report.stt.model} on ${report.stt.device || "an unknown device"}`, report.stt.ready, report.stt.detail);
     print(
       `Mirror: ${report.mirror.reachable ? `reachable, Mirror Home ${report.mirror.version || "of unknown version"}` : "not reachable"}` +

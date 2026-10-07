@@ -51,7 +51,8 @@ const MODELS_NAMED = 40;
 /**
  * @param {Object} options
  * @param {"pi"} [options.harness]
- * @param {string} options.provider Whose model: one of Pi's providers, "copilot-cli", or the name of an endpoint.
+ * @param {string} options.provider Whose model: a provider the "providers" command lists, or the name of an endpoint.
+ *   Empty when none is chosen yet, as is `model`; the brain then says so and is never ready.
  * @param {string} options.model
  * @param {string} [options.reasoningEffort] How hard the model thinks; "default", "none" or nothing leaves thinking off.
  * @param {import("./config.js").Config["endpoint"]} [options.endpoint]
@@ -378,6 +379,13 @@ function createPiBrain({
   return {
     async start() {
       if (!stopped) return;
+      if (!provider || !modelId) {
+        detail =
+          'No model is chosen yet. Set "provider" and "model" in the config and restart: ' +
+          '"node src/cli.js providers" lists where a model can come from, and "node src/cli.js models NAME" what one has.';
+        log("brain.unavailable", { detail });
+        return;
+      }
       stopped = false;
       detail = "Starting.";
       await connect();

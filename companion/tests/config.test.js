@@ -9,9 +9,10 @@ test("a config with only a secret gets every default", () => {
   const config = parseConfig({ secret: "test-secret-0123456789" });
   assert.deepEqual(config.listen, { host: "0.0.0.0", port: 8790 });
   assert.deepEqual(config.mirror, { host: "", port: 8787, token: "" });
-  assert.equal(config.provider, "copilot-cli");
+  // Nobody's model is chosen for anyone.
+  assert.equal(config.provider, "");
   assert.equal(config.endpoint, null);
-  assert.equal(config.model, "gpt-6-luna");
+  assert.equal(config.model, "");
   assert.equal(config.reasoningEffort, "low");
   assert.equal(config.stt.model, "small.en");
   assert.equal(config.stt.device, "auto");
@@ -76,15 +77,13 @@ test("a mistake is named with where it is", () => {
   assert.throws(() => parseConfig({ secret: "test-secret-0123456789", endpoint: { baseUrl: "http://localhost:1234/v1", api: "grpc" } }), /endpoint\.api/);
 });
 
-test("whose model answers is one of Pi's providers, the Copilot CLI's sign-in, or a server of one's own", () => {
+test("whose model answers is a provider by its name, or a server of one's own", () => {
   const hosted = parseConfig({ secret: "test-secret-0123456789", provider: "anthropic", model: "claude-haiku-4-5", reasoningEffort: "minimal" });
   assert.deepEqual([hosted.provider, hosted.model, hosted.reasoningEffort, hosted.endpoint], ["anthropic", "claude-haiku-4-5", "minimal", null]);
   const own = parseConfig({ secret: "test-secret-0123456789", provider: "ollama", model: "llama3.2", endpoint: { baseUrl: "http://localhost:11434/v1" } });
   assert.deepEqual(own.endpoint, {
     baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKeyEnv: "", images: false, reasoning: false, contextWindow: 32_768, maxTokens: 4096, compat: {},
   });
-  // A config from before there was a choice is one for the Copilot CLI's sign-in, as it was then.
-  assert.equal(parseConfig({ secret: "test-secret-0123456789", model: "gpt-6-luna", reasoningEffort: "low" }).provider, "copilot-cli");
   assert.equal(defaultAuthPath({ MIRROR_COMPANION_CONFIG: path.join("somewhere", "config.json") }), path.join("somewhere", "auth.json"));
   assert.equal(defaultAuthPath({ MIRROR_COMPANION_AUTH: "elsewhere.json" }), "elsewhere.json");
 });

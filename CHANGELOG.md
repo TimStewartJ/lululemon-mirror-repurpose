@@ -271,19 +271,17 @@
   [its README](companion/README.md).
 - The companion's model can be anyone's. It runs the model with
   [Pi](https://github.com/earendil-works/pi)'s agent loop in its own
-  process, and `provider` and `model` in its config choose among Pi's
-  providers (Anthropic, OpenAI, Google, OpenRouter, GitHub Copilot and over
-  thirty more), GitHub Copilot with the sign-in the Copilot CLI already has
-  (`copilot-cli`, the default), and a server of your own such as Ollama,
-  given as `endpoint`. `node src/cli.js providers`, `models`, `login` and
-  `logout` list them and keep the sign-ins, in a file beside the config that
-  only its owner can read. `health` says why a model does not answer:
-  nobody signed in and how to sign in, a model the sign-in is not offered
-  and which it is, or what the provider said. With the Copilot CLI's sign-in
-  the requests name the CLI as the program they belong to, which GitHub
-  does not document for other programs; the README says so and names the
-  alternatives. Only that provider with `gpt-6-luna` has been run for real.
-  See [Choosing a model](companion/README.md#choosing-a-model).
+  process and is tied to no provider: `provider` and `model` in its config
+  choose among some forty (Anthropic, OpenAI, Google, OpenRouter, Amazon
+  Bedrock, GitHub Copilot and more), or name a server of your own such as
+  Ollama, given as `endpoint`. Nothing is chosen for you: until both are
+  set, the companion runs and `health` says that a model is still to be
+  chosen. `node src/cli.js providers`, `models`, `login` and `logout` list
+  them and keep the sign-ins, in a file beside the config that only its
+  owner can read. `health` says why a model does not answer: nobody signed
+  in and how to sign in, a model the sign-in is not offered and which it is,
+  or what the provider said. So far one model has been run for real. See
+  [Choosing a model](companion/README.md#choosing-a-model).
 - The emulator suite checks the assistant against a stand-in companion on the
   computer: three new checks cover its settings, a typed request and its
   answer on the glass, lines and pictures for the companion, a companion that

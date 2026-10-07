@@ -34,16 +34,27 @@ test("providers lists where a model can come from, and login keeps a key that mo
   await cli(file, "init");
   const listed = await cli(file, "providers");
   assert.equal(listed.code, 0, listed.stderr);
-  assert.match(listed.stdout, /^\* copilot-cli +GitHub Copilot, with the Copilot CLI's sign-in +not signed in +\(sign in with: the Copilot CLI\)$/m);
+  // A fresh config names nobody's model, and the list marks none.
+  assert.match(listed.stdout, /^Where a model can come from \("provider" in the config\)\. None is chosen yet\.$/m);
+  assert.doesNotMatch(listed.stdout, /^\* /m);
+  assert.match(listed.stdout, /^ {2}copilot-cli +GitHub Copilot, with the sign-in of its CLI +not signed in +\(sign in with: the Copilot CLI\)$/m);
+  const ids = [...listed.stdout.matchAll(/^ {2}(\S+) /gm)].map((match) => match[1]);
+  assert.deepEqual(ids, [...ids].sort((a, b) => a.localeCompare(b)), "the providers stand in the order of their names, none first");
   assert.match(listed.stdout, /^ {2}anthropic +Anthropic +not signed in +\(sign in with: login \(browser\), login --key, environment\)$/m);
   assert.match(listed.stdout, /^ {2}github-copilot +GitHub Copilot +not signed in/m);
   assert.match(listed.stdout, /A server of your own .*"endpoint" in the config/);
 
-  // The provider in the config has nobody signed in: the commands say what to do.
-  const none = await cli(file, "models");
+  // With no provider in the config, a command that is about one asks for its name.
+  for (const command of ["models", "login", "logout"]) {
+    const unnamed = await cli(file, command);
+    assert.equal(unnamed.code, 1);
+    assert.match(unnamed.stderr, /No provider is chosen in the config yet\. Name one/);
+  }
+  // A provider nobody is signed in to: the commands say what to do.
+  const none = await cli(file, "models", "copilot-cli");
   assert.equal(none.code, 1);
   assert.match(none.stderr, /Nobody is signed in to copilot-cli\. The Copilot CLI has no config at .* Either sign in with the Copilot CLI/);
-  const elsewhere = await cli(file, "login");
+  const elsewhere = await cli(file, "login", "copilot-cli");
   assert.match(elsewhere.stderr, /"copilot-cli" uses the sign-in the Copilot CLI has: sign in there/);
   assert.match((await cli(file, "login", "nowhere")).stderr, /There is no provider called "nowhere"/);
 
@@ -63,7 +74,7 @@ test("providers lists where a model can come from, and login keeps a key that mo
   const out = await cli(file, "logout", "groq");
   assert.match(out.stdout, /The sign-in to groq is forgotten\./);
   assert.deepEqual(JSON.parse(fs.readFileSync(authFile, "utf8")), {});
-  assert.match((await cli(file, "logout")).stderr, /Sign out in the Copilot CLI\./);
+  assert.match((await cli(file, "logout", "copilot-cli")).stderr, /Sign out in the Copilot CLI\./);
 });
 
 test("a provider that is signed in to through the environment is shown as such, and marked when it is the one in use", async (t) => {
@@ -87,7 +98,8 @@ test("init writes a config with a fresh secret and does not overwrite one", asyn
   assert.ok(written.secret.length >= 32);
   assert.ok(!first.stdout.includes(written.secret), "init does not print the secret");
   assert.deepEqual(Object.keys(written), ["listen", "secret", "mirror", "provider", "model", "reasoningEffort", "stt", "proactive", "keepUtterances", "stateDir"]);
-  assert.equal(written.provider, "copilot-cli");
+  assert.deepEqual([written.provider, written.model], ["", ""]);
+  assert.match(first.stdout, /And choose a model: "node src\/cli\.js providers" lists where one can come from/);
 
   const second = await cli(file, "init");
   assert.equal(second.code, 1);

@@ -37,6 +37,8 @@ export async function startCompanion(t, script = [], proactive = {}) {
   const config = parseConfig({
     secret: SECRET,
     mirror: { host: mirror.host, port: mirror.port, token: mirror.token },
+    provider: "a-provider",
+    model: "a-model",
     proactive: { greet: false, morningBriefing: false, reminders: false, tend: false, ...proactive },
     stateDir: temporaryDirectory(t),
   });

@@ -330,8 +330,8 @@ export function piModels({ authFile, env = process.env, home = os.homedir() }) {
  * one by.
  *
  * @param {Object} options
- * @param {string} options.provider As the config names it: one of Pi's providers, "copilot-cli", or any other name
- *   when an endpoint is given.
+ * @param {string} options.provider As the config names it: a provider the "providers" command lists, or any other
+ *   name when an endpoint is given.
  * @param {string} options.model
  * @param {import("./config.js").Config["endpoint"]} [options.endpoint]
  * @param {string} options.authFile Where the "login" command keeps its sign-ins.
@@ -378,8 +378,8 @@ export function openModels({ provider, model, endpoint = null, authFile, env = p
   const chosen = models.getProvider(provider);
   if (!chosen) {
     throw new Error(
-      `There is no provider called "${provider}". Set "provider" in the config to "${COPILOT_CLI}" or to one of: ` +
-        `${models.getProviders().map((known) => known.id).join(", ")}. For a server of your own, give "endpoint" as well.`,
+      `There is no provider called "${provider}". Set "provider" in the config to one of: ` +
+        `${[COPILOT_CLI, ...models.getProviders().map((known) => known.id)].sort().join(", ")}. For a server of your own, give "endpoint" as well.`,
     );
   }
   return {

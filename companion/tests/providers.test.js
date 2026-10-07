@@ -418,7 +418,7 @@ test("an endpoint can speak another API and say what its model can do", () => {
   );
 });
 
-test("the provider in the config is one of Pi's, the Copilot CLI's sign-in, or a server of one's own", (t) => {
+test("the provider in the config is one of those listed, or a server of one's own", (t) => {
   const authFile = path.join(folder(t), "auth.json");
   const home = folder(t);
   const anthropic = openModels({ provider: "anthropic", model: "claude-haiku-4-5", authFile, env: {}, home });
@@ -431,7 +431,7 @@ test("the provider in the config is one of Pi's, the Copilot CLI's sign-in, or a
   assert.equal(copilot.providerId, "github-copilot");
   assert.match(copilot.signIn, /^The Copilot CLI has no config at .* Either sign in with the Copilot CLI as this user .* COPILOT_GITHUB_TOKEN.* node src\/cli\.js login github-copilot$/);
 
-  assert.throws(() => openModels({ provider: "nowhere", model: "x", authFile, env: {}, home }), /There is no provider called "nowhere"\. Set "provider" in the config to "copilot-cli" or to one of: .*anthropic.*openrouter/);
+  assert.throws(() => openModels({ provider: "nowhere", model: "x", authFile, env: {}, home }), /There is no provider called "nowhere"\. Set "provider" in the config to one of: .*anthropic.*copilot-cli.*openrouter/);
   const endpoint = parseConfig({ secret: "x".repeat(16), endpoint: { baseUrl: "http://localhost:11434/v1" } }).endpoint;
   assert.throws(() => openModels({ provider: "openai", model: "x", endpoint, authFile, env: {}, home }), /"endpoint" is for a server Pi has no provider for, and "openai" is one of Pi's/);
   assert.throws(() => openModels({ provider: COPILOT_CLI, model: "x", endpoint, authFile, env: {}, home }), /Give it another name than "copilot-cli"/);
