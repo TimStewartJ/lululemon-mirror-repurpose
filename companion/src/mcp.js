@@ -72,7 +72,7 @@ const INSTRUCTIONS = [
   "Times are the mirror's: ISO 8601 with the mirror's UTC offset, worked out from now in the state.",
   "Leave the display as dark or as lit as it is unless asked otherwise: set_power holds for four hours, and a dark display at night is meant to be dark.",
   "Whoever is in the room sees a change at once. Change what was asked for and nothing else.",
-  "ask hands a wish in plain words to the mirror's own assistant, which acts on it and answers on the glass.",
+  "ask hands a wish in plain words to the mirror's own assistant, which acts on it and answers on the glass, lighting a dark display to do so.",
 ].join("\n");
 
 /** A request the protocol does not allow, with the code JSON-RPC has for it. */
@@ -136,6 +136,8 @@ function ownTools({ mirror }) {
         "the assistant works out what is meant, acts on the mirror, and shows its answer on the glass. " +
         "Use it when a wish is easier said than done with the other tools, or when the mirror itself should answer the people in the room. " +
         "text is 1 to 500 characters. Returns what the assistant answered and which of its tools it used. It can take half a minute. " +
+        "The mirror lights a dark display to show the answer, as for someone standing before it, and lets it go dark again by its own rules: " +
+        "so do not ask at night what nobody is there to read. " +
         "It needs the assistant switched on in the mirror's controls and a companion that has a model.",
       schema: z.object({ text: z.string().min(1).max(500) }),
       changes: true,

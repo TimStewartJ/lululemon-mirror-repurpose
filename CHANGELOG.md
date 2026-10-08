@@ -282,6 +282,29 @@
   in and how to sign in, a model the sign-in is not offered and which it is,
   or what the provider said. So far one model has been run for real. See
   [Choosing a model](companion/README.md#choosing-a-model).
+- Offer the Mirror's tools to AI agents of the owner's own, over the Model
+  Context Protocol. The companion's model acts on the Mirror through tools;
+  an agent on another machine had only the REST API, and had to learn the
+  layout's units, the board's rules and the Mirror's clock for itself. The
+  companion now serves those tools at `POST /mcp` to agents on the home
+  network that send its MCP key, which `node src/cli.js mcp-key` makes and
+  which is not the secret the Mirror has; until a key exists the route is
+  not there. `node src/cli.js mcp` serves one agent on standard input and
+  output, for a program that starts its servers itself, and
+  `serve --tools-only` runs the companion for agents alone. None of this
+  needs a model or speech-to-text. An agent gets 21 tools: the assistant's
+  own for the state, a picture of the glass, moments, the board, the
+  background, the layout, the display and the settings; `say`, for a line or
+  a small card on the glass; and `ask`, which hands a wish in words to the
+  Mirror's assistant. It does not get the household's memory, the
+  companion's habits, or anything about Wi-Fi, pairing and updates. A change
+  by an agent waits its turn with what people ask the Mirror, is listed in
+  the companion's activity, and is left alone by the hourly look. The
+  protocol is written out in the companion, which gains no package; the
+  tests run the protocol's reference client against it. Tried with that
+  client against a stand-in Mirror and, over the network, on a real one,
+  and with one agent program as the client against the stand-in. See
+  [MCP](docs/mcp.md).
 - The emulator suite checks the assistant against a stand-in companion on the
   computer: three new checks cover its settings, a typed request and its
   answer on the glass, lines and pictures for the companion, a companion that

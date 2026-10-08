@@ -138,7 +138,7 @@ runs, use it over the network.
 | `set_display_rules` | The hours the display is lit, and whether it goes dark when nobody is there. |
 | `set_clock`, `set_weather`, `set_film_schedule`, `set_text_color`, `set_name` | The settings an owner can also [ask the Mirror for](assistant.md#settings-you-can-ask-for). |
 | `set_character`, `set_answer_place` | Which character the assistant answers as, and where on the glass. |
-| `ask` | Hands a wish in plain words to the Mirror's own assistant, as if it were typed in the phone controls. The assistant acts on it and answers on the glass, and the tool returns the answer. It needs the assistant set up. |
+| `ask` | Hands a wish in plain words to the Mirror's own assistant, as if it were typed in the phone controls. The assistant acts on it and answers on the glass, and the tool returns the answer. The Mirror lights a dark display to show that answer, and lets it go dark again by its own rules. It needs the assistant set up. |
 
 Every tool describes itself to the agent, and the server tells it what this
 glass is like: that black is mirror, that it is read from across a room,
@@ -200,6 +200,10 @@ and output, so that what a real client sends is what is checked.
 A tool that is added to the assistant is not offered to agents until it is
 put on the list in `src/mcp.js`; a test fails until someone has decided
 either way.
+
+So far it has been used by the reference client, over the network on a real
+Mirror, and by one agent program against a stand-in Mirror. Other clients
+have not been tried.
 
 ## What it does not do yet
 
