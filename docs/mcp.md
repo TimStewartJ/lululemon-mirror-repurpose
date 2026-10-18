@@ -138,6 +138,7 @@ runs, use it over the network.
 | `set_display_rules` | The hours the display is lit, and whether it goes dark when nobody is there. |
 | `set_clock`, `set_weather`, `set_film_schedule`, `set_text_color`, `set_name` | The settings an owner can also [ask the Mirror for](assistant.md#settings-you-can-ask-for). |
 | `set_character`, `set_answer_place` | Which character the assistant answers as, and where on the glass. |
+| `set_wake_phrase` | Reads or changes the phrase to say before a spoken request. A custom phrase stays independent of the character; `followMascot: true` restores "hey" plus its name, or "hey mirror" with no character. This does not switch voice on or off. |
 | `ask` | Hands a wish in plain words to the Mirror's own assistant, as if it were typed in the phone controls. The assistant acts on it and answers on the glass, and the tool returns the answer. The Mirror lights a dark display to show that answer, and lets it go dark again by its own rules. It needs the assistant set up. |
 
 Every tool describes itself to the agent, and the server tells it what this

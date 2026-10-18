@@ -23,8 +23,6 @@ import java.util.Map;
  * and wake is the worst mistake there is.
  */
 final class VoiceCommands {
-    /** Said first, so that talk in the room is not taken for a command. */
-    static final String WAKE_WORD = "mirror";
     /** What the recogniser puts out for speech that is not on the list. */
     static final String UNKNOWN = "[unk]";
     /**
@@ -112,7 +110,6 @@ final class VoiceCommands {
     private static final List<String> COMMAND_WORDS = new ArrayList<>();
 
     static {
-        COMMAND_WORDS.add(WAKE_WORD);
         for (Command command : Command.values()) {
             for (String wording : command.wordings) {
                 if (BY_WORDING.put(wording, command) != null) {
@@ -145,16 +142,18 @@ final class VoiceCommands {
      * follows the wake word after a pause), the wake word alone, the words
      * that talk is better taken for, and anything else.
      */
-    static String grammar() {
+    static String grammar(String wakePhrase) {
         JSONArray sentences = new JSONArray();
         for (String wording : BY_WORDING.keySet()) {
-            sentences.put(WAKE_WORD + " " + wording);
+            sentences.put(wakePhrase + " " + wording);
         }
         for (String wording : BY_WORDING.keySet()) {
             sentences.put(wording);
         }
-        sentences.put(WAKE_WORD);
-        for (String word : otherWords()) {
+        if (!BY_WORDING.containsKey(wakePhrase)) {
+            sentences.put(wakePhrase);
+        }
+        for (String word : otherWords(wakePhrase)) {
             sentences.put(word);
         }
         sentences.put(UNKNOWN);
@@ -162,16 +161,28 @@ final class VoiceCommands {
     }
 
     /** The wake word and every word of the commands, wake word first. */
-    static List<String> words() {
-        return Collections.unmodifiableList(COMMAND_WORDS);
+    static List<String> words(String wakePhrase) {
+        List<String> words = new ArrayList<>();
+        for (String word : wakePhrase.split(" ")) {
+            if (!words.contains(word)) {
+                words.add(word);
+            }
+        }
+        for (String word : COMMAND_WORDS) {
+            if (!words.contains(word)) {
+                words.add(word);
+            }
+        }
+        return Collections.unmodifiableList(words);
     }
 
     /** The words that are there so that talk is not taken for a command. */
-    static List<String> otherWords() {
+    static List<String> otherWords(String wakePhrase) {
         List<String> others = new ArrayList<>();
+        List<String> commands = words(wakePhrase);
         for (String word : OTHER_WORDS.split(" ")) {
             // A word of a command is no longer something else to take talk for.
-            if (!COMMAND_WORDS.contains(word)) {
+            if (!commands.contains(word)) {
                 others.add(word);
             }
         }
@@ -182,11 +193,12 @@ final class VoiceCommands {
      * A sentence with every word that is no part of the commands made
      * unknown, which is all of it that Mirror Home ever keeps.
      */
-    static String withoutOtherWords(String sentence) {
+    static String withoutOtherWords(String sentence, String wakePhrase) {
         StringBuilder kept = new StringBuilder();
+        List<String> commands = words(wakePhrase);
         boolean unknownBefore = false;
         for (String word : normalize(sentence).split(" ")) {
-            boolean unknown = !COMMAND_WORDS.contains(word);
+            boolean unknown = !commands.contains(word);
             if (word.isEmpty() || (unknown && unknownBefore)) {
                 continue;
             }
@@ -197,12 +209,12 @@ final class VoiceCommands {
     }
 
     /** The list for the controls: what each command is called and how to say it. */
-    static JSONArray describe() throws JSONException {
+    static JSONArray describe(String wakePhrase) throws JSONException {
         JSONArray commands = new JSONArray();
         for (Command command : Command.values()) {
             JSONArray say = new JSONArray();
             for (String wording : command.wordings) {
-                say.put(WAKE_WORD + " " + wording);
+                say.put(wakePhrase + " " + wording);
             }
             commands.put(new JSONObject()
                     .put("id", command.id)

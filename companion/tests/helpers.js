@@ -35,6 +35,8 @@ export function temporaryDirectory(t) {
 export async function startCompanion(t, script = [], proactive = {}, options = {}) {
   const clock = fakeClock();
   const mirror = await startFakeMirror({ now: clock.now });
+  // Older recordings in these conversation fixtures address the device as "Mirror".
+  mirror.state.customWakePhrase = "mirror";
   const lines = [];
   const log = createLog({ write: (line) => lines.push(line), clock, secrets: [SECRET, MCP_KEY, mirror.token] });
   const config = parseConfig({

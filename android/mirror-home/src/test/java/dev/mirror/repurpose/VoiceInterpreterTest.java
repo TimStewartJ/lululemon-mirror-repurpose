@@ -8,7 +8,42 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 public final class VoiceInterpreterTest {
-    private final VoiceInterpreter interpreter = new VoiceInterpreter();
+    private final VoiceInterpreter interpreter = new VoiceInterpreter("mirror");
+
+    @Test
+    public void aMultiwordPhraseMustBeCompleteAndAtTheStart() {
+        interpreter.setWakePhrase("hey mochi");
+        for (String text : new String[]{"mochi go to sleep", "hey go to sleep",
+                "mirror go to sleep", "the hey mochi go to sleep", "hey mochis go to sleep"}) {
+            assertEquals(text, VoiceInterpreter.Kind.OTHER, heard(text, 0).kind);
+        }
+        assertEquals(VoiceCommands.Command.SLEEP, heard("hey mochi go to sleep", 0).command);
+        assertEquals(VoiceCommands.Command.WAKE, heard("hey mochi hey mochi wake up", 2000).command);
+        assertEquals(VoiceInterpreter.Kind.WAKE, heard("hey mochi", 5000).kind);
+        assertEquals(VoiceCommands.Command.SLEEP, heard("go to sleep", 7000).command);
+    }
+
+    @Test
+    public void changingThePhraseClearsTheOldWakeAndAnswerWindows() {
+        heard("mirror", 0);
+        interpreter.awaitAnswer(0);
+        interpreter.setWakePhrase("hello friend");
+        assertFalse(interpreter.windowOpen(1000));
+        assertEquals(VoiceInterpreter.Kind.OTHER,
+                interpreter.heard("at seven", 1, 1, 1000, 2000, true).kind);
+        assertEquals(VoiceInterpreter.Kind.OTHER, heard("mirror brighter", 2000).kind);
+        assertEquals(VoiceCommands.Command.BRIGHTER, heard("hello friend brighter", 3000).command);
+    }
+
+    @Test
+    public void aCustomPhraseMayOverlapTheStartOfACommand() {
+        interpreter.setWakePhrase("wake");
+        assertEquals(VoiceCommands.Command.WAKE, heard("wake wake up", 0).command);
+        interpreter.setWakePhrase("good");
+        assertEquals(VoiceCommands.Command.GOOD_MORNING, heard("good good morning", 1000).command);
+        interpreter.setWakePhrase("go to sleep");
+        assertEquals(VoiceCommands.Command.SLEEP, heard("go to sleep go to sleep", 2000).command);
+    }
 
     private VoiceInterpreter.Outcome heard(String text, long startMs) {
         return interpreter.heard(text, 1.0, startMs, startMs + 1000);

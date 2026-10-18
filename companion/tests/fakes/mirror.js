@@ -131,6 +131,10 @@ export async function startFakeMirror({
     hold: null,
     /** The character the mirror answers as, and the ones it has; null for a Mirror Home without any. */
     mascot: "none",
+    customWakePhrase: "",
+    voiceEnabled: true,
+    /** Missing words to imitate a model refusing a proposed wake phrase. */
+    missingWakeWords: [],
     mascots: [
       { id: "blink", name: "Blink" }, { id: "wisp", name: "Wisp" }, { id: "mochi", name: "Mochi" }, { id: "lune", name: "Lune" },
     ],
@@ -242,10 +246,23 @@ export async function startFakeMirror({
       media: { state: "idle" }, ambientVideo: { enabled: true, state: "playing", playing: !state.automation.sleeping },
       backgroundVideos: { selectedId: state.activeFilm, canRollback: false },
       automation: automation(),
-      voice: { enabled: true, state: "listening", detail: "Listening." },
+      voice: voice(),
       weather: weather(),
       notesVersion: 0,
       boardVersion: state.board.version,
+    };
+  }
+
+  function voice() {
+    const chosen = (state.mascots ?? []).find((mascot) => mascot.id === state.mascot);
+    const defaultWakePhrase = `hey ${(chosen?.name ?? "mirror").toLowerCase()}`;
+    const wakePhrase = state.customWakePhrase || defaultWakePhrase;
+    const missing = wakePhrase.split(" ").find((word) => state.missingWakeWords.includes(word));
+    return {
+      enabled: state.voiceEnabled,
+      state: !state.voiceEnabled ? "off" : missing ? "error" : "listening",
+      detail: missing ? `The speech model does not know "${missing}"` : "Listening.",
+      wakePhrase, wakeWord: wakePhrase, defaultWakePhrase, wakePhraseDefault: !state.customWakePhrase,
     };
   }
 
@@ -410,6 +427,20 @@ export async function startFakeMirror({
     const is = (wantedMethod, wantedPath) => method === wantedMethod && path === wantedPath;
     if (path === "/api/v1/board" || path.startsWith("/api/v1/board/")) return board(method, path, query, body);
     if (is("GET", "/api/v1/status")) return [200, status()];
+    if (is("GET", "/api/v1/voice")) return [200, voice()];
+    if (is("PUT", "/api/v1/voice")) {
+      if (body.enabled !== undefined && typeof body.enabled !== "boolean") return [400, { error: "enabled must be true or false" }];
+      if (body.wakePhrase !== undefined) {
+        if (typeof body.wakePhrase !== "string") return [400, { error: "wakePhrase must be text" }];
+        const phrase = body.wakePhrase.trim().toLowerCase().replace(/\s+/g, " ");
+        if (phrase && (phrase.length > 64 || !/^[a-z]+('[a-z]+)?( [a-z]+('[a-z]+)?){0,3}$/.test(phrase))) {
+          return [400, { error: "wakePhrase must be 1 to 4 English words, at most 64 characters" }];
+        }
+      }
+      if (body.wakePhrase !== undefined) state.customWakePhrase = body.wakePhrase.trim().toLowerCase().replace(/\s+/g, " ");
+      if (body.enabled !== undefined) state.voiceEnabled = body.enabled;
+      return [200, voice()];
+    }
     if (is("GET", "/api/v1/assistant")) {
       const characters = state.mascots ? { mascot: state.mascot, mascots: state.mascots } : {};
       const placed = state.place ? { place: { ...state.place }, places: state.places } : {};

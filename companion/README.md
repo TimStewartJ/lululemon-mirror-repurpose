@@ -2,7 +2,7 @@
 
 The companion is a small server for a home network. It makes a MIRROR that
 runs Mirror Home into something you can talk to. Mirror Home has five fixed
-voice commands of its own. Anything else that is said after "Mirror" is sent
+voice commands of its own. Anything else that is said after its wake phrase is sent
 to the companion, which works out the words, lets a language model act on
 the mirror through the mirror's own control API, and sends back what the
 glass is to show: one short line, or a card, which is a headline with up to
@@ -286,7 +286,8 @@ access.
 | `set_weather` | Sets the place the weather is for, Fahrenheit or Celsius, and whether there is weather at all: "show the weather for Portland, Maine", "use Celsius". |
 | `set_film_schedule` | Sets which film plays from which time of day, stops and starts that timetable, and returns to it from a film chosen by hand. |
 | `set_text_color` | Colours the clock, the date, notes and the board, or the weather and the other small widgets, and gives them back their own soft white. |
-| `set_name` | Gives the mirror the name it shows on the glass and in the controls. The word that wakes it stays "Mirror". |
+| `set_name` | Gives the mirror the name it shows on the glass and in the controls, without changing the wake phrase. |
+| `set_wake_phrase` | Reads or changes the complete phrase people say first: a custom phrase, or the default "hey" plus the selected character's name ("hey mirror" without one). Changes only when asked, leaves the voice switch alone, and reports the new phrase. |
 | `habits` | Tells and changes what the companion does unasked: the greeting, the morning briefing, the reminder cards, the tidying and how often, and the quiet hours. "Stop greeting me", "nothing by yourself after nine at night". |
 | `board_add`, `board_update`, `board_remove` | Notes, to-dos and reminders on the board. A timer is a reminder. A hidden board is shown for a new item, at a free place if another widget has taken its own. |
 | `present` | Answers with a card when the answer is a list or has several parts: "what's on my list?", "what's the forecast?". |
@@ -455,7 +456,7 @@ node src/cli.js mcp                  # for one agent that starts it itself, on s
 ```
 
 Neither needs a model, Python or the install script: Node, `npm ci
---omit=dev`, `init` and `pair` are enough. An agent gets 21 tools: the
+--omit=dev`, `init` and `pair` are enough. An agent gets 22 tools: the
 model's own, less the household's memory, the companion's habits and the
 cards that are the model's answers, and with a `say` and an `ask` of its
 own.

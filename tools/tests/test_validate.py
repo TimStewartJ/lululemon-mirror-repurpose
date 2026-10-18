@@ -1163,6 +1163,7 @@ class RestartVerdictTest(unittest.TestCase):
 
 
 CLIP_SENTENCES = {
+    "hey-mochi-go-to-sleep.wav": [("hey mochi go to sleep", 1.0)],
     "mirror-go-to-sleep.wav": [("mirror go to sleep", 1.0)],
     "mirror-wake-up.wav": [("mirror wake up", 1.0)],
     # What the recogniser makes of "I am going to sleep early tonight".
@@ -1200,6 +1201,8 @@ class SpeakingMirror:
         self.faults = set(faults)
         self.test_hooks = test_hooks
         self.enabled = "on-from-the-start" in self.faults
+        self.wake_phrase = ""
+        self.mascot = "none"
         self.model = None
         self.permission = True
         self.sleeping = False
@@ -1253,6 +1256,8 @@ class SpeakingMirror:
             return "paused"
         if self.model["name"] == "hollow-model":
             return "error"
+        if self.wake_phrase == "qzxqzx":
+            return "error"
         if self.down or "never-listens" in self.faults:
             return "starting"
         self.has_listened = True
@@ -1271,16 +1276,22 @@ class SpeakingMirror:
     def voice(self):
         state = self.state()
         running = self.process_running()
+        default = "hey " + ("mirror" if self.mascot == "none" else self.mascot)
+        phrase = self.wake_phrase or default
         return {
             "enabled": self.enabled,
             "state": state,
-            "detail": {"error": "The speech model could not be loaded"}.get(state, f"Voice is {state}"),
-            "wakeWord": "mirror",
+            "detail": ("The speech model does not know qzxqzx" if self.wake_phrase == "qzxqzx"
+                       else {"error": "The speech model could not be loaded"}.get(state, f"Voice is {state}")),
+            "wakeWord": phrase,
+            "wakePhrase": phrase,
+            "wakePhraseDefault": not self.wake_phrase,
+            "defaultWakePhrase": default,
             "commands": [
-                {"id": "sleep", "caption": "Sleeping", "say": ["mirror go to sleep"]},
-                {"id": "wake", "caption": "Awake", "say": ["mirror wake up"]},
-                {"id": "good-morning", "caption": "Good morning", "say": ["mirror good morning"]},
-                {"id": "good-night", "caption": "Good night", "say": ["mirror good night"]},
+                {"id": "sleep", "caption": "Sleeping", "say": [phrase + " go to sleep"]},
+                {"id": "wake", "caption": "Awake", "say": [phrase + " wake up"]},
+                {"id": "good-morning", "caption": "Good morning", "say": [phrase + " good morning"]},
+                {"id": "good-night", "caption": "Good night", "say": [phrase + " good night"]},
             ],
             "model": self.model,
             "permissionGranted": self.permission,
@@ -1307,10 +1318,27 @@ class SpeakingMirror:
             return Reply(401, {"error": "Unauthorized"}, {})
         if route == ("GET", "/api/v1/voice"):
             return Reply(200, self.voice(), {})
+        if route == ("GET", "/api/v1/assistant"):
+            return Reply(200, {"mascot": self.mascot}, {})
+        if route == ("PUT", "/api/v1/assistant"):
+            self.mascot = body["mascot"]
+            return Reply(200, {"mascot": self.mascot}, {})
         if route == ("PUT", "/api/v1/voice"):
-            if not isinstance(body.get("enabled"), bool):
+            if "enabled" in body and not isinstance(body["enabled"], bool):
                 return Reply(400, {"error": "enabled must be true or false"}, {})
-            self.enabled = body["enabled"]
+            if "wakePhrase" in body:
+                phrase = body["wakePhrase"]
+                if not isinstance(phrase, str):
+                    return Reply(400, {"error": "wakePhrase must be text"}, {})
+                phrase = " ".join(phrase.lower().split())
+                words = phrase.split()
+                if phrase and (len(phrase) > 64 or len(words) > 4
+                               or any(not word.replace("'", "").isalpha() for word in words)):
+                    return Reply(400, {"error": "wakePhrase must be English words"}, {})
+                self.wake_phrase = phrase
+                self.window_until = 0.0
+            if "enabled" in body:
+                self.enabled = body["enabled"]
             return Reply(200, self.voice(), {})
         if route == ("PUT", "/api/v1/voice/model"):
             return self.upload(options["data"], options.get("content_type") or "", options.get("headers") or {})
@@ -1342,7 +1370,7 @@ class SpeakingMirror:
             report["voice"] = self.voice()
             return Reply(200, report, {})
         if route == ("GET", "/api/v1/status"):
-            return Reply(200, {"voice": {"enabled": self.enabled, "state": self.state()}}, {})
+            return Reply(200, {"voice": self.voice()}, {})
         raise AssertionError(f"Unexpected {method} {path}")
 
     def upload(self, data, content_type, headers):
@@ -1369,9 +1397,10 @@ class SpeakingMirror:
         now = self.clock.now
         self.counts["sentences"] += 1
         words = text.split()
-        named = bool(words) and words[0] == "mirror"
-        while words and words[0] == "mirror":
-            words.pop(0)
+        wake = self.voice()["wakePhrase"].split()
+        named = words[:len(wake)] == wake
+        while words[:len(wake)] == wake:
+            del words[:len(wake)]
         rest = " ".join(words)
         sure = confidence >= 0.8 or "acts-when-unsure" in self.faults
         addressed = named or now <= self.window_until or "needs-no-name" in self.faults
@@ -1505,7 +1534,7 @@ class VoiceVerdictTest(unittest.TestCase):
     def test_voice_is_off_until_switched_on_and_is_left_off(self):
         mirror, ctx = self.run_check(validate.check_voice_off)
         self.assertFalse(mirror.enabled)
-        self.assertEqual("mirror go to sleep", ctx.details["canBeSaid"][0])
+        self.assertEqual("hey mirror go to sleep", ctx.details["canBeSaid"][0])
         self.fails(validate.check_voice_off, "on-from-the-start", "Voice is no-model before anyone switched it on")
         self.fails(validate.check_voice_off, "open-to-all", "Voice can be read without a pairing")
         self.fails(validate.check_voice_off, "hears-while-off", "A sentence was taken while nothing listens")
@@ -1663,7 +1692,7 @@ class VoiceVerdictTest(unittest.TestCase):
         names = [name for name, _, _, _ in validate.EMULATOR_CHECKS]
         voice_checks = [name for name in names if name.startswith("voice-")]
         self.assertEqual(
-            ["voice-off", "voice-model", "voice-listens", "voice-commands", "voice-wake-word",
+            ["voice-off", "voice-model", "voice-listens", "voice-wake-phrase", "voice-commands", "voice-wake-word",
              "voice-recovers", "voice-steps-aside", "voice-permission", "voice-returns"],
             voice_checks,
         )

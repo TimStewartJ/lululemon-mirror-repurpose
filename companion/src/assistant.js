@@ -18,8 +18,13 @@ const SECOND_LOOK =
   "and not to one. Then call ignore again.";
 
 /** Takes one leading "mirror", "hey mirror" and the like off a transcript. */
-export function withoutName(transcript) {
-  return transcript.replace(NAME, "").trim();
+export function withoutName(transcript, wakePhrase) {
+  if (typeof wakePhrase !== "string" || !wakePhrase.trim() || wakePhrase === "mirror") {
+    return transcript.replace(NAME, "").trim();
+  }
+  const escaped = wakePhrase.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const leading = new RegExp("^\\s*" + escaped.join("[\\s,.!?;:-]+") + "\\b[\\s,.!?;:-]*", "i");
+  return transcript.replace(leading, "").trim();
 }
 
 function letters(text) {
@@ -304,7 +309,8 @@ export function createAssistant({
       }
       ms.stt = clock.now() - started;
       const plain = transcript.replace(ANNOTATION, " ").replace(/\s+/g, " ").trim();
-      const words = addressed === "name" ? withoutName(plain) : plain;
+      const seen = await stateAhead;
+      const words = addressed === "name" ? withoutName(plain, seen.state?.snapshot.wakePhrase) : plain;
       if (letters(words) < 2) {
         dropPrepared();
         return finish({ ...common, heard: words, ignored: true, reason: "nothing-heard" });

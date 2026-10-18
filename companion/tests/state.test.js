@@ -48,6 +48,8 @@ test("the snapshot has the display, the widgets, the background, the board, the 
   assert.equal(snapshot.weather.nextHours.length, 6);
   assert.equal(snapshot.weather.nextHours[0].at, "08:00");
   assert.equal(snapshot.voice, "listening");
+  assert.equal(snapshot.wakePhrase, "hey mirror");
+  assert.equal(snapshot.wakePhraseFollowsMascot, true);
   assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
   assert.equal(snapshot.answersAt, "bottom center");
   assert.equal(boardVersion, fake.state.board.version);

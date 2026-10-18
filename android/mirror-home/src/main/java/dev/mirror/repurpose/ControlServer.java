@@ -1362,10 +1362,29 @@ public final class ControlServer extends NanoHTTPD {
     }
 
     private Response updateVoice(JSONObject body) throws JSONException {
-        if (!(body.opt("enabled") instanceof Boolean)) {
+        if (!body.has("enabled") && !body.has("wakePhrase")) {
+            return error(Response.Status.BAD_REQUEST, "Give enabled or wakePhrase");
+        }
+        if (body.has("enabled") && !(body.opt("enabled") instanceof Boolean)) {
             return error(Response.Status.BAD_REQUEST, "enabled must be true or false");
         }
-        voice.setEnabled(body.getBoolean("enabled"));
+        if (body.has("wakePhrase") && !(body.opt("wakePhrase") instanceof String)) {
+            return error(Response.Status.BAD_REQUEST, "wakePhrase must be text; empty follows the mascot");
+        }
+        try {
+            String phrase = body.has("wakePhrase") ? body.getString("wakePhrase").trim() : null;
+            if (phrase != null && !phrase.isEmpty()) {
+                phrase = WakePhrase.normalize(phrase);
+            }
+            if (phrase != null) {
+                voice.setWakePhrase(phrase);
+            }
+            if (body.has("enabled")) {
+                voice.setEnabled(body.getBoolean("enabled"));
+            }
+        } catch (IllegalArgumentException refused) {
+            return error(Response.Status.BAD_REQUEST, refused.getMessage());
+        }
         return response(Response.Status.OK, voice.snapshot());
     }
 

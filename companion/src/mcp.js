@@ -31,6 +31,7 @@ const OFFERED = [
   "set_film_schedule",
   "set_text_color",
   "set_name",
+  "set_wake_phrase",
   "board_add",
   "board_update",
   "board_remove",

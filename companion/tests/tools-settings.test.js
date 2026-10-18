@@ -10,6 +10,61 @@ const FLOWERS = "9c1f44e7" + "b".repeat(56);
 const SEASONS = "546e5d02" + "a".repeat(56);
 const WATER = "e03b77d1" + "c".repeat(56);
 
+test("set_wake_phrase follows the mascot by default and reads without changing anything", async (t) => {
+  const { use, fake } = await startTools(t);
+  assert.deepEqual(await use("set_wake_phrase", {}), { wakePhrase: "hey mirror", followsMascot: true, changed: false });
+  await use("set_character", { character: "Mochi" });
+  assert.deepEqual(await use("set_wake_phrase", {}), { wakePhrase: "hey mochi", followsMascot: true, changed: false });
+  assert.equal(fake.writes().filter((request) => request.path === "/api/v1/voice").length, 0);
+});
+
+test("set_wake_phrase saves a custom phrase independently and can restore mascot defaults", async (t) => {
+  const { use, fake } = await startTools(t);
+  const set = await use("set_wake_phrase", { phrase: "  Hello   Friend " });
+  assert.deepEqual(set, {
+    wakePhrase: "hello friend", followsMascot: false, was: "hey mirror", changed: true, note: 'Say "hello friend" from now on.',
+  });
+  assert.deepEqual(written(fake), [["PUT", "/api/v1/voice", { wakePhrase: "hello friend" }]]);
+  assert.equal(fake.state.voiceEnabled, true);
+  await use("set_character", { character: "Lune" });
+  assert.equal((await use("set_wake_phrase", {})).wakePhrase, "hello friend");
+  assert.equal((await use("set_wake_phrase", { phrase: "hello friend" })).changed, false);
+  const reset = await use("set_wake_phrase", { followMascot: true });
+  assert.equal(reset.wakePhrase, "hey lune");
+  assert.equal(reset.followsMascot, true);
+  assert.equal((await use("set_wake_phrase", { followMascot: true })).changed, false);
+});
+
+test("set_wake_phrase refuses invalid or conflicting input without changing settings", async (t) => {
+  const { use, fake } = await startTools(t);
+  for (const args of [{ phrase: "hey [unk]" }, { phrase: " " }, { phrase: "hey, mochi" },
+    { phrase: "one two three four five" }, { phrase: "x".repeat(65) },
+    { phrase: "mirror", followMascot: true }, { followMascot: false }]) {
+    assert.ok((await use("set_wake_phrase", args)).error, JSON.stringify(args));
+  }
+  assert.equal(fake.writes().length, 0);
+});
+
+test("set_wake_phrase restores the old setting if the speech model rejects a word", async (t) => {
+  const { use, fake } = await startTools(t);
+  fake.state.missingWakeWords = ["qzxqzx"];
+  const result = await use("set_wake_phrase", { phrase: "hey qzxqzx" });
+  assert.match(result.error, /does not know "qzxqzx".*Restored "hey mirror"/);
+  assert.equal(fake.state.customWakePhrase, "");
+  assert.deepEqual(written(fake), [
+    ["PUT", "/api/v1/voice", { wakePhrase: "hey qzxqzx" }],
+    ["PUT", "/api/v1/voice", { wakePhrase: "" }],
+  ]);
+});
+
+test("set_wake_phrase leaves disabled voice disabled and reports unverified recognition", async (t) => {
+  const { use, fake } = await startTools(t);
+  fake.state.voiceEnabled = false;
+  const result = await use("set_wake_phrase", { phrase: "hello friend" });
+  assert.equal(fake.state.voiceEnabled, false);
+  assert.match(result.note, /listening is off.*not been verified/);
+});
+
 /** A turn that knows the mirror's state, as every turn of a conversation does. */
 async function turnWithState({ mirror, clock }) {
   return newTurn("conversation", await fetchState(mirror, clock), clock.now());
@@ -380,7 +435,7 @@ test("a call that is refused is logged with what was asked for, so that a tool c
 
 test("the settings are for a conversation only: a tending run cannot touch them", async (t) => {
   const { tools } = await startTools(t);
-  const settings = ["set_clock", "set_display_rules", "set_weather", "set_film_schedule", "set_text_color", "set_name", "habits"];
+  const settings = ["set_clock", "set_display_rules", "set_weather", "set_film_schedule", "set_text_color", "set_name", "set_wake_phrase", "habits"];
   const allowed = (kind) => toolsFor(kind, tools).map((tool) => tool.name);
   for (const name of settings) {
     assert.ok(allowed("conversation").includes(name), name);

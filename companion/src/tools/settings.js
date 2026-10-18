@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 import { describeHabits } from "../habits.js";
 import { MirrorRefused } from "../mirror.js";
 import { describeRules, shortId } from "../state.js";
@@ -333,13 +334,60 @@ export function settingsTools({ mirror, clock, habits }) {
       },
     },
     {
+      name: "set_wake_phrase",
+      description:
+        "Reads or changes the complete phrase people say before speaking to the mirror. wakePhrase in the state is the current phrase. " +
+        "phrase: one to four English words, at most 64 characters, such as \"hello friend\" or \"mirror\". " +
+        "followMascot: true restores the default, \"hey\" and the selected character's name, or \"hey mirror\" with no character. " +
+        "A custom phrase stays the same when the character changes. Give phrase or followMascot: true, not both; " +
+        "with neither, read only. Change it only when asked, and tell the person the new phrase. " +
+        "Listening restarts briefly. The speech model must know every word; an unusable phrase is restored to the previous setting. " +
+        "This does not switch voice on or off.",
+      schema: z.object({
+        phrase: z.string().min(1).max(64).optional(),
+        followMascot: z.boolean().optional(),
+      }),
+      changes: true,
+      async handler({ phrase, followMascot }) {
+        if (phrase !== undefined && followMascot !== undefined) return { error: "Give phrase or followMascot: true, not both." };
+        if (followMascot === false) return { error: "Give a custom phrase, or followMascot: true to restore the default." };
+        const before = await mirror.get("/api/v1/voice");
+        if (typeof before.wakePhrase !== "string") {
+          return { error: "This Mirror Home cannot configure its wake phrase yet. Update Mirror Home first." };
+        }
+        const describe = (voice) => ({ wakePhrase: voice.wakePhrase, followsMascot: Boolean(voice.wakePhraseDefault) });
+        if (phrase === undefined && followMascot === undefined) return { ...describe(before), changed: false };
+        const wanted = followMascot ? "" : phrase.trim().toLowerCase().replace(/\s+/g, " ");
+        if (!followMascot && !wanted) return { error: "Give a wake phrase, or followMascot: true to restore the default." };
+        if (wanted && !/^[a-z]+('[a-z]+)?( [a-z]+('[a-z]+)?){0,3}$/.test(wanted)) {
+          return { error: "Use one to four English words, without punctuation except apostrophes." };
+        }
+        if ((before.wakePhraseDefault && !wanted) || (!before.wakePhraseDefault && wanted === before.wakePhrase)) {
+          return { ...describe(before), changed: false };
+        }
+        let after = await mirror.call("PUT", "/api/v1/voice", { body: { wakePhrase: wanted } });
+        const until = Date.now() + 15_000;
+        while (["starting", "loading"].includes(after.state) && Date.now() < until) {
+          await delay(250);
+          after = await mirror.get("/api/v1/voice");
+        }
+        if (after.state === "error") {
+          await mirror.call("PUT", "/api/v1/voice", { body: { wakePhrase: before.wakePhraseDefault ? "" : before.wakePhrase } });
+          return { error: `Listening could not use that phrase: ${after.detail}. Restored "${before.wakePhrase}".` };
+        }
+        const note = after.state === "listening" ? `Say "${after.wakePhrase}" from now on.`
+          : `The phrase is saved, but listening is ${after.state}: ${after.detail}. Its recognition has not been verified yet.`;
+        return { ...describe(after), was: before.wakePhrase, changed: true, note };
+      },
+    },
+    {
       name: "set_name",
       description:
         "Gives the mirror the name it shows on the glass (in the name widget) and in the phone controls: name in the state. " +
-        "It does not change the word people call you by: that stays \"Mirror\". Say so if the person seems to expect otherwise.",
+        "It does not change the wake phrase. Use set_wake_phrase for what people say to be heard.",
       outside:
         "Gives the mirror the name it shows on the glass (in the name widget) and in the phone controls: name in the state. " +
-        "It does not change the word the mirror listens for: that stays \"Mirror\".",
+        "It does not change the wake phrase. Use set_wake_phrase for what the mirror listens for.",
       schema: z.object({ name: z.string().min(1).max(64) }),
       changes: true,
       async handler({ name }) {

@@ -2095,6 +2095,10 @@ def listening_voice(ctx: Context, *, spoken_to: bool = True) -> dict:
         )
     if not state["enabled"]:
         ctx.api.expect("PUT", "/api/v1/voice", {"enabled": True})
+    # Existing recordings exercise the original name as a supported custom phrase.
+    # The separate configurable-phrase check exercises automatic mascot phrases.
+    if "wakePhrase" in state and state["wakePhrase"] != "mirror":
+        ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": "mirror"})
     ctx.voice_left_on = True
     return wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
 
@@ -2128,7 +2132,8 @@ def check_voice_off(ctx: Context) -> None:
     require(not voice_process_running(ctx), "The recogniser's process runs although voice is off")
     said = [sentence for command in state["commands"] for sentence in command["say"]]
     require(
-        state["wakeWord"] == "mirror" and said and all(sentence.startswith("mirror ") for sentence in said),
+        state["wakeWord"] == "hey mirror" and state.get("wakePhraseDefault") is True
+        and said and all(sentence.startswith("hey mirror ") for sentence in said),
         f"The controls are not told what can be said: {describe(state['commands'])}",
     )
     require(ctx.status()["voice"]["state"] == "off", "The status does not say that voice is off")
@@ -2159,6 +2164,64 @@ def check_voice_off(ctx: Context) -> None:
         ctx.api.expect("PUT", "/api/v1/voice", {"enabled": False})
     ctx.note("canBeSaid", said)
     ctx.note("microphoneAllowed", state["permissionGranted"])
+
+
+def check_voice_wake_phrase(ctx: Context) -> None:
+    listening_voice(ctx, spoken_to=False)
+    original = ctx.api.expect("GET", "/api/v1/assistant")["mascot"]
+    try:
+        ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": ""})
+        for mascot in ("blink", "wisp", "mochi", "lune", "none"):
+            ctx.api.expect("PUT", "/api/v1/assistant", {"mascot": mascot})
+            listening = wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+            expected = f"hey {mascot if mascot != 'none' else 'mirror'}"
+            require(listening["wakePhrase"] == expected and listening["wakePhraseDefault"],
+                    f"The default does not follow {mascot}: {describe(listening)}")
+            require(all(sentence.startswith(expected + " ")
+                        for command in listening["commands"] for sentence in command["say"]),
+                    "Command examples do not use the wake phrase")
+            require(ctx.status()["voice"]["wakePhrase"] == expected,
+                    "The status does not expose the wake phrase to agents")
+        custom = ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": "  Hello   Friend "})
+        require(custom["wakePhrase"] == "hello friend" and not custom["wakePhraseDefault"],
+                "A custom phrase was not normalized")
+        ctx.api.expect("PUT", "/api/v1/assistant", {"mascot": "mochi"})
+        wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+        require(voice_state(ctx)["wakePhrase"] == "hello friend", "A mascot change replaced a custom phrase")
+        for invalid in (None, False, 123, "[unk]", "hey, mochi", "one two three four five", "x" * 65):
+            require(ctx.api.call("PUT", "/api/v1/voice", {"wakePhrase": invalid, "enabled": False}).status == 400,
+                    f"Invalid phrase accepted: {invalid!r}")
+            state = voice_state(ctx)
+            require(state["enabled"] and state["wakePhrase"] == "hello friend",
+                    "A refused update changed voice settings")
+        ctx.restart_home()
+        restored = wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+        require(restored["wakePhrase"] == "hello friend" and not restored["wakePhraseDefault"],
+                "A custom phrase was lost when Mirror Home restarted")
+        if restored["testHooks"]:
+            taken = restored["counts"]["commands"]
+            say(ctx, "mirror go to sleep")
+            say(ctx, "friend go to sleep")
+            time.sleep(1)
+            require(voice_state(ctx)["counts"]["commands"] == taken, "The old or partial phrase still acts")
+            say(ctx, "hello friend brighter")
+            wait_for("a command addressed with a custom phrase",
+                     lambda: voice_state(ctx)["counts"]["commands"] > taken, timeout=10)
+            ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": ""})
+            wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
+            hear(ctx, "hey-mochi-go-to-sleep.wav")
+            wait_for("the recogniser to hear Hey Mochi", lambda: asleep(ctx), timeout=VOICE_ACT_SECONDS)
+            ctx.note("recognized", voice_state(ctx)["lastCommand"])
+        ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": "qzxqzx"})
+        failed = wait_voice(ctx, "error", VOICE_LISTENING_SECONDS)
+        require("qzxqzx" in failed["detail"] and "does not know" in failed["detail"],
+                "A word outside the model was silently ignored")
+        ctx.note("customPersisted", restored["wakePhrase"])
+    finally:
+        ctx.api.expect("PUT", "/api/v1/voice", {"wakePhrase": "mirror"})
+        ctx.api.expect("PUT", "/api/v1/assistant", {"mascot": original})
+        ctx.set_automation(enabled=False)
+        wait_voice(ctx, "listening", VOICE_LISTENING_SECONDS)
 
 
 def check_voice_model(ctx: Context) -> None:
@@ -3498,6 +3561,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("voice-off", "Voice commands are off until switched on, and nothing listens", check_voice_off, False),
     ("voice-model", "What is no speech model is refused; one that cannot be loaded harms nothing", check_voice_model, False),
     ("voice-listens", "With the speech model installed and voice on, a process of its own listens", check_voice_listens, False),
+    ("voice-wake-phrase", "Wake phrases follow the mascot or stay custom, persist and recognize real speech", check_voice_wake_phrase, False),
     ("voice-commands", "Told by name to sleep and to wake, the Mirror does; talk in the room does nothing", check_voice_commands, False),
     ("voice-wake-word", "A command counts after the Mirror's name, at once or after a pause, and if heard for sure", check_voice_wake_word, False),
     ("voice-recovers", "A recogniser that stops comes back, and the dashboard never notices", check_voice_recovers, False),

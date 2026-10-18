@@ -81,6 +81,10 @@ export function buildState({ status, layout, board, films, assistant = null, mom
     weather: describeWeather(status.weather, now, offsetMinutes),
     voice: status.voice?.state ?? "unknown",
   };
+  if (typeof status.voice?.wakePhrase === "string") {
+    snapshot.wakePhrase = status.voice.wakePhrase;
+    snapshot.wakePhraseFollowsMascot = Boolean(status.voice.wakePhraseDefault);
+  }
   // Only a Mirror Home that has characters is asked about them.
   const character = describeCharacter(assistant);
   if (character) snapshot.character = character;
