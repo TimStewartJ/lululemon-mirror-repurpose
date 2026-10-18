@@ -367,6 +367,12 @@ class CommandLineTest(unittest.TestCase):
         code, output, _ = self.run_tool("--json", "status")
         self.assertEqual("listening", json.loads(output)["state"])
 
+    def test_status_reports_the_configured_phrase_and_whether_it_follows_the_character(self):
+        self.client.state.return_value = listening_state(wakePhrase="hey mochi", wakePhraseDefault=True)
+        self.assertIn("Wake phrase:    hey mochi (follows character)", self.run_tool("status")[1])
+        self.client.state.return_value = listening_state(wakePhrase="hello friend", wakePhraseDefault=False)
+        self.assertIn("Wake phrase:    hello friend (custom)", self.run_tool("status")[1])
+
     def test_on_and_off_switch_and_report(self):
         self.assertIn("Voice commands: on", self.run_tool("on")[1])
         self.client.set_enabled.assert_called_with(True)

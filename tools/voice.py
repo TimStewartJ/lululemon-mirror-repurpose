@@ -251,6 +251,9 @@ def local_time(epoch_ms: object) -> str:
 def describe(state: dict) -> list[str]:
     """What voice is doing, in lines for a person; and what to do if it is not listening."""
     lines = [f"Voice commands: {'on' if state.get('enabled') else 'off'} - {state.get('detail') or state.get('state')}"]
+    if state.get("wakePhrase"):
+        source = "follows character" if state.get("wakePhraseDefault") else "custom"
+        lines.append(f"Wake phrase:    {state['wakePhrase']} ({source})")
     model = state.get("model")
     if model:
         lines.append(

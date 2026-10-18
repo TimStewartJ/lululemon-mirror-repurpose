@@ -39,7 +39,7 @@ final class VoiceSentence {
      *
      * @return the sentence, or null if nothing was said
      */
-    static VoiceSentence parse(String json) throws JSONException {
+    static VoiceSentence parse(String json, String wakePhrase) throws JSONException {
         JSONObject result = new JSONObject(json);
         String text = VoiceCommands.normalize(result.optString("text", ""));
         if (text.isEmpty()) {
@@ -51,13 +51,12 @@ final class VoiceSentence {
         }
         double lowest = Double.MAX_VALUE;
         double name = Double.NaN;
-        boolean leading = true;
+        int leading = WakePhrase.leadingWords(text, wakePhrase);
         for (int index = 0; index < words.length(); index++) {
             JSONObject word = words.getJSONObject(index);
             double confidence = word.optDouble("conf", 1.0);
             lowest = Math.min(lowest, confidence);
-            leading = leading && VoiceCommands.WAKE_WORD.equals(word.optString("word"));
-            if (leading) {
+            if (index < leading) {
                 name = Double.isNaN(name) ? confidence : Math.min(name, confidence);
             }
         }

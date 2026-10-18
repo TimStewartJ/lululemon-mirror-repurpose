@@ -32,6 +32,7 @@ public final class ConfigStore {
     private static final String KEY_WEATHER_LOCATION_NAME = "weather_location_name";
     private static final String KEY_WEATHER_UNITS = "weather_units";
     private static final String KEY_VOICE_ENABLED = "voice_enabled";
+    private static final String KEY_WAKE_PHRASE = "voice_wake_phrase";
     private static final String KEY_ASSISTANT_ENABLED = "assistant_enabled";
     private static final String KEY_ASSISTANT_ADDRESS = "assistant_address";
     private static final String KEY_ASSISTANT_KEY = "assistant_key";
@@ -280,6 +281,26 @@ public final class ConfigStore {
 
     public void setVoiceEnabled(boolean enabled) {
         preferences.edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply();
+    }
+
+    public String getDefaultWakePhrase() {
+        Mascot mascot = Mascot.byId(getMascot());
+        return WakePhrase.defaultFor(mascot == null ? null : mascot.name);
+    }
+
+    /** Empty means follow the mascot, including for installations from before this setting. */
+    public String getCustomWakePhrase() {
+        return preferences.getString(KEY_WAKE_PHRASE, "");
+    }
+
+    public String getWakePhrase() {
+        String custom = getCustomWakePhrase();
+        return custom.isEmpty() ? getDefaultWakePhrase() : custom;
+    }
+
+    public void setWakePhrase(String phrase) {
+        String custom = phrase.isEmpty() ? "" : WakePhrase.normalize(phrase);
+        preferences.edit().putString(KEY_WAKE_PHRASE, custom).apply();
     }
 
     /** Whether requests are passed on to a companion. Off until its owner turns it on. */

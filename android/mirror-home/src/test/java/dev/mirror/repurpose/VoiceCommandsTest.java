@@ -31,7 +31,7 @@ public final class VoiceCommandsTest {
 
     @Test
     public void theRecogniserIsToldEveryWayACommandCanArrive() throws Exception {
-        JSONArray grammar = new JSONArray(VoiceCommands.grammar());
+        JSONArray grammar = new JSONArray(VoiceCommands.grammar("mirror"));
         Set<String> sentences = new HashSet<>();
         for (int index = 0; index < grammar.length(); index++) {
             assertTrue("listed twice: " + grammar.getString(index), sentences.add(grammar.getString(index)));
@@ -48,18 +48,18 @@ public final class VoiceCommandsTest {
         assertTrue(sentences.contains("mirror"));
         assertTrue(sentences.contains("[unk]"));
         assertTrue(sentences.contains("because"));
-        assertEquals(2 * wordings + 2 + VoiceCommands.otherWords().size(), grammar.length());
+        assertEquals(2 * wordings + 2 + VoiceCommands.otherWords("mirror").size(), grammar.length());
     }
 
     @Test
     public void theWordsForTalkAreNoPartOfAnyCommandAndSoundLikeNone() {
-        List<String> others = VoiceCommands.otherWords();
+        List<String> others = VoiceCommands.otherWords("mirror");
         assertTrue("only " + others.size(), others.size() > 300);
         assertEquals(new HashSet<>(others).size(), others.size());
         for (String word : others) {
             // Contractions are single words to a speech model, apostrophe and all.
             assertTrue(word, word.matches("[a-z]+('[a-z]+)?"));
-            assertTrue(word + " is a command's word", !VoiceCommands.words().contains(word));
+            assertTrue(word + " is a command's word", !VoiceCommands.words("mirror").contains(word));
         }
         // Each of these cost commands when it was on the list.
         for (String near : new String[]{"nearer", "mere", "error", "dinner", "swimmer", "writer", "lighter", "awake", "asleep"}) {
@@ -69,18 +69,18 @@ public final class VoiceCommandsTest {
 
     @Test
     public void whatIsKeptOfASentenceHoldsOnlyTheCommandsWords() {
-        assertEquals("mirror go to sleep", VoiceCommands.withoutOtherWords("mirror go to sleep"));
-        assertEquals("mirror [unk]", VoiceCommands.withoutOtherWords("mirror what time is it"));
+        assertEquals("mirror go to sleep", VoiceCommands.withoutOtherWords("mirror go to sleep", "mirror"));
+        assertEquals("mirror [unk]", VoiceCommands.withoutOtherWords("mirror what time is it", "mirror"));
         assertEquals("mirror [unk] change [unk] the video [unk]",
-                VoiceCommands.withoutOtherWords("Mirror  please change my the video now then"));
-        assertEquals("mirror [unk]", VoiceCommands.withoutOtherWords("mirror [unk] because [unk]"));
-        assertEquals("", VoiceCommands.withoutOtherWords(""));
+                VoiceCommands.withoutOtherWords("Mirror  please change my the video now then", "mirror"));
+        assertEquals("mirror [unk]", VoiceCommands.withoutOtherWords("mirror [unk] because [unk]", "mirror"));
+        assertEquals("", VoiceCommands.withoutOtherWords("", "mirror"));
     }
 
     @Test
     public void wordingsArePlainLowerCaseWords() {
         // A speech model only knows lower-case words; one it lacks is silently never heard.
-        List<String> words = VoiceCommands.words();
+        List<String> words = VoiceCommands.words("mirror");
         assertEquals("mirror", words.get(0));
         for (String word : words) {
             assertTrue(word, word.matches("[a-z]+('[a-z]+)?"));
@@ -106,8 +106,8 @@ public final class VoiceCommandsTest {
     @Test
     public void aWordOfACommandIsNotAlsoSomethingElse() {
         // "home" and "back" were words to take talk for until a greeting needed them.
-        List<String> others = VoiceCommands.otherWords();
-        for (String word : VoiceCommands.words()) {
+        List<String> others = VoiceCommands.otherWords("mirror");
+        for (String word : VoiceCommands.words("mirror")) {
             assertFalse(word, others.contains(word));
         }
         assertTrue(others.contains("house"));
@@ -123,10 +123,23 @@ public final class VoiceCommandsTest {
 
     @Test
     public void theControlsAreToldHowToSayEachCommand() throws Exception {
-        JSONArray described = VoiceCommands.describe();
+        JSONArray described = VoiceCommands.describe("mirror");
         assertEquals(VoiceCommands.Command.values().length, described.length());
         assertEquals("sleep", described.getJSONObject(0).getString("id"));
         assertEquals("mirror go to sleep", described.getJSONObject(0).getJSONArray("say").getString(0));
         assertEquals("Next video", described.getJSONObject(4).getString("caption"));
+    }
+
+    @Test
+    public void theGrammarDescriptionsAndRedactionUseTheConfiguredPhrase() throws Exception {
+        String grammar = VoiceCommands.grammar("hey mochi");
+        assertTrue(grammar.contains("\"hey mochi go to sleep\""));
+        assertTrue(grammar.contains("\"hey mochi\""));
+        assertFalse(grammar.contains("\"mirror go to sleep\""));
+        assertEquals("hey mochi go to sleep",
+                VoiceCommands.describe("hey mochi").getJSONObject(0).getJSONArray("say").getString(0));
+        assertEquals("hey mochi [unk]",
+                VoiceCommands.withoutOtherWords("hey mochi what is it", "hey mochi"));
+        assertFalse(VoiceCommands.otherWords("hello friend").contains("friend"));
     }
 }

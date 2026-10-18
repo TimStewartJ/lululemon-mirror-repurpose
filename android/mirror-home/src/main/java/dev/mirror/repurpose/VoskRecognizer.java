@@ -7,6 +7,8 @@ import org.vosk.LibVosk;
 import org.vosk.LogLevel;
 import org.vosk.Model;
 import org.vosk.Recognizer;
+import com.sun.jna.Function;
+import com.sun.jna.NativeLibrary;
 
 import java.io.Closeable;
 import java.io.File;
@@ -33,7 +35,7 @@ final class VoskRecognizer implements Closeable {
      *
      * @param grammar the sentences to expect, as a JSON list
      */
-    VoskRecognizer(File modelDirectory, String grammar) throws IOException {
+    VoskRecognizer(File modelDirectory, String grammar, String wakePhrase) throws IOException {
         LibVosk.setLogLevel(LogLevel.WARNINGS);
         this.grammar = grammar;
         try {
@@ -43,6 +45,13 @@ final class VoskRecognizer implements Closeable {
             throw new IOException("The speech model could not be loaded");
         }
         try {
+            Function findWord = NativeLibrary.getInstance("vosk").getFunction("vosk_model_find_word");
+            for (String word : wakePhrase.split(" ")) {
+                if (findWord.invokeInt(new Object[]{model.getPointer(), word}) < 0) {
+                    throw new IOException("The speech model does not know \"" + word
+                            + "\". Choose another wake phrase in Settings > Voice.");
+                }
+            }
             recognizer = newRecognizer();
         } catch (IOException | RuntimeException error) {
             model.close();

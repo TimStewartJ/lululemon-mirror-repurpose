@@ -479,6 +479,12 @@
         <div class="group">
           <label class="row"><div class="row-main"><span class="row-label">Voice commands</span><span class="row-sub">The mirror’s own commands are recognised on the mirror itself. No sound of them is stored or sent anywhere.</span></div><input id="voice-enabled" class="switch" type="checkbox" disabled></label>
           <p id="voice-status" class="status inset voice-status" role="status"></p>
+          <form id="voice-wake-form">
+            <label class="row"><div class="row-main"><span class="row-label">Follow character</span><span id="voice-wake-default" class="row-sub">The wake phrase follows the selected character.</span></div><input id="voice-wake-auto" class="switch" type="checkbox" disabled></label>
+            <label class="row"><span class="row-label">Wake phrase</span><input id="voice-wake-phrase" class="row-input" maxlength="64" placeholder="hey mochi" autocomplete="off" autocapitalize="none" spellcheck="false" disabled></label>
+            <div class="row actions-row"><button id="voice-wake-save" type="submit" class="btn small" disabled>Save wake phrase</button></div>
+            <p class="hint inset">Use one to four English words. Say the whole phrase first. A custom phrase stays the same when you change character; saving restarts listening briefly.</p>
+          </form>
           <div class="row"><div class="row-main"><span class="row-label">Speech model</span><span id="voice-model" class="row-sub">—</span></div><button id="voice-model-choose" type="button" class="btn small">Install</button></div>
           <div id="voice-model-progress" class="upload-progress hidden"><span></span></div>
           <input id="voice-model-file" class="hidden" type="file" accept=".zip,application/zip">
@@ -486,7 +492,7 @@
           <details class="disclosure">
             <summary><span class="row-label">What to say</span><span class="chevron" aria-hidden="true"></span></summary>
             <ul id="voice-phrases" class="phrases"></ul>
-            <p class="hint inset">Say the mirror’s name first. If you pause after it, the mirror shows “Listening” and waits six seconds for the rest. It answers on the glass and never out loud.</p>
+            <p class="hint inset">Say the wake phrase first. If you pause after it, the mirror shows “Listening” and waits six seconds for the rest. It answers on the glass and never out loud.</p>
           </details>
           <details class="disclosure">
             <summary><span class="row-label">Heard lately</span><span class="chevron" aria-hidden="true"></span></summary>
@@ -497,7 +503,7 @@
 
         <h2 class="section-title">Assistant</h2>
         <form id="assistant-form" class="group">
-          <label class="row"><div class="row-main"><span class="row-label">Assistant</span><span class="row-sub">What you ask after the mirror’s name, beyond its own commands, goes to a companion on a computer of yours, which works out what to do.</span></div><input id="assistant-enabled" class="switch" type="checkbox" disabled></label>
+          <label class="row"><div class="row-main"><span class="row-label">Assistant</span><span class="row-sub">What you ask after the wake phrase, beyond the mirror’s own commands, goes to a companion on a computer of yours, which works out what to do.</span></div><input id="assistant-enabled" class="switch" type="checkbox" disabled></label>
           <p id="assistant-status" class="status inset voice-status" role="status"></p>
           <label class="row"><span class="row-label">Companion</span><input id="assistant-address" class="row-input" maxlength="200" placeholder="http://192.168.1.20:8790" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
           <label class="row"><span class="row-label">Key</span><input id="assistant-key" class="row-input" type="password" maxlength="256" placeholder="Not set" autocomplete="off"></label>

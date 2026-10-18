@@ -305,6 +305,7 @@ Spoken commands are recognised on the Mirror; see [Voice commands](voice.md).
 | `enabled` | The switch. It is off until an owner turns it on. |
 | `state`, `detail` | `off`, `no-model` (switched on, but no speech model is installed), `no-permission` (Android has not given Mirror Home the microphone), `paused` (the recogniser has stopped while Android installs an app), `starting`, `loading`, `listening` or `error`; and a sentence about it for the controls. |
 | `wakeWord`, `commands` | What can be said: each command's `id`, the `caption` the glass shows when it is carried out, and every sentence in `say`. |
+| `wakePhrase`, `wakePhraseDefault`, `defaultWakePhrase` | The complete phrase to say first, whether it follows the mascot, and the automatic phrase for the currently selected mascot. Default: `hey` plus its name, or `hey mirror` with no mascot. `wakeWord` is retained as an alias of `wakePhrase`. |
 | `model`, `maxModelBytes` | `null`, or the installed model's `name`, unpacked `bytes`, number of `files`, the `sha256` of the archive it came in and `installedAt`; and the largest archive that is accepted. |
 | `permissionGranted` | Whether Mirror Home may use the microphone. |
 | `process` | The recogniser's `pid` and `pssKb`, measured at most every half minute, and `restarts`: how often it stopped by itself since Mirror Home started. |
@@ -314,8 +315,17 @@ Spoken commands are recognised on the Mirror; see [Voice commands](voice.md).
 | `lastCommand`, `recent` | The last command's `id`, its time `at` and what the glass has `shown`; and up to twenty sentences that were addressed to the Mirror, each with `heard` (in which every word that is not a command's word reads `[unk]`), `confidence`, `outcome` (`command`, `wake`, `not-understood` or `unsure`), `command` and, for a command, what the glass has `shown`. Speech that was not addressed to it is counted and not kept. |
 | `testHooks` | True in a debug build only; see below. |
 
-`PUT /api/v1/voice` takes `{"enabled": true}` or `false` and answers with the
-same report. `status` carries `voice` with `enabled`, `state` and `detail`.
+`PUT /api/v1/voice` takes `enabled`, `wakePhrase`, or both and answers with
+the same report. `wakePhrase` is one to four English words, at most 64
+characters, normalized to lower case and single spaces. Apostrophes are
+allowed, other punctuation and digits are not. Empty text restores the
+mascot-following default. A custom phrase stays independent of mascot and
+display-name changes. An invalid request answers `400` without changing
+either setting. Changing the effective phrase briefly restarts recognition
+and clears the old wake/follow-up windows. The speech model must know every
+word: otherwise voice reports `error` with the missing word and instructions
+to choose another phrase. `status` carries `voice` with `enabled`, `state`,
+`detail`, `wakePhrase` and `wakePhraseDefault`.
 
 `PUT /api/v1/voice/model` installs a speech model in place of the one
 before. The body is a zip archive of a Vosk model with

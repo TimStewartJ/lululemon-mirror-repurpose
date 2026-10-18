@@ -344,6 +344,9 @@ public final class AssistantManager {
         }
         boolean changed = !id.equals(configStore.getMascot());
         configStore.setMascot(id);
+        if (changed) {
+            VoiceManager.getInstance(context).refreshWakePhrase();
+        }
         Mascot chosen = Mascot.byId(id);
         if (changed && chosen != null && !AutomationManager.getInstance(context).isSleeping()) {
             GlassCaption.show(new GlassCaption.Caption(

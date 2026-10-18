@@ -62,7 +62,7 @@ public final class VoiceManager {
     private final Context context;
     private final ConfigStore configStore;
     private final VoiceModelStore models;
-    private final VoiceInterpreter interpreter = new VoiceInterpreter();
+    private final VoiceInterpreter interpreter;
     private final VoiceStandDown standDown = new VoiceStandDown();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Messenger incoming = new Messenger(new Handler(Looper.getMainLooper(), message -> {
@@ -128,10 +128,12 @@ public final class VoiceManager {
     private int measuredPid;
     private long measuredAtElapsed;
     private Object measuredPssKb = JSONObject.NULL;
+    private String listeningPhrase;
 
     private VoiceManager(Context context) {
         this.context = context.getApplicationContext();
         configStore = new ConfigStore(this.context);
+        interpreter = new VoiceInterpreter(configStore.getWakePhrase());
         models = new VoiceModelStore(new File(this.context.getFilesDir(), "voice"));
     }
 
@@ -220,6 +222,23 @@ public final class VoiceManager {
         handler.post(this::evaluate);
     }
 
+    public void setWakePhrase(String phrase) {
+        configStore.setWakePhrase(phrase);
+        refreshWakePhrase();
+    }
+
+    /** Also called when a mascot changes, so that an automatic phrase follows it immediately. */
+    void refreshWakePhrase() {
+        synchronized (this) {
+            String wanted = configStore.getWakePhrase();
+            interpreter.setWakePhrase(wanted);
+            if (service != null && !wanted.equals(listeningPhrase)) {
+                serviceState = "";
+            }
+        }
+        handler.post(this::evaluate);
+    }
+
     /**
      * Installs a speech model from a zip archive, replacing the one before.
      *
@@ -302,7 +321,9 @@ public final class VoiceManager {
         return new JSONObject()
                 .put("enabled", enabled)
                 .put("state", state(enabled, modelInstalled, permission))
-                .put("detail", describeState(enabled, modelInstalled, permission));
+                .put("detail", describeState(enabled, modelInstalled, permission))
+                .put("wakePhrase", configStore.getWakePhrase())
+                .put("wakePhraseDefault", configStore.getCustomWakePhrase().isEmpty());
     }
 
     public synchronized JSONObject snapshot() throws JSONException {
@@ -313,8 +334,11 @@ public final class VoiceManager {
                 .put("enabled", enabled)
                 .put("state", state(enabled, model != null, permission))
                 .put("detail", describeState(enabled, model != null, permission))
-                .put("wakeWord", VoiceCommands.WAKE_WORD)
-                .put("commands", VoiceCommands.describe())
+                .put("wakeWord", configStore.getWakePhrase())
+                .put("wakePhrase", configStore.getWakePhrase())
+                .put("wakePhraseDefault", configStore.getCustomWakePhrase().isEmpty())
+                .put("defaultWakePhrase", configStore.getDefaultWakePhrase())
+                .put("commands", VoiceCommands.describe(configStore.getWakePhrase()))
                 .put("model", model == null ? JSONObject.NULL : model)
                 .put("maxModelBytes", VoiceModelArchive.MAX_ARCHIVE_BYTES)
                 .put("permissionGranted", permission)
@@ -446,6 +470,8 @@ public final class VoiceManager {
             unbind();
         } else if (retry) {
             sendStart();
+        } else if (wanted && service != null && !configStore.getWakePhrase().equals(listeningPhrase)) {
+            sendStart();
         }
     }
 
@@ -477,9 +503,14 @@ public final class VoiceManager {
 
     private void sendStart() {
         Messenger target;
+        String phrase;
         synchronized (this) {
             target = service;
+            phrase = configStore.getWakePhrase();
+            listeningPhrase = phrase;
+            interpreter.setWakePhrase(phrase);
             interpreter.reset();
+            serviceState = "";
             // Listening that starts afresh counts its sound from nothing again.
             requestEnd = -1;
         }
@@ -488,7 +519,8 @@ public final class VoiceManager {
         }
         Bundle data = new Bundle();
         data.putString(VoiceService.KEY_MODEL, models.directory().getAbsolutePath());
-        data.putString(VoiceService.KEY_GRAMMAR, VoiceCommands.grammar());
+        data.putString(VoiceService.KEY_GRAMMAR, VoiceCommands.grammar(phrase));
+        data.putString(VoiceService.KEY_WAKE_PHRASE, phrase);
         Message message = Message.obtain(null, VoiceService.MSG_START);
         message.setData(data);
         message.replyTo = incoming;
@@ -528,6 +560,9 @@ public final class VoiceManager {
         Bundle data = message.getData();
         switch (message.what) {
             case VoiceService.MSG_STATE:
+                if (!configStore.getWakePhrase().equals(data.getString(VoiceService.KEY_WAKE_PHRASE))) {
+                    break;
+                }
                 synchronized (this) {
                     serviceState = data.getString(VoiceService.KEY_STATE, "");
                     detail = data.getString(VoiceService.KEY_DETAIL, "");
@@ -555,7 +590,11 @@ public final class VoiceManager {
                 break;
             case VoiceService.MSG_SENTENCE:
                 try {
-                    VoiceSentence sentence = VoiceSentence.parse(data.getString(VoiceService.KEY_JSON, "{}"));
+                    if (!configStore.getWakePhrase().equals(data.getString(VoiceService.KEY_WAKE_PHRASE))) {
+                        break;
+                    }
+                    VoiceSentence sentence = VoiceSentence.parse(
+                            data.getString(VoiceService.KEY_JSON, "{}"), configStore.getWakePhrase());
                     if (sentence != null) {
                         heard(
                                 sentence,
@@ -714,7 +753,7 @@ public final class VoiceManager {
             // Only what was said to the Mirror is kept, and only its words from the command list.
             recent.addLast(new JSONObject()
                     .put("at", System.currentTimeMillis())
-                    .put("heard", VoiceCommands.withoutOtherWords(sentence.text))
+                    .put("heard", VoiceCommands.withoutOtherWords(sentence.text, configStore.getWakePhrase()))
                     .put("confidence", number(sentence.lowestConfidence, 100))
                     .put("outcome", outcome.kind.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'))
                     .put("command", outcome.command == null ? JSONObject.NULL : outcome.command.id)
@@ -781,12 +820,8 @@ public final class VoiceManager {
     }
 
     /** A sentence without the Mirror's name before it: the words of the command themselves. */
-    private static String wordingOf(String sentence) {
-        String words = VoiceCommands.normalize(sentence);
-        while (words.equals(VoiceCommands.WAKE_WORD) || words.startsWith(VoiceCommands.WAKE_WORD + " ")) {
-            words = words.substring(VoiceCommands.WAKE_WORD.length()).trim();
-        }
-        return words;
+    private String wordingOf(String sentence) {
+        return WakePhrase.withoutLeading(sentence, configStore.getWakePhrase());
     }
 
     private static String changeBrightness(

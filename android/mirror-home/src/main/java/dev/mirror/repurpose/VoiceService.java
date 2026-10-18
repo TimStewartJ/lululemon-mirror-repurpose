@@ -53,6 +53,7 @@ public final class VoiceService extends Service {
 
     static final String KEY_MODEL = "model";
     static final String KEY_GRAMMAR = "grammar";
+    static final String KEY_WAKE_PHRASE = "wakePhrase";
     static final String KEY_PATH = "path";
     static final String KEY_STATE = "state";
     static final String KEY_DETAIL = "detail";
@@ -160,6 +161,7 @@ public final class VoiceService extends Service {
                 listening = new Listening(
                         new File(data.getString(KEY_MODEL, "")),
                         data.getString(KEY_GRAMMAR, "[]"),
+                        data.getString(KEY_WAKE_PHRASE, "hey mirror"),
                         message.replyTo);
                 listening.start();
                 break;
@@ -254,6 +256,7 @@ public final class VoiceService extends Service {
     private final class Listening extends Thread {
         private final File model;
         private final String grammar;
+        private final String wakePhrase;
         private final Messenger client;
         private final Object clipLock = new Object();
         /** Kept in memory only; see {@link SoundRing}. */
@@ -267,10 +270,11 @@ public final class VoiceService extends Service {
         private RequestEnd ending;
         volatile boolean stopRequested;
 
-        Listening(File model, String grammar, Messenger client) {
+        Listening(File model, String grammar, String wakePhrase, Messenger client) {
             super("voice-listening");
             this.model = model;
             this.grammar = grammar;
+            this.wakePhrase = wakePhrase;
             this.client = client;
         }
 
@@ -307,7 +311,7 @@ public final class VoiceService extends Service {
             long loadMs = 0;
             try {
                 report(STATE_LOADING, "", 0);
-                recognizer = new VoskRecognizer(model, grammar);
+                recognizer = new VoskRecognizer(model, grammar, wakePhrase);
                 loadMs = SystemClock.elapsedRealtime() - began;
                 microphone = openMicrophone();
                 report(STATE_LISTENING, "", loadMs);
@@ -460,6 +464,7 @@ public final class VoiceService extends Service {
                     String json = recognizer.result();
                     Bundle sentence = new Bundle();
                     sentence.putString(KEY_JSON, json);
+                    sentence.putString(KEY_WAKE_PHRASE, wakePhrase);
                     long[] place = place(json, recogniserBegan, ring.written());
                     if (place[1] >= 0) {
                         // Not into the sentence before it.
@@ -517,6 +522,7 @@ public final class VoiceService extends Service {
             data.putString(KEY_DETAIL, detail);
             data.putInt(KEY_PID, Process.myPid());
             data.putLong(KEY_LOAD_MS, loadMs);
+            data.putString(KEY_WAKE_PHRASE, wakePhrase);
             send(MSG_STATE, data);
         }
 
@@ -543,7 +549,7 @@ public final class VoiceService extends Service {
      */
     static long[] place(String json, long recogniserBegan, long heard) {
         try {
-            VoiceSentence sentence = VoiceSentence.parse(json);
+            VoiceSentence sentence = VoiceSentence.parse(json, "");
             if (sentence == null || sentence.endMs <= sentence.startMs) {
                 return new long[]{-1, -1};
             }

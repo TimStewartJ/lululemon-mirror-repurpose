@@ -20,6 +20,14 @@
   combinations owners have reported; a **Board report** issue form asks for
   the report, and `AGENTS.md` tells coding agents what reads a Mirror and
   what changes it.
+- Make the wake phrase configurable in **Settings > Voice** and through the
+  assistant and MCP tool `set_wake_phrase`. By default it is "hey" followed
+  by the selected character's name: "hey Mochi", for example, or "hey
+  Mirror" with no character. Existing installations without a custom phrase
+  use that default too. A custom phrase stays the same when the character
+  changes and survives restarts and updates. Recognition requires the
+  complete phrase, including confidence in every word; words the installed
+  speech model does not know are reported rather than silently skipped.
 
 - Bring the Mirror back to its Wi-Fi network when Android does not. One
   evening a Mirror stood for hours with its network a room away, showing

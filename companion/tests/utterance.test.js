@@ -13,6 +13,7 @@ const sleep = { calls: [{ tool: "set_power", args: { state: "asleep" } }], text:
 
 test("an utterance is heard, shown as heard, acted on and answered", async (t) => {
   const { say, mirror, brain, stt, clock } = await startCompanion(t, [sleep]);
+  mirror.state.customWakePhrase = "mirror";
   stt.takesMs = 1400;
   const pending = say(speech("Mirror, go to sleep."), { id: "utt-42" });
   await until(() => stt.heard === 1, "the transcription to start");
@@ -41,7 +42,7 @@ test("an utterance is heard, shown as heard, acted on and answered", async (t) =
 
 test("the model is told what was said and how the mirror stands, in the mirror's time", async (t) => {
   const { say, brain } = await startCompanion(t, [{ text: "Noted." }]);
-  await say(speech("Mirror, remind me to take out the trash at seven tomorrow"));
+  await say(speech("Hey Mirror, remind me to take out the trash at seven tomorrow"));
   const { prompt, system, tools } = brain.runs[0];
   assert.match(prompt, /^Said to you, after your name:\n"remind me to take out the trash at seven tomorrow"\n\nThe mirror now:\n\{/);
   const snapshot = JSON.parse(prompt.slice(prompt.indexOf("{")));
@@ -57,7 +58,7 @@ test("the model is told what was said and how the mirror stands, in the mirror's
   assert.match(system, /Never say you did something that a tool refused/);
   assert.match(system, /What you remember about this household\n- Nothing yet\./);
   assert.match(system, /When you are unsure whether words were meant for you, they were/);
-  assert.equal(tools.length, 25);
+  assert.equal(tools.length, 26);
   assert.ok(!tools.includes("say"), "the answer is the line; there is no second way to show one");
   // Who the mirror is on the glass is part of how it stands, and it can be asked to be another.
   assert.deepEqual(snapshot.character, { now: "none", choices: ["Blink", "Wisp", "Mochi", "Lune"] });
@@ -81,7 +82,7 @@ test("a due time worked out by the model lands on the board at the right instant
       text: (results) => `I'll remind you tomorrow at 7. (${results[0].added.due})`,
     },
   ]);
-  const { body } = await say(speech("Mirror, remind me to take out the trash at seven tomorrow"));
+  const { body } = await say(speech("Hey Mirror, remind me to take out the trash at seven tomorrow"));
   assert.equal(body.reply, "I'll remind you tomorrow at 7. (2026-10-04T07:00:00-07:00)");
   assert.deepEqual(body.acted, ["board_add"]);
   assert.equal(mirror.state.board.items[0].due, Date.UTC(2026, 9, 4, 14, 0, 0));
@@ -99,6 +100,31 @@ test("the name is taken off the start once, however it was written", () => {
   assert.equal(withoutName("Mirrors are useful"), "Mirrors are useful");
   assert.equal(withoutName("The mirror in the hall needs cleaning"), "The mirror in the hall needs cleaning");
   assert.equal(withoutName("Mirror."), "");
+});
+
+test("configured wake phrases are stripped only when complete and leading", () => {
+  assert.equal(withoutName("Hey, Mochi! What time is it?", "hey mochi"), "What time is it?");
+  assert.equal(withoutName("HELLO my FRIEND, go to sleep.", "hello my friend"), "go to sleep.");
+  assert.equal(withoutName("Mochi, what time is it?", "hey mochi"), "Mochi, what time is it?");
+  assert.equal(withoutName("Hey Mochis, hello", "hey mochi"), "Hey Mochis, hello");
+  assert.equal(withoutName("The hey mochi in the hall", "hey mochi"), "The hey mochi in the hall");
+  assert.equal(withoutName("Hey Mochi hey Mochi hello", "hey mochi"), "hey Mochi hello");
+});
+
+test("a mascot wake phrase addresses the assistant and can change itself through a tool", async (t) => {
+  const { say, mirror, brain } = await startCompanion(t, [{
+    calls: [{ tool: "set_wake_phrase", args: { phrase: "hello friend" } }],
+    text: 'Say "hello friend" from now on.',
+  }, { text: "Hello." }]);
+  mirror.state.customWakePhrase = "";
+  mirror.state.mascot = "mochi";
+  const { body } = await say(speech("Hey Mochi, change your wake phrase to hello friend"));
+  assert.equal(body.heard, "change your wake phrase to hello friend");
+  assert.deepEqual(body.acted, ["set_wake_phrase"]);
+  assert.equal(mirror.state.customWakePhrase, "hello friend");
+  assert.match(brain.runs[0].prompt, /^Said to you, after your name/);
+  const follow = await say(speech("Hello friend, hello"), { id: "utt-2" });
+  assert.equal(follow.body.heard, "hello");
 });
 
 test("with the name heard by the mirror, a transcript without it goes ahead all the same", async (t) => {
@@ -120,6 +146,7 @@ test("after a pause or in answer to a question the words are taken as they are",
 
 test("nothing intelligible is ignored without asking the model", async (t) => {
   const { say, call, brain, mirror, stt } = await startCompanion(t);
+  mirror.state.customWakePhrase = "mirror";
   for (const words of ["Mirror.", "Mirror, a", "", "[BLANK_AUDIO]", "Mirror (music)", "..."]) {
     const { status, body } = await say(speech(words));
     assert.equal(status, 200);

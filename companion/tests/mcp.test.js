@@ -19,7 +19,7 @@ const CLI = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 const NAMES = [
   "get_state", "look", "set_power", "set_brightness", "set_background", "set_character", "set_answer_place", "arrange_widgets",
   "show_moment", "end_moment", "set_clock", "set_display_rules", "set_weather", "set_film_schedule", "set_text_color", "set_name",
-  "board_add", "board_update", "board_remove", "say", "ask",
+  "set_wake_phrase", "board_add", "board_update", "board_remove", "say", "ask",
 ];
 
 /** The MCP server over the tools and a fake mirror, without HTTP around it. */
@@ -61,6 +61,16 @@ async function post(base, delivered, { key = MCP_KEY, method = "POST" } = {}) {
 }
 
 const call = (id, name, args = {}) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+
+test("MCP agents can read and configure the wake phrase without switching voice off", async (t) => {
+  const { use, fake } = await startMcp(t);
+  const result = await use("set_wake_phrase", { phrase: "hello friend" });
+  assert.equal(result.isError, undefined);
+  assert.equal(result.value.wakePhrase, "hello friend");
+  assert.equal(fake.state.voiceEnabled, true);
+  assert.equal((await use("get_state")).value.wakePhrase, "hello friend");
+  assert.equal((await use("set_wake_phrase", { followMascot: true })).value.wakePhrase, "hey mirror");
+});
 
 test("the network gets the assistant's tools, less the ones that only make sense in a turn of its own", async (t) => {
   const { mcp, tools } = await startMcp(t);

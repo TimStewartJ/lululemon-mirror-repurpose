@@ -255,10 +255,14 @@ smoothly from the current level.
 
 ## Voice commands
 
-Say "Mirror, go to sleep", "Mirror, wake up", "Mirror, brighter", "Mirror,
-dimmer" or "Mirror, next video". The Mirror recognises this by itself: no
+Say the wake phrase and a command: "Hey Mochi, go to sleep", "Hey Mochi,
+wake up", "Hey Mochi, brighter", "Hey Mochi, dimmer" or "Hey Mochi, next
+video". The default follows the selected character ("Hey Mochi" for the
+cat, for example), or is "Hey Mirror" with no character. **Settings >
+Voice** lets you choose a custom phrase or restore **Follow character**.
+The Mirror recognises commands by itself: no
 sound is stored or leaves it, and it answers on the glass, never out loud.
-Nothing listens until you switch it on. It also knows greetings: "Mirror,
+Nothing listens until you switch it on. It also knows greetings: "Hey Mochi,
 good morning", "good afternoon", "good evening", "I'm home" and "good
 night", which wake it or, for the last, send it to sleep.
 

@@ -68,7 +68,12 @@ export function conversationSystem(memory) {
     "- character in the state is the small figure that stands above your words and acts out what you do: you, as people see you. " +
       "Asked to be another (\"be the cat\", \"can you be a ghost?\", \"change your face\", \"a different character\"), " +
       "for the next one, or to do without (\"no character\", \"just the words\"), use set_character; " +
-      "asked which there are, name the choices. With no character in the state, this mirror has none.",
+      "asked which there are, name the choices. With no character in the state, this mirror has none. " +
+      "When wakePhraseFollowsMascot is true, changing the character changes the wake phrase too; tell the person what to say next.",
+    "- wakePhrase in the state is the whole phrase people say to address you. Asked to change it " +
+      "(\"listen for hello friend\", \"change your wake word\", \"use your character's name again\"), use set_wake_phrase. " +
+      "Its default follows your character: \"hey Mochi\", for example, or \"hey mirror\" with no character. " +
+      "Never change it unasked. Tell the person the resulting phrase, not just that it changed.",
     "- answersAt in the state is where on the glass your words appear: how high (top, upper, middle, lower, bottom) " +
       "and to which side (left, center, right). Asked to move them (\"answer higher up\", \"put your answers at the top\", " +
       "\"move the subtitles to the left\", \"I can't read that down there\", \"back to the bottom\"), use set_answer_place. " +

@@ -32,6 +32,8 @@
   var noteList = [];
   var voiceReport = null;
   var voiceBusy = false;
+  var wakeEdited = false;
+  var wakeBusy = false;
   var scanGuardBusy = false;
   var assistantReport = null;
   var assistantBusy = false;
@@ -1756,6 +1758,10 @@
       toggle.disabled = false;
       toggle.checked = Boolean(voice.enabled);
     }
+    if (voiceReport && voice.wakePhrase && !wakeBusy &&
+        (voiceReport.wakePhrase !== voice.wakePhrase || voiceReport.wakePhraseDefault !== voice.wakePhraseDefault)) {
+      refreshVoice();
+    }
     var element = byId('voice-status');
     element.textContent = '';
     if (voice.state === 'listening') {
@@ -1777,7 +1783,17 @@
       : model.name ? model.name + ', ' + formatBytes(model.bytes) : 'Installed';
     byId('voice-model-choose').textContent = model ? 'Replace' : 'Install';
 
-    var name = report.wakeWord || 'mirror';
+    var name = report.wakePhrase || report.wakeWord || 'hey mirror';
+    var configurable = typeof report.wakePhrase === 'string';
+    byId('voice-wake-auto').disabled = !configurable || wakeBusy;
+    byId('voice-wake-save').disabled = !configurable || wakeBusy;
+    if (!wakeEdited && !wakeBusy) {
+      byId('voice-wake-auto').checked = Boolean(report.wakePhraseDefault);
+      byId('voice-wake-phrase').value = name;
+    }
+    byId('voice-wake-phrase').disabled = !configurable || wakeBusy || byId('voice-wake-auto').checked;
+    byId('voice-wake-default').textContent = 'Default: \u201c' + (report.defaultWakePhrase || name) +
+      '\u201d. With no character: \u201chey mirror\u201d.';
     var spokenName = name.charAt(0).toUpperCase() + name.slice(1);
     var phrases = byId('voice-phrases');
     phrases.textContent = '';
@@ -1829,7 +1845,7 @@
       if (counts.notUnderstood) summary += ', ' + counts.notUnderstood + ' not understood';
       summary += '.';
     }
-    byId('voice-heard-summary').textContent = summary + ' Talk that does not start with its name is not kept.';
+    byId('voice-heard-summary').textContent = summary + ' Talk that does not start with the wake phrase is not kept.';
     renderVoiceSummary(report);
   }
 
@@ -3229,6 +3245,35 @@
 
   /* ---------- Voice ---------- */
 
+  byId('voice-wake-auto').addEventListener('change', function () {
+    wakeEdited = true;
+    byId('voice-wake-phrase').disabled = this.checked;
+    if (this.checked && voiceReport) byId('voice-wake-phrase').value = voiceReport.defaultWakePhrase;
+  });
+  byId('voice-wake-phrase').addEventListener('input', function () { wakeEdited = true; });
+  byId('voice-wake-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var phrase = byId('voice-wake-auto').checked ? '' : byId('voice-wake-phrase').value.trim();
+    if (!byId('voice-wake-auto').checked && !phrase) {
+      setMessage('voice-message', 'Type a wake phrase, or turn on Follow character.', true);
+      return;
+    }
+    wakeBusy = true;
+    renderVoice(voiceReport);
+    setMessage('voice-message', '');
+    request('/api/v1/voice', json('PUT', { wakePhrase: phrase })).then(function (report) {
+      wakeBusy = false;
+      wakeEdited = false;
+      renderVoice(report);
+      toast('Wake phrase saved');
+      window.setTimeout(refreshVoice, 6000);
+    }).catch(function (error) {
+      wakeBusy = false;
+      renderVoice(voiceReport);
+      setMessage('voice-message', error.message, true);
+    });
+  });
+
   byId('scan-guard-enabled').addEventListener('change', function () {
     var toggle = byId('scan-guard-enabled');
     var wanted = toggle.checked;
@@ -3343,6 +3388,7 @@
     request('/api/v1/assistant', json('PUT', { enabled: wanted })).then(function (report) {
       assistantBusy = false;
       renderAssistant(report);
+      refreshVoice();
       /* The mirror asks the companion how it is right away; the answer takes a moment. */
       if (wanted) window.setTimeout(refreshAssistant, 2500);
     }).catch(function (error) {
@@ -3361,6 +3407,7 @@
     request('/api/v1/assistant', json('PUT', { mascot: select.value })).then(function (report) {
       select.blur();
       renderAssistant(report);
+      refreshVoice();
     }).catch(function (error) {
       select.disabled = false;
       select.value = before;

@@ -8,7 +8,16 @@ import org.junit.Test;
 
 /** What the interpreter makes of speech once there is an assistant to pass requests on to. */
 public final class VoiceInterpreterAssistantTest {
-    private final VoiceInterpreter interpreter = new VoiceInterpreter();
+    private final VoiceInterpreter interpreter = new VoiceInterpreter("mirror");
+
+    @Test
+    public void anAssistantRequestNeedsConfidenceInTheWholePhrase() {
+        interpreter.setWakePhrase("hey mochi");
+        assertEquals(VoiceInterpreter.Kind.ASK, heard("hey mochi what is the [unk]", 0.2, 0.98, 0).kind);
+        assertEquals(VoiceInterpreter.Kind.OTHER, heard("hey mochi what is the [unk]", 0.2, 0.5, 5000).kind);
+        assertEquals(VoiceInterpreter.Kind.UNSURE, heard("hey mochi", 1.0, 0.5, 9000).kind);
+        assertFalse(interpreter.windowOpen(11000));
+    }
 
     private VoiceInterpreter.Outcome heard(String text, double lowest, double name, long startMs) {
         return interpreter.heard(text, lowest, name, startMs, startMs + 1500, true);

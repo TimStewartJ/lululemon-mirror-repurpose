@@ -1,9 +1,14 @@
 # Voice commands
 
-From Mirror Home 2.3.0 a Mirror can be told what to do. Say its name and
+From Mirror Home 2.3.0 a Mirror can be told what to do. Say its wake phrase and
 then a command:
 
-> "Mirror, go to sleep."
+> "Hey Mochi, go to sleep."
+
+The default is "hey" followed by the selected [character](assistant.md#a-character):
+"Hey Blink", "Hey Wisp", "Hey Mochi" or "Hey Lune". With no character it is
+"Hey Mirror". **Settings > Voice** shows the current phrase. Examples on
+this page use Mochi; use the phrase your own Mirror shows.
 
 Speech is recognised on the Mirror itself, by the open-source
 [Vosk](https://alphacephei.com/vosk/) recogniser. No sound leaves the
@@ -17,7 +22,7 @@ commands is sent to that computer.
 
 ## What you can say
 
-| Say "Mirror, ..." | What happens |
+| Say "Hey Mochi, ..." | What happens |
 |---|---|
 | "go to sleep" | The display goes dark and stays dark, as with **Sleep** in the controls: for four hours, or until it is woken. Walking past does not wake it. |
 | "wake up" | The display comes on. After that it follows its schedule and presence sensing again. |
@@ -40,7 +45,7 @@ other commands (five times in six), "I'm back" two times in three and "I'm
 home" less than half the time. A greeting it missed goes to the assistant
 like any other request, which answers it the same way a few seconds later.
 
-You can pause after "Mirror". The glass then shows **Listening**, and a
+You can pause after the complete wake phrase. The glass then shows **Listening**, and a
 command counts for the next six seconds without the name. If the Mirror
 heard its name but not a command it knows, it shows **Didn't catch that**
 and waits another six seconds. With [the assistant](assistant.md) switched
@@ -101,16 +106,45 @@ switches voice off, and `remove-model` takes the model off the Mirror.
 
 ## What it takes to be heard
 
+### Choosing a wake phrase
+
+In **Settings > Voice**, leave **Follow character** on to have the phrase
+follow the selected character. Turn it off, enter one to four English words
+(up to 64 characters), and choose **Save wake phrase** for a custom phrase.
+For the previous behavior, enter `mirror`. A custom phrase does not change
+when the character or the name on the glass changes. Turn **Follow
+character** back on and save to restore the default.
+
+With the assistant on, ask "Hey Mochi, change your wake phrase to hello
+friend" or "Hello friend, use your character's name again". Its
+`set_wake_phrase` tool is also available to [MCP agents](mcp.md). It cannot
+switch voice on or off. The assistant tells you what to say next.
+
+Saving the phrase briefly restarts listening, without changing the voice
+switch. It survives app restarts, device reboots and updates. Installations
+with no saved phrase use the new mascot-following default, not the old
+"Mirror" name.
+
+The installed speech model must know each word. The usual US English model
+knows all four mascot names. If it does not know a custom word, **Voice**
+reports the word it lacks; choose another phrase in the phone controls.
+The agent tool restores the previous setting if the running recogniser
+rejects a proposed phrase. With voice off or no model installed, a saved
+phrase cannot be checked until listening starts.
+
 A command counts only if all of this holds:
 
-- It is addressed to the Mirror: the name comes first, in the same breath
-  or up to six seconds before. "Mirror, mirror, go to sleep" is fine.
-- The sentence is the command and nothing else. "Mirror, go to sleep" in
+- It is addressed to the Mirror: the entire wake phrase comes first, in the same breath
+  or up to six seconds before. "Hey Mochi, hey Mochi, go to sleep" is fine.
+  "Mochi" alone is not the default phrase.
+- The sentence is the command and nothing else. "Hey Mochi, go to sleep" in
   the middle of a longer sentence is talk.
 - The recogniser is sure of every word. It reports how sure it is, and
   commands it has doubts about are dropped and counted as `unsure`.
 
-The wordings were chosen so that no two commands sound alike. "Turn on" and
+The measurements below were made with the original "Mirror" wake word;
+recognition across the room with the mascot phrases needs a trial on your
+own Mirror. The command wordings were chosen so that no two commands sound alike. "Turn on" and
 "turn off" were tried and taken for each other in noise, which is why sleep
 and wake have the words they have.
 

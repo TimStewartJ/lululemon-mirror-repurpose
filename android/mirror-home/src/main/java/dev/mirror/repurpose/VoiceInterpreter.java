@@ -69,6 +69,18 @@ final class VoiceInterpreter {
 
     private long windowUntilMs = -1;
     private long answerUntilMs = -1;
+    private String wakePhrase;
+
+    VoiceInterpreter(String wakePhrase) {
+        this.wakePhrase = WakePhrase.normalize(wakePhrase);
+    }
+
+    void setWakePhrase(String phrase) {
+        if (!wakePhrase.equals(phrase)) {
+            wakePhrase = WakePhrase.normalize(phrase);
+            reset();
+        }
+    }
 
     /**
      * Takes one recognised sentence.
@@ -100,31 +112,23 @@ final class VoiceInterpreter {
         if (normalized.isEmpty()) {
             return OTHER;
         }
-        String[] words = normalized.split(" ");
-        int wakeWords = 0;
-        while (wakeWords < words.length && words[wakeWords].equals(VoiceCommands.WAKE_WORD)) {
-            // Said twice, the wake word is still one.
-            wakeWords++;
-        }
-        StringBuilder rest = new StringBuilder();
-        for (int index = wakeWords; index < words.length; index++) {
-            rest.append(rest.length() == 0 ? "" : " ").append(words[index]);
-        }
+        int wakeWords = WakePhrase.leadingWords(normalized, wakePhrase);
+        String rest = WakePhrase.withoutLeading(normalized, wakePhrase);
         boolean sure = Double.isNaN(lowestConfidence) || lowestConfidence >= MIN_CONFIDENCE;
         boolean nameSure = Double.isNaN(nameConfidence)
                 ? sure
                 : nameConfidence >= MIN_CONFIDENCE;
         boolean windowOpen = windowOpen(startMs);
         boolean answerAwaited = assistant && answerUntilMs >= 0 && startMs <= answerUntilMs;
-        if (wakeWords > 0 && rest.length() == 0) {
-            if (!sure) {
+        if (wakeWords > 0 && rest.isEmpty()) {
+            if (!sure || !nameSure) {
                 return new Outcome(Kind.UNSURE, null);
             }
             windowUntilMs = endMs + WINDOW_MS;
             return new Outcome(Kind.WAKE, null);
         }
-        VoiceCommands.Command command = VoiceCommands.forWording(rest.toString());
-        if (command != null && (wakeWords > 0 || windowOpen) && sure) {
+        VoiceCommands.Command command = VoiceCommands.forWording(rest);
+        if (command != null && (wakeWords > 0 || windowOpen) && sure && (wakeWords == 0 || nameSure)) {
             windowUntilMs = -1;
             answerUntilMs = -1;
             return new Outcome(Kind.COMMAND, command);
@@ -143,7 +147,7 @@ final class VoiceInterpreter {
         if (command != null && (wakeWords > 0 || windowOpen)) {
             return new Outcome(Kind.UNSURE, command);
         }
-        if (wakeWords > 0 && sure && !assistant) {
+        if (wakeWords > 0 && sure && nameSure && !assistant) {
             windowUntilMs = endMs + WINDOW_MS;
             return new Outcome(Kind.NOT_UNDERSTOOD, null);
         }

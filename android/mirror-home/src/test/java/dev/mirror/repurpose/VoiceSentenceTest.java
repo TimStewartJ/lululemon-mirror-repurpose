@@ -14,7 +14,7 @@ public final class VoiceSentenceTest {
                         + "{\"word\": \"mirror\", \"conf\": 0.97, \"start\": 1.2, \"end\": 1.6},"
                         + "{\"word\": \"what\", \"conf\": 0.41, \"start\": 1.7, \"end\": 1.9},"
                         + "{\"word\": \"[unk]\", \"conf\": 0.2, \"start\": 1.9, \"end\": 3.4}],"
-                        + "\"text\": \"mirror what [unk]\"}");
+                        + "\"text\": \"mirror what [unk]\"}", "mirror");
 
         org.junit.Assert.assertEquals(0.97, sentence.nameConfidence, 1e-9);
         org.junit.Assert.assertEquals(0.2, sentence.lowestConfidence, 1e-9);
@@ -29,7 +29,7 @@ public final class VoiceSentenceTest {
                         + "{\"word\": \"mirror\", \"conf\": 0.9, \"start\": 0, \"end\": 0.4},"
                         + "{\"word\": \"mirror\", \"conf\": 0.7, \"start\": 0.5, \"end\": 0.9},"
                         + "{\"word\": \"brighter\", \"conf\": 1, \"start\": 1, \"end\": 1.5}],"
-                        + "\"text\": \"mirror mirror brighter\"}");
+                        + "\"text\": \"mirror mirror brighter\"}", "mirror");
 
         org.junit.Assert.assertEquals(0.7, sentence.nameConfidence, 1e-9);
     }
@@ -40,7 +40,7 @@ public final class VoiceSentenceTest {
                 "{\"result\": ["
                         + "{\"word\": \"the\", \"conf\": 1, \"start\": 0, \"end\": 0.2},"
                         + "{\"word\": \"mirror\", \"conf\": 1, \"start\": 0.2, \"end\": 0.6}],"
-                        + "\"text\": \"the mirror\"}");
+                        + "\"text\": \"the mirror\"}", "mirror");
 
         org.junit.Assert.assertTrue(Double.isNaN(sentence.nameConfidence));
     }
@@ -52,7 +52,7 @@ public final class VoiceSentenceTest {
                         + "{\"conf\": 1.0, \"end\": 6.42, \"start\": 5.97, \"word\": \"mirror\"},"
                         + "{\"conf\": 0.62, \"end\": 6.69, \"start\": 6.42, \"word\": \"wake\"},"
                         + "{\"conf\": 0.91, \"end\": 6.96, \"start\": 6.69, \"word\": \"up\"}],"
-                        + " \"text\": \"mirror wake up\"}");
+                        + " \"text\": \"mirror wake up\"}", "mirror");
         assertEquals("mirror wake up", sentence.text);
         assertEquals(0.62, sentence.lowestConfidence, 0.0);
         assertEquals(5970, sentence.startMs);
@@ -61,17 +61,33 @@ public final class VoiceSentenceTest {
 
     @Test
     public void silenceIsNoSentence() throws Exception {
-        assertNull(VoiceSentence.parse("{\"text\": \"\"}"));
-        assertNull(VoiceSentence.parse("{}"));
-        assertNull(VoiceSentence.parse("{\"text\": \"   \"}"));
+        assertNull(VoiceSentence.parse("{\"text\": \"\"}", "mirror"));
+        assertNull(VoiceSentence.parse("{}", "mirror"));
+        assertNull(VoiceSentence.parse("{\"text\": \"   \"}", "mirror"));
     }
 
     @Test
     public void aSentenceWithoutWordTimesIsStillASentence() throws Exception {
-        VoiceSentence sentence = VoiceSentence.parse("{\"text\": \"Mirror  Brighter\"}");
+        VoiceSentence sentence = VoiceSentence.parse("{\"text\": \"Mirror  Brighter\"}", "mirror");
         assertEquals("mirror brighter", sentence.text);
         assertTrue(Double.isNaN(sentence.lowestConfidence));
         assertEquals(0, sentence.startMs);
         assertEquals(0, sentence.endMs);
+    }
+
+    @Test
+    public void everyWordOfEveryLeadingPhraseContributesToNameConfidence() throws Exception {
+        VoiceSentence sentence = VoiceSentence.parse(
+                "{\"text\":\"hey mochi hey mochi what\", \"result\":["
+                        + "{\"word\":\"hey\",\"conf\":1},"
+                        + "{\"word\":\"mochi\",\"conf\":0.95},"
+                        + "{\"word\":\"hey\",\"conf\":0.7},"
+                        + "{\"word\":\"mochi\",\"conf\":1},"
+                        + "{\"word\":\"what\",\"conf\":0.2}]}", "hey mochi");
+        assertEquals(0.7, sentence.nameConfidence, 1e-9);
+        assertEquals(0.2, sentence.lowestConfidence, 1e-9);
+        assertTrue(Double.isNaN(VoiceSentence.parse(
+                "{\"text\":\"hey what\", \"result\":[{\"word\":\"hey\",\"conf\":1}]}",
+                "hey mochi").nameConfidence));
     }
 }

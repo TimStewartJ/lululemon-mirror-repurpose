@@ -1,13 +1,19 @@
 # The assistant
 
 From Mirror Home 2.3.0 a Mirror can be asked for more than its five
-[voice commands](voice.md). Say its name and then what you want:
+[voice commands](voice.md). Say its [wake phrase](voice.md#choosing-a-wake-phrase) and then what you want:
 
-> "Mirror, remind me to take out the trash at seven tomorrow."
+> "Hey Mochi, remind me to take out the trash at seven tomorrow."
 >
-> "Mirror, something calmer in the background."
+> "Hey Mochi, something calmer in the background."
 >
-> "Mirror, make the clock bigger and put the weather under it."
+> "Hey Mochi, make the clock bigger and put the weather under it."
+
+The default wake phrase follows the selected character: "Hey Mochi" for the
+cat, for example, or "Hey Mirror" with no character. The phone controls can
+set a custom phrase, and so can the assistant when asked. Older examples
+below that begin with "Mirror" work with `mirror` as the custom phrase;
+otherwise use your current wake phrase instead.
 
 The Mirror does not work this out by itself. It passes the request to a
 **companion**: a small server on a computer of yours, on the same network.
@@ -185,7 +191,8 @@ asked for as well, in your own words:
 | "Mirror, play the flowers film from six in the morning and the water one from seven at night", "also the forest one from noon", "stop changing the film by the clock", "go back to the schedule" | Which film plays from which time of day. |
 | "Mirror, make the background a deep blue", "a gradient from navy to purple", "the next photo", "the second photo", "it's hard to read, darken it a bit" | A plain colour, a gradient, a particular photo, and how far the background is darkened behind the widgets. |
 | "Mirror, make the text a warm amber", "put the text back to normal" | The colour of what is written on the glass. |
-| "Mirror, call yourself Hallway" | The name on the glass and in the controls. You still say "Mirror" to be heard: the word that wakes it is part of the voice model. |
+| "Hey Mochi, call yourself Hallway" | The name on the glass and in the controls. This does not change the wake phrase. |
+| "Hey Mochi, change your wake phrase to hello friend", "Hello friend, use your character's name again" | The phrase to say before a request, or the default that follows the selected character. The assistant tells you the new phrase. |
 | "Mirror, stop greeting me", "no morning briefing", "nothing by yourself after nine at night until seven", "leave the films alone", "what do you do on your own?" | What the assistant does unasked. A change holds after the companion restarts. |
 
 A town is best said with its state or country. Of several towns of one name
