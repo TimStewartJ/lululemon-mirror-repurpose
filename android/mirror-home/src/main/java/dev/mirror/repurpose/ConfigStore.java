@@ -39,6 +39,8 @@ public final class ConfigStore {
     private static final String KEY_PANEL_PLACE = "glass_panel_place";
     private static final String KEY_SCAN_GUARD = "wifi_scan_guard";
     private static final String KEY_SCAN_GUARD_BEFORE = "wifi_scan_guard_before";
+    private static final String KEY_MANUAL_SLEEP_STATE = "automation_manual_sleep_state";
+    private static final String KEY_MANUAL_SLEEP_UNTIL_WALL = "automation_manual_sleep_until_wall";
     /* Dashboard sources that no longer ship; a saved pointer to one falls back
        to the built-in dashboard instead of the offline page. */
     private static final String[] RETIRED_DASHBOARD_URLS = {
@@ -346,5 +348,38 @@ public final class ConfigStore {
 
     public void setScanGuardBefore(String before) {
         preferences.edit().putString(KEY_SCAN_GUARD_BEFORE, before).commit();
+    }
+
+    /** Active manual sleep/wake override if its wall-clock deadline has not passed; else null. */
+    public Boolean getManualSleepState(long nowWallMs) {
+        if (preferences == null || !preferences.contains(KEY_MANUAL_SLEEP_STATE)) {
+            return null;
+        }
+        long until = preferences.getLong(KEY_MANUAL_SLEEP_UNTIL_WALL, 0L);
+        if (until <= nowWallMs) {
+            clearManualSleepState();
+            return null;
+        }
+        return preferences.getBoolean(KEY_MANUAL_SLEEP_STATE, false);
+    }
+
+    public void setManualSleepState(boolean sleeping, long untilWallMs) {
+        if (preferences == null) {
+            return;
+        }
+        preferences.edit()
+                .putBoolean(KEY_MANUAL_SLEEP_STATE, sleeping)
+                .putLong(KEY_MANUAL_SLEEP_UNTIL_WALL, untilWallMs)
+                .commit();
+    }
+
+    public void clearManualSleepState() {
+        if (preferences == null) {
+            return;
+        }
+        preferences.edit()
+                .remove(KEY_MANUAL_SLEEP_STATE)
+                .remove(KEY_MANUAL_SLEEP_UNTIL_WALL)
+                .commit();
     }
 }

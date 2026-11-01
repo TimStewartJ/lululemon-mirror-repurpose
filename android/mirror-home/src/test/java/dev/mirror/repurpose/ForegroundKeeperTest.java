@@ -10,11 +10,11 @@ public final class ForegroundKeeperTest {
     private static final long NEVER = Long.MAX_VALUE;
     private static final long LONG_AGO = 3_600_000L;
 
-    /** A Mirror: selected as HOME, activity created, nobody at the device. */
+    /** A Mirror: selected as HOME, activity created, nobody at the device, display meant to be awake. */
     private static Action onAMirror(
             boolean resumed, boolean interactive, long coveredForMs, long sinceWakeMs, long sinceRelaunchMs) {
         return ForegroundKeeper.decide(
-                true, true, resumed, interactive, false, coveredForMs, sinceWakeMs, sinceRelaunchMs);
+                true, true, resumed, interactive, false, false, coveredForMs, sinceWakeMs, sinceRelaunchMs);
     }
 
     @Test
@@ -43,11 +43,21 @@ public final class ForegroundKeeperTest {
     }
 
     @Test
+    public void anIntentionallySleepingDisplayStaysOff() {
+        assertEquals(
+                Action.NONE,
+                ForegroundKeeper.decide(true, true, false, false, false, true, LONG_AGO, NEVER, NEVER));
+        assertEquals(
+                Action.NONE,
+                ForegroundKeeper.decide(true, true, false, true, false, true, LONG_AGO, NEVER, NEVER));
+    }
+
+    @Test
     public void aDisplaySomeoneTurnedOffStaysOff() {
         // A phone's power key, or a developer over ADB: they can turn it on again.
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(true, true, false, false, true, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(true, true, false, false, true, false, LONG_AGO, NEVER, NEVER));
     }
 
     @Test
@@ -76,7 +86,7 @@ public final class ForegroundKeeperTest {
         // An input device or a connected computer: someone may be using that screen.
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(true, true, false, true, true, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(true, true, false, true, true, false, LONG_AGO, NEVER, NEVER));
     }
 
     @Test
@@ -93,20 +103,20 @@ public final class ForegroundKeeperTest {
     public void nothingHappensUnlessMirrorHomeIsTheSelectedHome() {
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(false, true, false, false, false, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(false, true, false, false, false, false, LONG_AGO, NEVER, NEVER));
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(false, true, false, true, false, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(false, true, false, true, false, false, LONG_AGO, NEVER, NEVER));
     }
 
     @Test
     public void anActivityThatWasNeverCreatedIsLeftToTheStartUpLogic() {
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(true, false, false, false, false, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(true, false, false, false, false, false, LONG_AGO, NEVER, NEVER));
         assertEquals(
                 Action.NONE,
-                ForegroundKeeper.decide(true, false, false, true, false, LONG_AGO, NEVER, NEVER));
+                ForegroundKeeper.decide(true, false, false, true, false, false, LONG_AGO, NEVER, NEVER));
     }
 
     @Test

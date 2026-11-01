@@ -2,9 +2,11 @@ package dev.mirror.repurpose;
 
 import android.app.Service;
 import android.content.Intent;
+import android.net.wifi.WifiManager;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
 import java.io.IOException;
@@ -71,6 +73,8 @@ public final class ControlServerService extends Service {
     private FCastServer fcastServer;
     private LocalDiscovery localDiscovery;
     private WifiDirectOnboarding wifiDirectOnboarding;
+    private PowerManager.WakeLock cpuWakeLock;
+    private WifiManager.WifiLock wifiWakeLock;
     private int homeLaunchAttempts;
 
     @Override
@@ -81,6 +85,7 @@ public final class ControlServerService extends Service {
             stopSelf();
             return;
         }
+        acquireKeepAliveLocks();
         try {
             server = new ControlServer(this, PORT);
             server.start();
@@ -94,6 +99,7 @@ public final class ControlServerService extends Service {
             handler.postDelayed(watchForRestart, RestartAdvice.SAMPLE_INTERVAL_MS);
         } catch (IOException error) {
             Log.e(TAG, "Unable to start control server", error);
+            releaseKeepAliveLocks();
             stopSelf();
             return;
         }
@@ -139,7 +145,54 @@ public final class ControlServerService extends Service {
             fcastServer.stop();
             fcastServer = null;
         }
+        releaseKeepAliveLocks();
         super.onDestroy();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void acquireKeepAliveLocks() {
+        // A Mirror reports no mains power to Android, so turning the display
+        // completely off during sleep would otherwise let the kernel suspend
+        // the processor and Wi-Fi radio, taking the control API offline.
+        try {
+            PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+            if (power != null) {
+                cpuWakeLock = power.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK, "MirrorHome:ControlServer");
+                cpuWakeLock.setReferenceCounted(false);
+                cpuWakeLock.acquire();
+            }
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to acquire CPU wake lock", error);
+        }
+        try {
+            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+            if (wifi != null) {
+                wifiWakeLock = wifi.createWifiLock(
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MirrorHome:Wifi");
+                wifiWakeLock.setReferenceCounted(false);
+                wifiWakeLock.acquire();
+            }
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to acquire Wi-Fi lock", error);
+        }
+    }
+
+    private void releaseKeepAliveLocks() {
+        if (wifiWakeLock != null && wifiWakeLock.isHeld()) {
+            try {
+                wifiWakeLock.release();
+            } catch (RuntimeException ignored) {
+            }
+        }
+        wifiWakeLock = null;
+        if (cpuWakeLock != null && cpuWakeLock.isHeld()) {
+            try {
+                cpuWakeLock.release();
+            } catch (RuntimeException ignored) {
+            }
+        }
+        cpuWakeLock = null;
     }
 
     @Override

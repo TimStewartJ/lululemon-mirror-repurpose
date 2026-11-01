@@ -219,4 +219,13 @@ final class SupervisorHold {
                         ? JSONObject.NULL
                         : (Object) process[1]);
     }
+
+    /** Asks a held supervisor to turn the display completely off for sleep. */
+    boolean sleepDisplay() {
+        IBinder asked;
+        synchronized (this) {
+            asked = STATE_HELD.equals(state) ? link : null;
+        }
+        return asked != null && HoldLink.sleepDisplay(asked);
+    }
 }

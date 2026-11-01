@@ -1,6 +1,8 @@
 package dev.mirror.repurpose.updater;
 
 import android.app.Service;
+import android.app.admin.DevicePolicyManager;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.os.IBinder;
 import android.util.Log;
@@ -26,11 +28,40 @@ public final class HoldService extends Service {
 
     private static volatile boolean held;
 
-    private final IBinder binder = HoldLink.serve();
+    private final IBinder binder = HoldLink.serve(this::sleepDisplay);
 
     /** Whether Mirror Home is holding on to this process. */
     static boolean held() {
         return held;
+    }
+
+    private boolean sleepDisplay() {
+        DevicePolicyManager policy =
+                (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+        if (policy == null) {
+            return false;
+        }
+        ComponentName admin = new ComponentName(this, OtaDeviceAdminReceiver.class);
+        boolean deviceOwner = policy.isDeviceOwnerApp(getPackageName());
+        if (!deviceOwner && !policy.isAdminActive(admin)) {
+            return false;
+        }
+        if (deviceOwner) {
+            try {
+                policy.setGlobalSetting(
+                        admin,
+                        android.provider.Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                        "0");
+            } catch (RuntimeException ignored) {
+            }
+        }
+        try {
+            policy.lockNow();
+            return true;
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to turn the display off", error);
+            return false;
+        }
     }
 
     @Override

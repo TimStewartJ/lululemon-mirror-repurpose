@@ -133,6 +133,7 @@ final class ForegroundKeeper {
      *         has, starting it is left to Android and to the service's start
      * @param attended whether someone could be operating the device: it has an
      *         input device, or a computer is using its USB port
+     * @param displaySleeping whether Mirror Home itself has put the display to sleep
      */
     static Action decide(
             boolean selectedHome,
@@ -140,10 +141,11 @@ final class ForegroundKeeper {
             boolean resumed,
             boolean interactive,
             boolean attended,
+            boolean displaySleeping,
             long coveredForMs,
             long sinceWakeMs,
             long sinceRelaunchMs) {
-        if (!selectedHome || !wasCreated || resumed || attended) {
+        if (!selectedHome || !wasCreated || resumed || attended || displaySleeping) {
             return Action.NONE;
         }
         if (!interactive) {
@@ -154,6 +156,23 @@ final class ForegroundKeeper {
             return Action.NONE;
         }
         return Action.RELAUNCH;
+    }
+
+    /** Turns the display back on when Mirror Home ends an intentional sleep. */
+    static synchronized void wakeDisplay(Context context) {
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (power == null || power.isInteractive()) {
+            return;
+        }
+        lastWakeElapsed = SystemClock.elapsedRealtime();
+        wake(power);
+        if (HomeSelection.isMirrorHomeSelected(context) && ActivityDiagnostics.wasCreated()) {
+            try {
+                context.startActivity(dashboardIntent(context));
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to bring the dashboard to the front on wake", error);
+            }
+        }
     }
 
     /**
@@ -188,6 +207,7 @@ final class ForegroundKeeper {
                 false,
                 interactive,
                 attended(context),
+                AutomationManager.getInstance(context).isSleeping(),
                 ActivityDiagnostics.coveredForMs(elapsed),
                 since(lastWakeElapsed, elapsed),
                 since(lastRelaunchElapsed, elapsed));
