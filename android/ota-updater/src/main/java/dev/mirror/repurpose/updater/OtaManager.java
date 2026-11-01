@@ -40,6 +40,8 @@ import dev.mirror.repurpose.health.ProcessHealth;
 
 final class OtaManager {
     static final long MAX_APK_BYTES = 32L * 1024L * 1024L;
+    static final String RECOVERED_AOSP_FINGERPRINT_PREFIX =
+            "Android/msm8916_64/msm8916_64:6.0.1/MMB29M/";
 
     private static final String TAG = "MirrorOtaManager";
     private static final String PREFERENCES = "ota_state";
@@ -161,7 +163,7 @@ final class OtaManager {
                 throw new OtaException("Uploaded APK SHA-256 does not match");
             }
 
-            if (!BuildConfig.SUPPORTED_FINGERPRINT.equals(Build.FINGERPRINT)) {
+            if (!isSupportedFingerprint(Build.FINGERPRINT)) {
                 throw new OtaException("OTA supervisor does not support this firmware");
             }
             ApkInspector.Metadata candidate = inspector.inspectArchive(temporaryCandidate);
@@ -273,6 +275,7 @@ final class OtaManager {
                     .put("allowlist", new JSONArray(RuntimePermissions.ALLOWLIST)));
             result.put("deviceFingerprint", Build.FINGERPRINT);
             result.put("supportedFingerprint", BuildConfig.SUPPORTED_FINGERPRINT);
+            result.put("firmwareSupported", isSupportedFingerprint(Build.FINGERPRINT));
             result.put("state", state());
             result.put("active", isActive(state()));
             result.put("message", preferences.getString(KEY_MESSAGE, ""));
@@ -939,6 +942,17 @@ final class OtaManager {
             }
             throw error;
         }
+    }
+
+    static boolean isSupportedFingerprint(String fingerprint) {
+        if (fingerprint == null) {
+            return false;
+        }
+        if (BuildConfig.SUPPORTED_FINGERPRINT.equals(fingerprint)) {
+            return true;
+        }
+        return fingerprint.startsWith(RECOVERED_AOSP_FINGERPRINT_PREFIX)
+                && fingerprint.length() > RECOVERED_AOSP_FINGERPRINT_PREFIX.length();
     }
 
     private static void replaceFile(File source, File destination) throws IOException {

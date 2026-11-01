@@ -2944,6 +2944,22 @@ class UpdaterCheckTest(unittest.TestCase):
         }))
         self.assertEqual({"runId": 12, "uptimeHours": 2.0, "previousEnd": "killed"}, ctx.details["supervisorRun"])
 
+    def test_a_recovered_mmb29m_mirror_with_firmware_supported_passes(self):
+        ctx = self.check(dict(
+            self.STATUS,
+            deviceFingerprint="Android/msm8916_64/msm8916_64:6.0.1/MMB29M/builder10280100:userdebug/test-keys",
+            firmwareSupported=True,
+        ))
+        self.assertEqual("2.2.0 (code 74)", ctx.details["home"])
+
+    def test_firmware_supported_false_is_named_as_unsupported_firmware(self):
+        with self.assertRaisesRegex(CheckFailed, "does not support this firmware"):
+            self.check(dict(
+                self.STATUS,
+                deviceFingerprint="Android/msm8916_64/msm8916_64:6.0.1/MMB29M/",
+                firmwareSupported=False,
+            ))
+
 
 class DashboardFrameTest(unittest.TestCase):
     """After a restart the screen must show the dashboard, not merely be bright."""
