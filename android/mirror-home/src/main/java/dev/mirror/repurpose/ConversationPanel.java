@@ -496,6 +496,8 @@ final class ConversationPanel extends LinearLayout {
         view.setTextColor(color);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         view.setTypeface(Typeface.create(family, Typeface.NORMAL));
+        view.setPaintFlags((view.getPaintFlags() | Paint.ANTI_ALIAS_FLAG) & ~Paint.SUBPIXEL_TEXT_FLAG);
+        view.getPaint().setHinting(Paint.HINTING_ON);
         view.setGravity(Gravity.CENTER);
         view.setIncludeFontPadding(false);
         return view;
