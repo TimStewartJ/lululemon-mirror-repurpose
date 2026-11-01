@@ -4165,7 +4165,11 @@ def mirror_updater(ctx: MirrorContext) -> None:
     problems = []
     if not status.get("deviceOwner"):
         problems.append("the supervisor is not the device owner, so it cannot install updates")
-    if status.get("deviceFingerprint") != status.get("supportedFingerprint"):
+    firmware_supported = status.get("firmwareSupported")
+    if firmware_supported is False or (
+        firmware_supported is None
+        and status.get("deviceFingerprint") != status.get("supportedFingerprint")
+    ):
         problems.append("the supervisor does not support this firmware")
     if status.get("state") == "recovery_required":
         problems.append(f"the last update needs recovery: {status.get('message')}")
