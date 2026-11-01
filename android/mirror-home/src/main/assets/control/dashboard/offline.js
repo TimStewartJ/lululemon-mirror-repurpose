@@ -2,6 +2,17 @@
 (function () {
   'use strict';
 
+  var ua = typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : '';
+  if (ua.indexOf('MirrorNative1080/1') >= 0) {
+    var viewportMeta = document.querySelector('meta[name="viewport"]');
+    if (viewportMeta) {
+      viewportMeta.setAttribute(
+        'content',
+        'width=1080, initial-scale=0.6666666667, minimum-scale=0.6666666667, maximum-scale=0.6666666667, user-scalable=no'
+      );
+    }
+  }
+
   var utcOffsetMinutes = 0;
   var nextUtcOffsetChange = null;
   var clock24Hour = false;

@@ -125,6 +125,8 @@ final class HealthReport {
                     .put("rotation", display.getRotation())
                     .put("on", display.getState() == Display.STATE_ON);
         }
+        result.put("postProc", QualcommDisplayPostProcDisabler.getInstance(context).snapshot());
+        result.put("native1080Viewport", NativePanelViewport.isNative1080Panel());
         return result;
     }
 
