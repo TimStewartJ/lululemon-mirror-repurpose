@@ -189,8 +189,9 @@ public final class MainActivity extends Activity {
         configStore = new ConfigStore(this);
         automation = AutomationManager.getInstance(this);
         boolean startSleeping = automation.isSleeping();
+        boolean keepScreenOn = !startSleeping || !AutomationManager.canPowerOffBacklightHardware();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        if (!startSleeping) {
+        if (keepScreenOn) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
         if (!ForegroundKeeper.hasInputDevices(getResources().getConfiguration())) {
@@ -200,7 +201,7 @@ public final class MainActivity extends Activity {
             getWindow().addFlags(
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                             | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
-            if (!startSleeping) {
+            if (keepScreenOn) {
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
             }
         }
@@ -944,7 +945,7 @@ public final class MainActivity extends Activity {
             lastBacklightUpdateUptime = now;
         }
         if (displayVisibility == 0f && displayFade == null && automation.isSleeping()) {
-            setKeepScreenOn(false);
+            setKeepScreenOn(!AutomationManager.canPowerOffBacklightHardware());
             automation.onDisplayFadedOut();
         } else {
             setKeepScreenOn(true);

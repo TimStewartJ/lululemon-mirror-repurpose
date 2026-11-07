@@ -53,6 +53,17 @@ public final class ForegroundKeeperTest {
     }
 
     @Test
+    public void softwareOnlyFirmwareRequiresGpioBacklightGateBeforePoweringOffPanel() {
+        // Stock firmware (ro.mirror.software_only unset) gates gpio1000 in LightsService.
+        assertEquals(true, AutomationManager.canPowerOffBacklightHardware("", ""));
+        // Early MMB29M recovery builds without LightsService gpio1000 gating keep active #000000 shutter.
+        assertEquals(false, AutomationManager.canPowerOffBacklightHardware("1", ""));
+        assertEquals(false, AutomationManager.canPowerOffBacklightHardware("1", "0"));
+        // Updated MMB29M recovery builds with LightsService gpio1000 gating power the inverter off.
+        assertEquals(true, AutomationManager.canPowerOffBacklightHardware("1", "1"));
+    }
+
+    @Test
     public void aDisplaySomeoneTurnedOffStaysOff() {
         // A phone's power key, or a developer over ADB: they can turn it on again.
         assertEquals(

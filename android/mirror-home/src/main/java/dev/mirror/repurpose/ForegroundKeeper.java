@@ -207,7 +207,8 @@ final class ForegroundKeeper {
                 false,
                 interactive,
                 attended(context),
-                AutomationManager.getInstance(context).isSleeping(),
+                AutomationManager.getInstance(context).isSleeping()
+                        && AutomationManager.canPowerOffBacklightHardware(),
                 ActivityDiagnostics.coveredForMs(elapsed),
                 since(lastWakeElapsed, elapsed),
                 since(lastRelaunchElapsed, elapsed));

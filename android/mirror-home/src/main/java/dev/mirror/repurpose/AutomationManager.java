@@ -469,8 +469,45 @@ public final class AutomationManager implements SensorEventListener {
         if (ForegroundKeeper.hasInputDevices(context.getResources().getConfiguration())) {
             return;
         }
+        if (!canPowerOffBacklightHardware()) {
+            exitPanelSleep();
+            return;
+        }
         handler.removeCallbacks(panelOff);
         handler.postDelayed(panelOff, PANEL_OFF_SETTLE_MS);
+    }
+
+    /**
+     * Whether {@code Display Power: state=OFF} physically powers down the 40" LVDS
+     * backlight inverter ({@code gpio-1000 / tc358775_disp_enable}).
+     *
+     * <p>On clean-source {@code MMB29M} recovery builds that predate {@code LightsService}
+     * {@code gpio1000} gating ({@code ro.mirror.software_only=1} without
+     * {@code ro.mirror.gpio_backlight=1}), turning {@link PowerManager} off disables
+     * {@code qpnp-pwm} and stops the {@code TC358775} LVDS clock while {@code gpio1000}
+     * stays {@code 1}, leaving the panel glowing. Those builds hold an active LVDS
+     * {@code #000000} black shutter instead.
+     */
+    static boolean canPowerOffBacklightHardware() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            String softwareOnly = (String) sysProps
+                    .getMethod("get", String.class, String.class)
+                    .invoke(null, "ro.mirror.software_only", "");
+            String gpioSupport = (String) sysProps
+                    .getMethod("get", String.class, String.class)
+                    .invoke(null, "ro.mirror.gpio_backlight", "");
+            return canPowerOffBacklightHardware(softwareOnly, gpioSupport);
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    static boolean canPowerOffBacklightHardware(String softwareOnly, String gpioBacklight) {
+        if ("1".equals(softwareOnly)) {
+            return "1".equals(gpioBacklight);
+        }
+        return true;
     }
 
     /**
@@ -485,6 +522,12 @@ public final class AutomationManager implements SensorEventListener {
             return;
         }
         PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (!canPowerOffBacklightHardware()) {
+            if (power != null && !power.isInteractive()) {
+                exitPanelSleep();
+            }
+            return;
+        }
         if (power != null && !power.isInteractive()) {
             return;
         }
