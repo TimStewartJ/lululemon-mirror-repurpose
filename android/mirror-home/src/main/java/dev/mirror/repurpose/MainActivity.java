@@ -186,25 +186,30 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         DashboardDiagnostics.record("activity-create", "", "");
         ActivityDiagnostics.created();
-        getWindow().addFlags(
-                WindowManager.LayoutParams.FLAG_FULLSCREEN
-                        | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        configStore = new ConfigStore(this);
+        automation = AutomationManager.getInstance(this);
+        boolean startSleeping = automation.isSleeping();
+        boolean keepScreenOn = !startSleeping || !AutomationManager.canPowerOffBacklightHardware();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        if (keepScreenOn) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
         if (!ForegroundKeeper.hasInputDevices(getResources().getConfiguration())) {
             // Nobody can wake a Mirror's display or dismiss a lock screen, so
-            // the dashboard's window does both when it opens. A phone's stay
-            // the business of its owner.
+            // the dashboard's window does both when it opens awake. While
+            // sleeping, keep the panel dark across updates and restarts.
             getWindow().addFlags(
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                            | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                             | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+            if (keepScreenOn) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+            }
         }
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN
                         | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
 
-        configStore = new ConfigStore(this);
-        automation = AutomationManager.getInstance(this);
         backgroundVideos = BackgroundVideoLibrary.getInstance(this);
         pairingManager = PairingManager.getInstance(this);
         media = MediaPlaybackManager.getInstance(this);
@@ -833,17 +838,25 @@ public final class MainActivity extends Activity {
         }
         sleepOverlay.bringToFront();
         float target = automation.isSleeping() ? 0f : 1f;
+        if (target > 0f) {
+            setKeepScreenOn(true);
+        }
         if (displayFade != null) {
             if (Float.compare(displayFadeTarget, target) == 0) {
                 return;
             }
             cancelDisplayFade();
         }
-        if (displayVisibility < 0f || !activityResumed) {
+        if (displayVisibility < 0f || (!activityResumed && !(target == 1f && displayVisibility == 0f))) {
             // Nothing is on screen to fade (first frame or covered); settle at once.
+            // When waking from panel-off sleep (displayVisibility == 0f), wait for
+            // onResume() a moment later so the wake fade runs smoothly from black.
             displayAwakeLevel = awakeBacklightLevel(target);
             applyDisplayVisibility(target);
             updateAmbientVideoState();
+            return;
+        }
+        if (!activityResumed) {
             return;
         }
         if (Float.compare(displayVisibility, target) == 0) {
@@ -932,7 +945,18 @@ public final class MainActivity extends Activity {
             lastBacklightUpdateUptime = now;
         }
         if (displayVisibility == 0f && displayFade == null && automation.isSleeping()) {
+            setKeepScreenOn(!AutomationManager.canPowerOffBacklightHardware());
             automation.onDisplayFadedOut();
+        } else {
+            setKeepScreenOn(true);
+        }
+    }
+
+    private void setKeepScreenOn(boolean keepOn) {
+        if (keepOn) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
     }
 

@@ -8,6 +8,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 
 import org.json.JSONException;
@@ -26,6 +27,7 @@ public final class AutomationManager implements SensorEventListener {
     static final int BRIGHTNESS_FOLLOWS_LIGHT = -1;
     private static final int MIN_MOTION_TIMEOUT_SECONDS = 30;
     private static final int MAX_MOTION_TIMEOUT_SECONDS = 60 * 60;
+    private static final long PANEL_OFF_SETTLE_MS = 150L;
     private static volatile AutomationManager instance;
 
     private final Context context;
@@ -52,6 +54,46 @@ public final class AutomationManager implements SensorEventListener {
             }
         }
     };
+    private final Runnable panelOff = new Runnable() {
+        @Override
+        public void run() {
+            boolean shouldPowerOff;
+            synchronized (AutomationManager.this) {
+                shouldPowerOff = Boolean.TRUE.equals(sleeping) && !sleepCommitPending;
+            }
+            if (shouldPowerOff
+                    && !ForegroundKeeper.hasInputDevices(
+                            context.getResources().getConfiguration())) {
+                SupervisorHold hold = SupervisorHold.getInstance(context);
+                if (!hold.sleepDisplay()) {
+                    hold.check();
+                }
+                handler.removeCallbacks(panelOffVerify);
+                handler.postDelayed(panelOffVerify, 2_200L);
+            }
+        }
+    };
+    private final Runnable panelOffVerify = new Runnable() {
+        @Override
+        public void run() {
+            boolean shouldPowerOff;
+            synchronized (AutomationManager.this) {
+                shouldPowerOff = Boolean.TRUE.equals(sleeping) && !sleepCommitPending;
+            }
+            if (!shouldPowerOff
+                    || ForegroundKeeper.hasInputDevices(
+                            context.getResources().getConfiguration())) {
+                return;
+            }
+            PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            if (power == null || power.isInteractive()) {
+                SupervisorHold hold = SupervisorHold.getInstance(context);
+                if (!hold.sleepDisplay()) {
+                    hold.check();
+                }
+            }
+        }
+    };
 
     private Boolean sleeping;
     private Boolean manualState;
@@ -67,6 +109,16 @@ public final class AutomationManager implements SensorEventListener {
     private AutomationManager(Context context) {
         this.context = context.getApplicationContext();
         configStore = new ConfigStore(this.context);
+        Boolean savedManual = configStore.getManualSleepState(System.currentTimeMillis());
+        if (savedManual != null) {
+            manualState = savedManual;
+            manualOverrideUntilElapsed = SystemClock.elapsedRealtime() + MANUAL_OVERRIDE_MS;
+            sleeping = savedManual;
+            sleepReason = savedManual ? "manual" : "none";
+        } else if (!isInsideWakeSchedule()) {
+            sleeping = true;
+            sleepReason = "schedule";
+        }
         mirror = MirrorBinderClient.getInstance(this.context);
         sensorManager = (SensorManager) this.context.getSystemService(Context.SENSOR_SERVICE);
         lightSensor = sensorManager == null
@@ -126,9 +178,13 @@ public final class AutomationManager implements SensorEventListener {
 
     /** MainActivity reports that its sleep fade has fully reached black. */
     public synchronized void onDisplayFadedOut() {
-        if (sleepCommitPending && Boolean.TRUE.equals(sleeping)) {
-            handler.removeCallbacks(sleepCommit);
-            commitSleep();
+        if (Boolean.TRUE.equals(sleeping)) {
+            if (sleepCommitPending) {
+                handler.removeCallbacks(sleepCommit);
+                commitSleep();
+            } else {
+                enterPanelSleep();
+            }
         }
     }
 
@@ -194,6 +250,7 @@ public final class AutomationManager implements SensorEventListener {
                 motionEnabled,
                 motionTimeoutSeconds,
                 motionSensitivity);
+        configStore.clearManualSleepState();
         manualState = null;
         manualOverrideUntilElapsed = 0;
         lastMotionElapsed = motionEnabled ? SystemClock.elapsedRealtime() : 0;
@@ -207,6 +264,11 @@ public final class AutomationManager implements SensorEventListener {
     public synchronized void setManualSleeping(boolean shouldSleep) {
         manualState = shouldSleep;
         manualOverrideUntilElapsed = SystemClock.elapsedRealtime() + MANUAL_OVERRIDE_MS;
+        configStore.setManualSleepState(
+                shouldSleep, System.currentTimeMillis() + MANUAL_OVERRIDE_MS);
+        if (shouldSleep) {
+            MediaPlaybackManager.getInstance(context).stop();
+        }
         applyState(shouldSleep, shouldSleep ? "manual" : "none", true);
     }
 
@@ -223,6 +285,7 @@ public final class AutomationManager implements SensorEventListener {
         if (!keptAwake) {
             manualState = null;
             manualOverrideUntilElapsed = 0;
+            configStore.clearManualSleepState();
         }
         evaluate();
         if (isSleeping()) {
@@ -309,9 +372,13 @@ public final class AutomationManager implements SensorEventListener {
         long nowElapsed = SystemClock.elapsedRealtime();
         if (manualState != null && nowElapsed < manualOverrideUntilElapsed) {
             applyState(manualState, manualState ? "manual" : "none", false);
+            enforcePanelSleepIfNeeded();
             return;
         }
-        manualState = null;
+        if (manualState != null) {
+            manualState = null;
+            configStore.clearManualSleepState();
+        }
         boolean scheduleAllowsWake = isInsideWakeSchedule();
         long inactiveFor = lastMotionElapsed == 0
                 ? Long.MAX_VALUE
@@ -327,6 +394,7 @@ public final class AutomationManager implements SensorEventListener {
                 ? "schedule"
                 : (shouldSleep ? "inactivity" : "none");
         applyState(shouldSleep, reason, sleeping == null);
+        enforcePanelSleepIfNeeded();
     }
 
     private synchronized void applyState(
@@ -340,19 +408,32 @@ public final class AutomationManager implements SensorEventListener {
             return;
         }
         if (shouldSleep) {
-            if (stateChanged && sleeping != null) {
+            boolean hadAwakeState = Boolean.FALSE.equals(sleeping);
+            sleeping = true;
+            sleepReason = nextReason;
+            handler.removeCallbacks(panelOffVerify);
+            if (hadAwakeState && ActivityDiagnostics.isResumed()) {
                 // MainActivity fades out from the awake level and reports when the
-                // panel is black; only then do media stop and stored brightness drop.
-                // The timer is a fallback for when no activity is showing.
+                // panel is black; only then do media stop, stored brightness drop,
+                // and the panel power off to true zero.
                 handler.removeCallbacks(sleepCommit);
+                handler.removeCallbacks(panelOff);
                 sleepCommitPending = true;
                 brightnessApplied = true;
                 handler.postDelayed(sleepCommit, DisplayFadePolicy.sleepCommitFallbackMs());
+            } else if (hadAwakeState) {
+                handler.removeCallbacks(sleepCommit);
+                handler.removeCallbacks(panelOff);
+                sleepCommitPending = true;
+                brightnessApplied = true;
+                handler.postDelayed(sleepCommit, 550L);
             } else if (!sleepCommitPending) {
                 commitSleep();
             }
         } else {
             handler.removeCallbacks(sleepCommit);
+            handler.removeCallbacks(panelOff);
+            handler.removeCallbacks(panelOffVerify);
             sleepCommitPending = false;
             if (!configStore.isAmbientEnabled() || lightSensor == null) {
                 brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
@@ -366,9 +447,10 @@ public final class AutomationManager implements SensorEventListener {
             } else {
                 brightnessApplied = true;
             }
+            sleeping = false;
+            sleepReason = nextReason;
+            exitPanelSleep();
         }
-        sleeping = shouldSleep;
-        sleepReason = nextReason;
         if (stateChanged || reasonChanged) {
             broadcast();
         }
@@ -377,8 +459,89 @@ public final class AutomationManager implements SensorEventListener {
     private void commitSleep() {
         sleepCommitPending = false;
         MediaPlaybackManager.getInstance(context).stop();
-        // The vendor Binder clamps to 1; MainActivity applies the true zero override.
+        // Android's active-panel minimum clamps a 0f window override to 10/255 on a
+        // Mirror; enterPanelSleep() powers the display off so the backlight hits 0/255.
         brightnessApplied = mirror.setBrightness(1);
+        enterPanelSleep();
+    }
+
+    private void enterPanelSleep() {
+        if (ForegroundKeeper.hasInputDevices(context.getResources().getConfiguration())) {
+            return;
+        }
+        if (!canPowerOffBacklightHardware()) {
+            exitPanelSleep();
+            return;
+        }
+        handler.removeCallbacks(panelOff);
+        handler.postDelayed(panelOff, PANEL_OFF_SETTLE_MS);
+    }
+
+    /**
+     * Whether {@code Display Power: state=OFF} physically powers down the 40" LVDS
+     * backlight inverter ({@code gpio-1000 / tc358775_disp_enable}).
+     *
+     * <p>On clean-source {@code MMB29M} recovery builds that predate {@code LightsService}
+     * {@code gpio1000} gating ({@code ro.mirror.software_only=1} without
+     * {@code ro.mirror.gpio_backlight=1}), turning {@link PowerManager} off disables
+     * {@code qpnp-pwm} and stops the {@code TC358775} LVDS clock while {@code gpio1000}
+     * stays {@code 1}, leaving the panel glowing. Those builds hold an active LVDS
+     * {@code #000000} black shutter instead.
+     */
+    static boolean canPowerOffBacklightHardware() {
+        try {
+            Class<?> sysProps = Class.forName("android.os.SystemProperties");
+            String softwareOnly = (String) sysProps
+                    .getMethod("get", String.class, String.class)
+                    .invoke(null, "ro.mirror.software_only", "");
+            String gpioSupport = (String) sysProps
+                    .getMethod("get", String.class, String.class)
+                    .invoke(null, "ro.mirror.gpio_backlight", "");
+            return canPowerOffBacklightHardware(softwareOnly, gpioSupport);
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    static boolean canPowerOffBacklightHardware(String softwareOnly, String gpioBacklight) {
+        if ("1".equals(softwareOnly)) {
+            return "1".equals(gpioBacklight);
+        }
+        return true;
+    }
+
+    /**
+     * Re-asserts true panel power-off ({@code Display Power: state=OFF}) if an external
+     * event (such as a USB plug event or post-OTA launch before {@link SupervisorHold}
+     * bound) woke {@link PowerManager} while the Mirror is supposed to be asleep.
+     */
+    private void enforcePanelSleepIfNeeded() {
+        if (!Boolean.TRUE.equals(sleeping)
+                || sleepCommitPending
+                || ForegroundKeeper.hasInputDevices(context.getResources().getConfiguration())) {
+            return;
+        }
+        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (!canPowerOffBacklightHardware()) {
+            if (power != null && !power.isInteractive()) {
+                exitPanelSleep();
+            }
+            return;
+        }
+        if (power != null && !power.isInteractive()) {
+            return;
+        }
+        SupervisorHold hold = SupervisorHold.getInstance(context);
+        if (!hold.sleepDisplay()) {
+            hold.check();
+        }
+    }
+
+    private void exitPanelSleep() {
+        if (ForegroundKeeper.hasInputDevices(context.getResources().getConfiguration())) {
+            return;
+        }
+        ForegroundKeeper.wakeDisplay(context);
     }
 
     private void updateAmbientRegistration() {
