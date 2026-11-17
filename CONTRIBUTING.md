@@ -10,6 +10,23 @@
 - Prefer allowlisted capabilities over shell or arbitrary file APIs.
 - Maintain Android 6/API 23 runtime compatibility.
 
+## Reporting a board
+
+A unit that does not match a known profile is still useful to us. With it on
+USB, run:
+
+```powershell
+python tools/identify.py --board-label YOUR_LABEL --output report.json
+```
+
+It reads the unit and changes nothing. Open a
+[board report](https://github.com/TimStewartJ/lululemon-mirror-repurpose/issues/new?template=board-report.yml)
+and paste `report.json`; it holds no serial number, network name, key or
+account. To add the combination yourself, follow
+[Adding a profile](profiles/README.md#adding-a-profile).
+
+Agents working in this repository: start with [AGENTS.md](AGENTS.md).
+
 ## Validation
 
 Run the complete local gate:

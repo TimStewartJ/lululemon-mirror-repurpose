@@ -1,0 +1,44 @@
+name: Board report
+description: Tell us what your MIRROR is, even if it is locked or ADB is unauthorized.
+title: "[Board report] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        With the Mirror on USB, run this from a checkout of this repository. It reads the unit and changes nothing:
+
+        ```
+        python tools/identify.py --board-label YOUR_LABEL --output report.json
+        ```
+
+        The report holds no serial number, network name, key or account.
+  - type: textarea
+    id: report
+    attributes:
+      label: Device report
+      description: Paste report.json here.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: label
+    attributes:
+      label: Printed board label
+      description: The revision printed on the board, such as "MIR63A0-00-P1 / PCA#500240 RevP21". Leave empty if you have not opened the unit; do not open it while it is plugged in.
+  - type: dropdown
+    id: access
+    attributes:
+      label: What happens with ADB?
+      options:
+        - Authorized (adb devices shows "device")
+        - Unauthorized, and no prompt appears on the glass
+        - Not listed at all
+        - Only fastboot works
+        - Not tried
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What you tried, and what you want the Mirror to do.

@@ -632,30 +632,30 @@ def main() -> None:
     parser.add_argument("--profile", type=pathlib.Path, default=DEFAULT_PROFILE)
     parser.add_argument("--serial")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("status")
-    subparsers.add_parser("backup")
-    build_parser = subparsers.add_parser("build")
+    subparsers.add_parser("status", help="reads only: compare the unit with the firmware profile")
+    subparsers.add_parser("backup", help="reads only: copy factory APKs and settings to this computer")
+    build_parser = subparsers.add_parser("build", help="this computer only: build Mirror Home")
     build_parser.add_argument(
         "--variant",
         choices=("debug", "release"),
         default="debug",
     )
-    install_home_parser = subparsers.add_parser("install-home")
+    install_home_parser = subparsers.add_parser("install-home", help="CHANGES THE UNIT: install Mirror Home and make it HOME")
     install_home_parser.add_argument(
         "--variant",
         choices=("debug", "release"),
         default="release",
     )
-    rollback_home_parser = subparsers.add_parser("rollback-home")
+    rollback_home_parser = subparsers.add_parser("rollback-home", help="CHANGES THE UNIT: put back the previous Mirror Home")
     rollback_home_parser.add_argument("--backup", type=pathlib.Path)
-    subparsers.add_parser("install-helper")
-    restore_parser = subparsers.add_parser("restore-helper")
+    subparsers.add_parser("install-helper", help="CHANGES THE UNIT, privileged: install the transient system helper")
+    restore_parser = subparsers.add_parser("restore-helper", help="CHANGES THE UNIT, privileged: restore the factory helper APK")
     restore_parser.add_argument(
         "--keep-kiosk-settings",
         action="store_true",
         help="Remove the helper update without restoring captured kiosk settings",
     )
-    forward_parser = subparsers.add_parser("forward")
+    forward_parser = subparsers.add_parser("forward", help="this computer only: forward a local port to Mirror Home over ADB")
     forward_parser.add_argument("--host-port", type=int, default=18787)
     args = parser.parse_args()
 

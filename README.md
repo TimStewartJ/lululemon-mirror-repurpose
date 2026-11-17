@@ -21,6 +21,15 @@ branches; it is not a claim of clean-room stock-device validation.
 
 Already installed? Use the [User guide](docs/user-guide.md).
 
+Not sure what you have, or your unit won't authorize ADB? Run
+`python tools/identify.py` with the Mirror on USB. It reads the unit without
+changing anything and writes a report you can attach to a
+[board report](https://github.com/TimStewartJ/lululemon-mirror-repurpose/issues/new?template=board-report.yml);
+see [board profiles](profiles/README.md).
+
+Coding agents: read [AGENTS.md](AGENTS.md) first. It lists which commands only
+read a Mirror and which change it.
+
 [GitHub Releases](https://github.com/TimStewartJ/lululemon-mirror-repurpose/releases)
 provide versioned source and optional project-signed Home APKs with checksums and
 build provenance. Read [signing compatibility](docs/getting-started.md#published-apks-and-signing-compatibility)

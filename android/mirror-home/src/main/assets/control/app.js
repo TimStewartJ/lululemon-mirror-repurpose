@@ -607,7 +607,8 @@
         byId('about-version').textContent = next.appVersion || '—';
         var address = next.address || (next.wifi && next.wifi.ipAddress) || '';
         byId('about-address').textContent = address ? address + ':8787' : 'USB only';
-        byId('about-binder').textContent = next.mirrorBinderConnected ? 'Connected' : 'Reconnecting';
+        var vendor = (next.device && next.device.vendorService) || (next.mirrorBinderConnected ? 'connected' : 'unanswered');
+        byId('about-binder').textContent = { connected: 'Connected', unanswered: 'Not answering', absent: 'None' }[vendor] || '—';
         byId('about-helper').textContent = next.systemHelperConnected ? 'Temporary helper active' : 'Factory service';
         byId('about-uptime').textContent = formatUptime(next.deviceUptimeSeconds);
         var restart = next.restart || {};

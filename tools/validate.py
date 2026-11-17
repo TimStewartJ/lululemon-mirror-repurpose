@@ -3412,6 +3412,64 @@ def check_script_errors(ctx: Context) -> None:
     ctx.screenshot("final")
 
 
+def window_brightness_override(ctx: Context) -> int | None:
+    """The backlight level a window holds, from Android's power manager; None if none does."""
+    found = re.search(r"mScreenBrightnessOverrideFromWindowManager=(-?\d+)", ctx.adb.shell("dumpsys", "power"))
+    require(found, "dumpsys power did not show the window's brightness override")
+    level = int(found.group(1))
+    return level if level >= 0 else None
+
+
+def check_no_vendor_service(ctx: Context) -> None:
+    require(
+        ctx.status()["device"] == {"vendorService": "absent", "brightness": "window", "name": "local"},
+        f"Without the factory service the device reports {describe(ctx.status()['device'])}",
+    )
+    require(ctx.health()["device"]["controls"] == ctx.status()["device"], "Health and status disagree on the controls")
+    before = ctx.status()
+    level = before["brightness"]
+    require(isinstance(level, int) and level > 0, f"No brightness is reported: {level!r}")
+    try:
+        changed = ctx.api.expect("POST", "/api/v1/control/brightness", {"value": 77})
+        require(changed["changed"], f"The brightness was not set: {describe(changed)}")
+        wait_for("Home's window to hold level 77", lambda: window_brightness_override(ctx) == 77, timeout=10)
+        require(ctx.status()["brightness"] == 77, f"Status reports {ctx.status()['brightness']}, not 77")
+
+        # A level set while the display fades back in is the one it settles at.
+        ctx.api.expect("POST", "/api/v1/automation/sleep", {})
+        wait_for("the window to hold the panel dark", lambda: window_brightness_override(ctx) == 0, timeout=FADE_SETTLE_SECONDS)
+        ctx.api.expect("POST", "/api/v1/automation/wake", {})
+        ctx.api.expect("POST", "/api/v1/control/brightness", {"value": 120})
+        wait_for("the fade to settle at 120", lambda: window_brightness_override(ctx) == 120, timeout=FADE_SETTLE_SECONDS)
+        # Saving the schedule ends the manual override that sleep and wake leave.
+        ctx.set_automation(enabled=False)
+
+        # Let Home write Android's own setting, as a Silvering image does: the level moves there.
+        ctx.adb.shell("appops", "set", PACKAGE, "WRITE_SETTINGS", "allow")
+        wait_for("Android's setting to be used", lambda: ctx.status()["device"]["brightness"] == "system", timeout=15)
+        ctx.api.expect("POST", "/api/v1/control/brightness", {"value": 90})
+        wait_for(
+            "Android's brightness setting to read 90",
+            lambda: ctx.adb.shell("settings", "get", "system", "screen_brightness").strip() == "90",
+            timeout=10,
+        )
+        wait_for("Home's window to let go of the level", lambda: window_brightness_override(ctx) is None, timeout=10)
+        ctx.note("systemBrightness", 90)
+    finally:
+        ctx.adb.shell("appops", "set", PACKAGE, "WRITE_SETTINGS", "default")
+        wait_for("Home's window to hold the level again", lambda: ctx.status()["device"]["brightness"] == "window", timeout=15)
+        ctx.api.expect("POST", "/api/v1/control/brightness", {"value": level})
+    wait_for(f"brightness {level} to be held again", lambda: window_brightness_override(ctx) == level, timeout=10)
+
+    name = before["displayName"]
+    try:
+        renamed = ctx.api.expect("POST", "/api/v1/control/name", {"name": "Hallway"})
+        require(renamed["keptBy"] == "local", f"Renamed: {describe(renamed)}")
+        require(ctx.status()["displayName"] == "Hallway", "The new name is not shown")
+    finally:
+        ctx.api.expect("POST", "/api/v1/control/name", {"name": name or "Mirror"})
+
+
 EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("install", "Mirror Home installs and its API answers", check_install, False),
     ("setup-screen", "Unpaired, the glass shows the setup screen with a pairing code", check_setup_screen, False),
@@ -3433,6 +3491,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("offline-fallback", "An unreachable web page falls back to the offline clock", check_offline_fallback, False),
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),
+    ("no-vendor-service", "Without the factory service, Home's window or Android's setting holds the brightness and Home keeps the name", check_no_vendor_service, False),
     ("scan-guard", "Asked to, Android stops scanning for Wi-Fi while connected; asked again, it scans as before", check_scan_guard, False),
     ("updater-held", "Mirror Home keeps the OTA supervisor from being ended first, and the supervisor does not need it to", check_updater_held, False),
     ("journal", "What happens is written where a restart does not erase it, and Android's log is copied when asked", check_journal, False),

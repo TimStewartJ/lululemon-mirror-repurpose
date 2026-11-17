@@ -26,6 +26,14 @@ mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys
 Later NXP i.MX8 units and other firmware are not supported. Stage 3 verifies
 these properties over ADB; the chassis label alone is insufficient.
 
+To see what your unit is before going further, run
+`python tools/identify.py --board-label YOUR_LABEL` (the revision printed on
+the board, if you know it). It changes nothing on the unit and works even
+when ADB is unauthorized or the unit is in fastboot. If it does not match the
+firmware above, stop here and open a
+[board report](https://github.com/TimStewartJ/lululemon-mirror-repurpose/issues/new?template=board-report.yml)
+with its output; see [board profiles](../profiles/README.md).
+
 Use a trusted Windows computer, a data-capable USB cable, a visible Mirror
 display, and a trusted private network. Keep physical USB access throughout.
 The examples are PowerShell commands. Install Git, then choose a parent

@@ -1,0 +1,24 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-gcc18d327301",
+  "title": "MSM8916, kernel 3.10.49-perf-gcc18d327301",
+  "evidence": "reported",
+  "sources": [
+    "https://github.com/TimStewartJ/lululemon-mirror-repurpose/issues/5#issuecomment-6843478003"
+  ],
+  "board": {
+    "labels": [
+      "RevP20"
+    ],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-gcc18d327301",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.16.0"
+  ],
+  "install": null,
+  "notes": "One owner reports this kernel on a RevP20 unit with MirrorOS 1.16.0 (build 673). ADB was reached by replacing userdata only; Mirror Home 2.2.0 ran, but the factory service did not answer it."
+}

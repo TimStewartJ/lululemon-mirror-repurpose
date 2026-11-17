@@ -1,5 +1,12 @@
 # Owner-controlled OS replacement plan
 
+> **Not Silvering.** This page is about replacing the kernel or boot chain
+> (mainline Linux, Android 7), which the unit's secure boot blocks. The
+> project's chosen path is Silvering: a rebuilt Android 6.0.1 that replaces
+> only `system` and `userdata` and keeps the board's signed boot image and
+> kernel, so this page's blockers do not apply to it. See
+> [board profiles](../profiles/README.md) and [AGENTS.md](../AGENTS.md#silvering).
+
 ## Recommendation
 
 The long-term target should be a small mainline-Linux kiosk image rather than a

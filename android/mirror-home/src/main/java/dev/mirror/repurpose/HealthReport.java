@@ -58,7 +58,8 @@ final class HealthReport {
                 .put("display", display(context))
                 .put("input", input(context))
                 .put("power", ForegroundKeeper.power(context))
-                .put("webView", webView(context));
+                .put("webView", webView(context))
+                .put("controls", DeviceControls.getInstance(context).capabilities());
 
         JSONObject memory = result.optJSONObject("memory");
         if (memory == null) {

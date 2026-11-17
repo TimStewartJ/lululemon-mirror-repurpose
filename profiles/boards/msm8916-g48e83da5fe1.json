@@ -1,0 +1,24 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-g48e83da5fe1",
+  "title": "MSM8916, kernel 3.10.49-perf-g48e83da5fe1",
+  "evidence": "reported",
+  "sources": [
+    "https://github.com/Onemoremichael/lulu-mirror-software-only/issues/10"
+  ],
+  "board": {
+    "labels": [
+      "RevP18"
+    ],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-g48e83da5fe1",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.14.2"
+  ],
+  "install": null,
+  "notes": "One owner reports this kernel on a RevP18 unit with MirrorOS 1.14.2 (build 587). The same owner reports Android replaced on that unit with local kernel-module changes."
+}

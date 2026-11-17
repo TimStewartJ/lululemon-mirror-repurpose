@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TimStewartJ/lululemon-mirror-repurpose/blob/main/profiles/schema/device-report.schema.json",
+  "title": "MIRROR device report",
+  "description": "What tools/identify.py read from one unit, without changing it. Safe to paste into an issue: it holds no serial number, network name, key or account.",
+  "type": "object",
+  "required": ["schema", "createdAt", "tool", "state", "board", "android", "kernel", "partitions", "packages", "bootloader", "match"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "mirror-device-report/1" },
+    "createdAt": { "type": "string" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "const": "identify" },
+        "version": { "type": "string" }
+      }
+    },
+    "state": {
+      "description": "android: ADB is authorized. android-unauthorized: ADB sees the unit but it has not trusted this computer. fastboot: the bootloader is waiting. none: nothing was found.",
+      "enum": ["android", "android-unauthorized", "fastboot", "none"]
+    },
+    "board": {
+      "type": "object",
+      "required": ["label"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "description": "The printed board revision as the owner typed it, or null.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "android": {
+      "type": ["object", "null"],
+      "required": ["fingerprint", "release", "sdk", "product", "device", "platform", "hardware", "buildId", "buildType", "mirrorOsVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "fingerprint": { "type": "string" },
+        "release": { "type": "string" },
+        "sdk": { "type": ["integer", "null"] },
+        "product": { "type": "string" },
+        "device": { "type": "string" },
+        "platform": { "type": "string" },
+        "hardware": { "type": "string" },
+        "buildId": { "type": "string" },
+        "buildType": { "type": "string" },
+        "mirrorOsVersion": {
+          "description": "ro.build.version.mirror on a factory system; null on other systems.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "kernel": {
+      "type": ["object", "null"],
+      "required": ["release", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "release": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "partitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "sizeBytes"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "sizeBytes": { "type": "integer" }
+        }
+      }
+    },
+    "packages": {
+      "description": "Factory and Mirror packages, with their versions.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "versionName"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "versionName": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "bootloader": {
+      "description": "What fastboot getvar all answered, by name; null when the unit was not in fastboot. serialno is left out.",
+      "type": ["object", "null"],
+      "additionalProperties": { "type": "string" }
+    },
+    "match": {
+      "type": "object",
+      "required": ["profile", "evidence", "installable", "notes"],
+      "additionalProperties": false,
+      "properties": {
+        "profile": { "type": ["string", "null"] },
+        "evidence": { "enum": ["observed", "reported", null] },
+        "installable": {
+          "description": "Whether Silvering can be installed on this unit by the installer today.",
+          "type": "boolean"
+        },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
