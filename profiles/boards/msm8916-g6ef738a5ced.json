@@ -1,0 +1,24 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-g6ef738a5ced",
+  "title": "MSM8916, kernel 3.10.49-perf-g6ef738a5ced",
+  "evidence": "reported",
+  "sources": [
+    "https://github.com/Onemoremichael/lulu-mirror-software-only/issues/11#issuecomment-6539298394"
+  ],
+  "board": {
+    "labels": [
+      "RevP21"
+    ],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-g6ef738a5ced",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.19.1"
+  ],
+  "install": null,
+  "notes": "One owner reports this kernel on a RevP21 unit with MirrorOS 1.19.1, whose fingerprint still ends in /329. The same owner reports Android replaced and working after kernel-specific changes."
+}

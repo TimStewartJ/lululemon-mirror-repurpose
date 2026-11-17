@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/TimStewartJ/lululemon-mirror-repurpose/blob/main/profiles/schema/board-profile.schema.json",
+  "title": "MIRROR board profile",
+  "description": "One known combination of MIRROR board and factory kernel. A Silvering image is built for exactly one profile, because the board keeps its own signed kernel and the image's kernel modules must match it.",
+  "type": "object",
+  "required": ["schema", "id", "title", "evidence", "sources", "board", "match", "mirrorOsVersions", "install", "notes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "mirror-board-profile/1" },
+    "id": {
+      "description": "Platform and the kernel's build hash, as in its release string.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "title": { "type": "string" },
+    "evidence": {
+      "description": "observed: seen on a unit this project works with. reported: read from an owner's report and not seen here.",
+      "enum": ["observed", "reported"]
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "board": {
+      "type": "object",
+      "required": ["labels", "soc"],
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "description": "Printed board revisions this combination was seen on. Software cannot read the printed label.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "soc": { "type": "string" }
+      }
+    },
+    "match": {
+      "description": "What a running Android must report for this profile to apply.",
+      "type": "object",
+      "required": ["kernelRelease", "platform"],
+      "additionalProperties": false,
+      "properties": {
+        "kernelRelease": { "type": "string" },
+        "platform": {
+          "description": "ro.board.platform.",
+          "type": "string"
+        }
+      }
+    },
+    "mirrorOsVersions": {
+      "description": "Factory MirrorOS versions seen with this kernel.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "install": {
+      "description": "How Silvering is installed on this combination. null until an image has been built and accepted on such a unit; the installer offers no flash for a profile without it.",
+      "type": ["object", "null"]
+    },
+    "notes": { "type": "string" }
+  }
+}

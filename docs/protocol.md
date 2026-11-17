@@ -140,6 +140,16 @@ works), and when the last one was (`lastAt`).
 Turning it on where `supported` is false answers 409. `status.wifi.scanGuard`
 carries `enabled`, `supported`, `state` and `detail`.
 
+`status.device` (and `health.device.controls`) says how this unit is
+controlled: `vendorService` is `connected`, `unanswered` or `absent` for the
+Mirror's factory service; `brightness` is `vendor`, `system` (Android's own
+setting) or `window` (Mirror Home's window holds the level while it is in
+front); `name` is `vendor` or `local`. `POST /api/v1/control/brightness`
+takes `{value}` from 1 to 255 and succeeds whichever applies.
+`POST /api/v1/control/name` takes `{name}` and answers with `keptBy`:
+`vendor` when the factory service took it too, `local` when only Mirror Home
+keeps it. `status.mirrorBinderConnected` remains for older clients.
+
 `GET /api/v1/journal` returns what Mirror Home wrote down of what happened,
 which a restart of the Mirror does not erase; see
 [Afterwards: the journal](user-guide.md#afterwards-the-journal). `events`

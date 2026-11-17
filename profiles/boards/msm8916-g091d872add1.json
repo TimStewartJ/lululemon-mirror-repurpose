@@ -1,0 +1,24 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-g091d872add1",
+  "title": "MSM8916, kernel 3.10.49-perf-g091d872add1",
+  "evidence": "reported",
+  "sources": [
+    "https://github.com/TimStewartJ/lululemon-mirror-repurpose/issues/5#issuecomment-6569719839"
+  ],
+  "board": {
+    "labels": [
+      "RevP21"
+    ],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-g091d872add1",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.25.0"
+  ],
+  "install": null,
+  "notes": "One owner reports this kernel on a RevP21 unit with MirrorOS 1.25.0, and Android replaced with ADB over USB working."
+}

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Work without the Mirror's factory service. Mirror Home set the backlight
+  and the Mirror's name only through `com.mirror.services`, so on a unit
+  where that service is missing or does not answer (one owner reports it on
+  MirrorOS 1.16.0) brightness could not be changed and a new name was
+  refused. Now Mirror Home uses Android's own brightness setting where it may
+  write it (`appops ... WRITE_SETTINGS allow`, or an image that installs it
+  in the system) and otherwise holds the level in its own window while the
+  dashboard is in front, and keeps the name itself. Status and health report
+  which under `device` and `device.controls`; the controls show it under
+  **About > Mirror services**. On a factory Mirror whose service answers,
+  nothing changes.
+- `tools/identify.py` reads a unit over ADB or fastboot without changing it
+  and writes a device report that can be attached to an issue, naming the
+  board profile it matches. `--json` gives programs JSON only, errors
+  included. `profiles/` holds the schemas and the board and kernel
+  combinations owners have reported; a **Board report** issue form asks for
+  the report, and `AGENTS.md` tells coding agents what reads a Mirror and
+  what changes it.
+
 - Bring the Mirror back to its Wi-Fi network when Android does not. One
   evening a Mirror stood for hours with its network a room away, showing
   its setup screen, until somebody looked: Mirror Home only asked Android to

@@ -833,8 +833,14 @@ public final class MainActivity extends Activity {
         }
         sleepOverlay.bringToFront();
         float target = automation.isSleeping() ? 0f : 1f;
+        // Where Home's window holds the level, it follows a level set while awake,
+        // also one set while the display fades in.
+        boolean followLevel = target == 1f && automation.isWindowBrightness();
         if (displayFade != null) {
             if (Float.compare(displayFadeTarget, target) == 0) {
+                if (followLevel) {
+                    displayAwakeLevel = awakeBacklightLevel(target);
+                }
                 return;
             }
             cancelDisplayFade();
@@ -847,13 +853,16 @@ public final class MainActivity extends Activity {
             return;
         }
         if (Float.compare(displayVisibility, target) == 0) {
+            if (followLevel) {
+                displayAwakeLevel = awakeBacklightLevel(target);
+            }
             applyDisplayVisibility(target);
             updateAmbientVideoState();
             return;
         }
         if (displayVisibility == 1f) {
             // Awake without an override: fade from whatever the panel shows now.
-            displayAwakeLevel = currentSystemBrightness();
+            displayAwakeLevel = panelLevel();
         } else if (target == 1f) {
             displayAwakeLevel = awakeBacklightLevel(target);
         }
@@ -938,7 +947,14 @@ public final class MainActivity extends Activity {
 
     private int awakeBacklightLevel(float target) {
         return target == 1f
-                ? automation.awakeBrightness()
+                ? automation.displayLevel()
+                : panelLevel();
+    }
+
+    /** What the panel shows now: the level Home's window holds, or else Android's. */
+    private int panelLevel() {
+        return automation.isWindowBrightness()
+                ? automation.displayLevel()
                 : currentSystemBrightness();
     }
 

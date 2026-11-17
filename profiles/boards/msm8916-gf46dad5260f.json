@@ -1,0 +1,24 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-gf46dad5260f",
+  "title": "MSM8916, kernel 3.10.49-perf-gf46dad5260f",
+  "evidence": "reported",
+  "sources": [
+    "https://github.com/Onemoremichael/lulu-mirror-software-only/issues/11#issuecomment-6514670842"
+  ],
+  "board": {
+    "labels": [
+      "RevP21"
+    ],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-gf46dad5260f",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.27.0"
+  ],
+  "install": null,
+  "notes": "Reported on RevP21 units with MirrorOS 1.27.0, including the first unit on which Android was replaced while keeping the factory kernel."
+}

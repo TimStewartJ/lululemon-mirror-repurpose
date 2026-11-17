@@ -41,6 +41,7 @@ public final class ControlServer extends NanoHTTPD {
     private final Moments moments = Moments.getInstance();
     private final MediaPlaybackManager media;
     private final MirrorBinderClient mirror;
+    private final DeviceControls controls;
     private final NoteStore notes;
     private final PairingManager pairing;
     private final PhotoLibrary photos;
@@ -61,6 +62,7 @@ public final class ControlServer extends NanoHTTPD {
         board = BoardStore.getInstance(context);
         media = MediaPlaybackManager.getInstance(context);
         mirror = MirrorBinderClient.getInstance(context);
+        controls = DeviceControls.getInstance(context);
         notes = NoteStore.getInstance(context);
         pairing = PairingManager.getInstance(context);
         backgroundVideoProvisioner = new BackgroundVideoProvisioner(context, pairing);
@@ -575,10 +577,11 @@ public final class ControlServer extends NanoHTTPD {
         result.put("nextUtcOffsetChange", nextUtcOffsetChange(clock, now));
         result.put("clock24Hour", configStore.isClock24Hour());
         result.put("mirrorBinderConnected", mirror.isConnected());
+        result.put("device", controls.capabilities());
         result.put("systemHelperConnected", systemHelper.isConnected());
         Integer brightness = automation.isSleeping()
                 ? Integer.valueOf(0)
-                : mirror.getBrightness();
+                : controls.getBrightness();
         result.put("brightness", brightness == null ? JSONObject.NULL : brightness);
         result.put("wifi", wifiStatus);
         String address = LanAddress.current(context);
@@ -1352,7 +1355,7 @@ public final class ControlServer extends NanoHTTPD {
         if (value < 1 || value > 255) {
             return error(Response.Status.BAD_REQUEST, "Brightness must be between 1 and 255");
         }
-        boolean changed = mirror.setBrightness(value);
+        boolean changed = automation.setDisplayBrightness(value);
         return response(
                 changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
                 new JSONObject().put("changed", changed).put("value", value));
@@ -1568,13 +1571,11 @@ public final class ControlServer extends NanoHTTPD {
         if (name == null || name.trim().isEmpty() || name.length() > 64) {
             return error(Response.Status.BAD_REQUEST, "Name must contain 1-64 characters");
         }
-        boolean changed = mirror.setName(name);
-        if (changed) {
-            configStore.setDisplayName(name);
-        }
+        String keptBy = controls.setName(name);
+        configStore.setDisplayName(name);
         return response(
-                changed ? Response.Status.OK : Response.Status.SERVICE_UNAVAILABLE,
-                new JSONObject().put("changed", changed).put("name", name));
+                Response.Status.OK,
+                new JSONObject().put("changed", true).put("name", name).put("keptBy", keptBy));
     }
 
     private Response systemStatus() throws JSONException {

@@ -435,17 +435,17 @@ def main() -> None:
     parser.add_argument("--host")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("build-supervisor")
-    provision_parser = subparsers.add_parser("provision")
+    subparsers.add_parser("build-supervisor", help="this computer only: build the OTA supervisor")
+    provision_parser = subparsers.add_parser("provision", help="CHANGES THE UNIT: install the supervisor as device owner")
     provision_parser.add_argument("--serial")
-    recover_parser = subparsers.add_parser("recover-token")
+    recover_parser = subparsers.add_parser("recover-token", help="CHANGES THE UNIT: give the supervisor a new update token")
     recover_parser.add_argument("--serial")
-    deprovision_parser = subparsers.add_parser("deprovision")
+    deprovision_parser = subparsers.add_parser("deprovision", help="CHANGES THE UNIT: remove the supervisor")
     deprovision_parser.add_argument("--serial")
-    subparsers.add_parser("status")
-    subparsers.add_parser("permissions")
+    subparsers.add_parser("status", help="reads only: the supervisor's state")
+    subparsers.add_parser("permissions", help="reads only: Mirror Home's runtime permissions")
     for command in ("grant-permission", "revoke-permission"):
-        permission_parser = subparsers.add_parser(command)
+        permission_parser = subparsers.add_parser(command, help="CHANGES THE UNIT: change one of Mirror Home's runtime permissions")
         permission_parser.add_argument("permission", choices=RUNTIME_PERMISSIONS)
         permission_parser.add_argument(
             "--confirm",
@@ -453,9 +453,9 @@ def main() -> None:
             required=True,
             help="explicitly confirm changing Mirror Home's runtime permission",
         )
-    push_parser = subparsers.add_parser("push")
+    push_parser = subparsers.add_parser("push", help="CHANGES THE UNIT: update Mirror Home over the air")
     push_parser.add_argument("apk", type=pathlib.Path)
-    subparsers.add_parser("rollback")
+    subparsers.add_parser("rollback", help="CHANGES THE UNIT: return to the previous Mirror Home")
 
     args = parser.parse_args()
     if args.command == "build-supervisor":

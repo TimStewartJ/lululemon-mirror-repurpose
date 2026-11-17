@@ -30,7 +30,7 @@ public final class AutomationManager implements SensorEventListener {
 
     private final Context context;
     private final ConfigStore configStore;
-    private final MirrorBinderClient mirror;
+    private final DeviceControls controls;
     private final SensorManager sensorManager;
     private final Sensor lightSensor;
     private final MotionDetectionManager motion;
@@ -61,13 +61,15 @@ public final class AutomationManager implements SensorEventListener {
     private long lastAmbientUpdate;
     private int lastAmbientBrightness = -1;
     private boolean brightnessApplied;
+    /** How the brightness was last set: see {@link DeviceControls}. */
+    private String appliedMethod;
     private boolean sleepCommitPending;
     private long lastMotionElapsed;
 
     private AutomationManager(Context context) {
         this.context = context.getApplicationContext();
         configStore = new ConfigStore(this.context);
-        mirror = MirrorBinderClient.getInstance(this.context);
+        controls = DeviceControls.getInstance(this.context);
         sensorManager = (SensorManager) this.context.getSystemService(Context.SENSOR_SERVICE);
         lightSensor = sensorManager == null
                 ? null
@@ -119,9 +121,42 @@ public final class AutomationManager implements SensorEventListener {
                 : ambientWakeBrightness();
     }
 
-    /** Whether the stored brightness matches the awake target, so an override can be released. */
+    /**
+     * Whether the stored brightness matches the awake target, so an override can
+     * be released. Never while Home's window is what holds the level.
+     */
     public synchronized boolean isBrightnessApplied() {
-        return brightnessApplied && !sleepCommitPending;
+        return brightnessApplied && !sleepCommitPending && DeviceControls.storesLevel(appliedMethod);
+    }
+
+    /** Whether only Home's window holds the backlight level on this unit. */
+    public synchronized boolean isWindowBrightness() {
+        return DeviceControls.WINDOW.equals(appliedMethod);
+    }
+
+    /** Backlight level the awake display shows: the one Home's window holds, if it holds one. */
+    public synchronized int displayLevel() {
+        int held = controls.windowLevel();
+        return isWindowBrightness() && held > 0 ? held : awakeBrightness();
+    }
+
+    /** Sets the backlight now, as asked from the controls, without changing the level it wakes to. */
+    public synchronized boolean setDisplayBrightness(int level) {
+        return applyBrightness(level);
+    }
+
+    private boolean applyBrightness(int level) {
+        String before = appliedMethod;
+        String method = controls.setBrightness(level);
+        if (method == null) {
+            return false;
+        }
+        appliedMethod = method;
+        if (DeviceControls.WINDOW.equals(method) || !method.equals(before)) {
+            // The window's override follows the level, and is released once a stored level holds it.
+            broadcast();
+        }
+        return true;
     }
 
     /** MainActivity reports that its sleep fade has fully reached black. */
@@ -247,7 +282,7 @@ public final class AutomationManager implements SensorEventListener {
         if (target != current) {
             configStore.setWakeBrightness(target);
             if (!isSleeping()) {
-                brightnessApplied = mirror.setBrightness(target);
+                brightnessApplied = applyBrightness(target);
             }
             broadcast();
         }
@@ -278,7 +313,7 @@ public final class AutomationManager implements SensorEventListener {
         }
         int brightness = ambientBrightness(lastLux);
         if (lastAmbientBrightness < 0 || Math.abs(brightness - lastAmbientBrightness) >= 4) {
-            if (mirror.setBrightness(brightness)) {
+            if (applyBrightness(brightness)) {
                 lastAmbientBrightness = brightness;
                 lastAmbientUpdate = now;
             }
@@ -336,7 +371,11 @@ public final class AutomationManager implements SensorEventListener {
         boolean stateChanged = sleeping == null || sleeping != shouldSleep;
         String nextReason = shouldSleep ? reason : "none";
         boolean reasonChanged = !sleepReason.equals(nextReason);
-        if (!force && !stateChanged && !reasonChanged && brightnessApplied) {
+        // A unit whose factory service answers late, or Home being let write Android's
+        // setting, changes how the level is held: apply it again the new way.
+        boolean methodChanged = appliedMethod != null
+                && !controls.brightnessMethod().equals(appliedMethod);
+        if (!force && !stateChanged && !reasonChanged && brightnessApplied && !methodChanged) {
             return;
         }
         if (shouldSleep) {
@@ -355,11 +394,11 @@ public final class AutomationManager implements SensorEventListener {
             handler.removeCallbacks(sleepCommit);
             sleepCommitPending = false;
             if (!configStore.isAmbientEnabled() || lightSensor == null) {
-                brightnessApplied = mirror.setBrightness(configStore.getWakeBrightness());
-            } else if (stateChanged || !brightnessApplied) {
+                brightnessApplied = applyBrightness(configStore.getWakeBrightness());
+            } else if (stateChanged || !brightnessApplied || methodChanged) {
                 // Sleep stored level 1; restore an ambient level as the fade target.
                 int level = ambientWakeBrightness();
-                brightnessApplied = mirror.setBrightness(level);
+                brightnessApplied = applyBrightness(level);
                 if (brightnessApplied) {
                     lastAmbientBrightness = level;
                 }
@@ -378,7 +417,7 @@ public final class AutomationManager implements SensorEventListener {
         sleepCommitPending = false;
         MediaPlaybackManager.getInstance(context).stop();
         // The vendor Binder clamps to 1; MainActivity applies the true zero override.
-        brightnessApplied = mirror.setBrightness(1);
+        brightnessApplied = applyBrightness(1);
     }
 
     private void updateAmbientRegistration() {
