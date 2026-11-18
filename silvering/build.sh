@@ -25,6 +25,16 @@ goals=${*:-systemimage}
 image=silvering-build:trusty
 
 [ -d "$root/src/.repo" ] || { echo "no sources in $root/src: run sync.sh first" >&2; exit 1; }
+# The sources, images and a unit's files hold Qualcomm's and the board maker's
+# files: keep them out of this checkout.
+checkout=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || true)
+for private in "$root" "${UNIT:-}"; do
+    if [ -n "$checkout" ] && [ -n "$private" ]; then
+        case "$(cd "$private" && pwd -P)/" in
+            "$(cd "$checkout" && pwd -P)/"*) echo "$private is inside the checkout $checkout" >&2; exit 1 ;;
+        esac
+    fi
+done
 mkdir -p "$root/ccache" "$root/logs" "$root/images"
 
 product=$root/src/device/mirror/silvering
@@ -50,10 +60,21 @@ with zipfile.ZipFile(os.path.join(folder, "MirrorHome.apk")) as apk:
 EOF
 fi
 
+# A module whose input went away (an APK left out, a library dropped) leaves
+# its installed files in out/; when the product's inputs change, clear the
+# installed tree so that it holds only what this build makes.
+inputs=$( (cd "$product" && find . -type f -print0 | sort -z | xargs -0 sha256sum) | sha256sum | cut -d' ' -f1)
+stamp=$root/src/out/.silvering-inputs-$target
+clean=
+if [ "$(cat "$stamp" 2>/dev/null)" != "$inputs" ]; then
+    clean="make installclean"
+fi
+
 unit_mount=()
 stage=
 if [ -n "${UNIT:-}" ]; then
-    [ -d "$UNIT/files" ] || { echo "UNIT=$UNIT has no files/: run unit-files.py first" >&2; exit 1; }
+    [ -f "$UNIT/unit.json" ] || { echo "UNIT=$UNIT has no unit.json: run unit-files.py first" >&2; exit 1; }
+    case " $goals " in *" systemimage "*) ;; *) goals="$goals systemimage" ;; esac
     dest=/images/$target-$(date +%Y%m%d-%H%M%S)
     unit_mount=(-v "$(cd "$UNIT" && pwd):/unit:ro" -v "$root/images:/images")
     stage="bash /recipe/stage-image.sh /unit $dest"
@@ -63,6 +84,7 @@ docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)
 
 log=$root/logs/build-$(date +%Y%m%d-%H%M%S).log
 echo "building $target ($goals) with $cpus CPUs / $memory; log: $log"
+set +e
 docker run --rm --name silvering-build \
     --cpus "$cpus" --cpu-shares 256 --memory "$memory" --memory-swap "$memory" \
     -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" "${unit_mount[@]}" \
@@ -71,7 +93,13 @@ docker run --rm --name silvering-build \
         ccache -M 50G >/dev/null
         source build/envsetup.sh >/dev/null
         lunch $target
+        $clean
         make -j$jobs $goals
         $stage
     " 2>&1 | tee "$log"
-exit "${PIPESTATUS[0]}"
+status=${PIPESTATUS[0]}
+set -e
+if [ "$status" -eq 0 ]; then
+    echo "$inputs" > "$stamp"
+fi
+exit "$status"

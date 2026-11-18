@@ -6,13 +6,14 @@ writes, with its MIRROR-FILES.json) with a Silvering build's system output,
 which stays untouched, and writes OUT_DIR:
 
   files/         the unit's files to lay over the build's /system
-  symlinks.txt   "path -> target" links to make there
-  unit.json      what was taken and why, and what was left out
+  unit.json      the links to make there, and what was taken and why and
+                 what was left out
 
-build.sh stages these over a copy of the build output, after everything the
-build makes, so they always win; the unit's kernel modules replace the
-build's whole set. Nothing here may be committed or published: these are the
-board maker's and Qualcomm's files.
+build.sh stages these over a copy of the build output with stage.py, after
+everything the build makes, so they always win; the unit's kernel modules
+replace the build's whole set (so that set must have been read completely).
+Nothing here may be committed or published: these are the board maker's and
+Qualcomm's files, and the output folder may not be inside a git checkout.
 
 Taken from the unit:
   - every file the build does not make (Qualcomm's proprietary libraries,
@@ -107,8 +108,15 @@ def read_transfer_report(tar):
         raise Refused("MIRROR-FILES.json is not a mirror-files/1 transfer of /system")
     damaged = set()
     for entry in report.get("skipped", []):
-        if "padded" in entry.get("reason", "") and entry.get("path", "").startswith("/system/"):
-            damaged.add(entry["path"][len("/system/"):])
+        path = entry.get("path", "")
+        modules = "/system/" + MODULE_PREFIX
+        if (path + "/").startswith(modules) or modules.startswith(path.rstrip("/") + "/"):
+            # The unit's modules replace the build's whole set, so that set
+            # must be complete.
+            raise Refused(f"the unit's kernel modules were not all read: {path} "
+                          f"({entry.get('reason', '')})")
+        if "padded" in entry.get("reason", "") and path.startswith("/system/"):
+            damaged.add(path[len("/system/"):])
     return damaged
 
 
@@ -121,6 +129,9 @@ def extract(tar, built_system, files_dir):
             continue
         built = os.path.join(built_system, rel)
         if m.issym():
+            if rel.startswith(MODULE_PREFIX):
+                symlinks.append((rel, m.linkname))  # the whole module tree is replaced
+                continue
             if rel.startswith(SKIP_PREFIXES) or rel.endswith(SKIP_SUFFIXES):
                 continue
             if os.path.lexists(built) and not os.path.islink(built):
@@ -144,7 +155,20 @@ def extract(tar, built_system, files_dir):
             shutil.copyfileobj(src, out)
         os.chmod(dest, 0o644)
         taken.append((rel, reason))
+    if not any(why == "kernel-module" for _, why in taken):
+        raise Refused("no kernel modules in the unit's /system")
     return taken, symlinks, counts, left_out
+
+
+def inside_git_checkout(path):
+    path = os.path.realpath(path)
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return True
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
 
 
 def main(argv=None):
@@ -155,6 +179,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     try:
+        if inside_git_checkout(args.out_dir):
+            raise Refused(f"{args.out_dir} is inside a git checkout; keep the unit's files out of it")
         if not os.path.isfile(os.path.join(args.built_system, "build.prop")):
             raise Refused(f"{args.built_system} is not a built /system (no build.prop)")
         os.makedirs(args.out_dir, exist_ok=True)
@@ -166,22 +192,24 @@ def main(argv=None):
             taken, symlinks, counts, left_out = extract(tar, args.built_system, work)
     except (Refused, OSError, tarfile.TarError, ValueError) as e:
         print(f"unit-files: {e}", file=sys.stderr)
+        if os.path.isdir(os.path.join(args.out_dir, "files.new")):
+            shutil.rmtree(os.path.join(args.out_dir, "files.new"))
         return 1
 
     files_dir = os.path.join(args.out_dir, "files")
     if os.path.isdir(files_dir):
         shutil.rmtree(files_dir)
     os.rename(work, files_dir)
-    with open(os.path.join(args.out_dir, "symlinks.txt"), "w") as f:
-        f.writelines(f"{rel} -> {target}\n" for rel, target in sorted(symlinks))
-    summary = {"taken": len(taken), "counts": counts, "symlinks": len(symlinks),
-               "damaged": left_out,
+    summary = {"schema": "silvering-unit/1",
+               "taken": len(taken), "counts": counts, "damaged": left_out,
+               "modules": "replace",
+               "links": [[rel, target] for rel, target in sorted(symlinks)],
                "byReason": {r: sorted(p for p, why in taken if why == r)
                             for r in ("kernel-module", "config", "missing")}}
     with open(os.path.join(args.out_dir, "unit.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    print(json.dumps({k: summary[k] for k in ("taken", "counts", "symlinks")}
-                     | {"damaged": len(left_out)}))
+    print(json.dumps({"taken": len(taken), "counts": counts,
+                      "links": len(symlinks), "damaged": len(left_out)}))
     return 0
 
 
