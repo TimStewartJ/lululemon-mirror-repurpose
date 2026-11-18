@@ -26,6 +26,11 @@ unlock "$stage"
 rm -rf "$stage"
 mkdir -p "$stage/image" "$stage/check"
 python "$here/stage.py" stage "$unit" "$OUT/system" "$stage/system"
+# Silvering never writes the recovery partition. The build ships a recovery
+# installer that init's flash_recovery service runs at every boot; leave it
+# and its patch out. The read-back below proves the image holds the stage.
+rm -f "$stage/system/bin/install-recovery.sh" "$stage/system/recovery-from-boot.p" \
+    "$stage/system/etc/recovery-resource.dat"
 
 # Owners and modes: fs_config's defaults for the whole tree, with the unit's
 # own for its files.

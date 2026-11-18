@@ -35,27 +35,18 @@ image=silvering-build:trusty
 footer=16384
 
 [ $# -ge 2 ] || { sed -n '2,28p' "$0" >&2; exit 2; }
-case "$1" in
-    0x*|0X*|[0-9]*) ;;
-    *) echo "partition size must be a number of bytes, not $1" >&2; exit 2 ;;
-esac
-size=$(( $1 ))
+if [[ $1 =~ ^0[xX][0-9a-fA-F]{1,16}$ ]]; then
+    size=$(( 16#${1:2} ))
+elif [[ $1 =~ ^[1-9][0-9]{0,18}$ ]]; then
+    size=$(( 10#$1 ))
+else
+    echo "partition size must be a number of bytes (decimal or 0x hex), not $1" >&2; exit 2
+fi
 key=$2
-# Smaller than this is not a MIRROR's userdata partition (about 5 GiB).
-[ "$size" -ge $((1024 * 1024 * 1024)) ] || { echo "partition size $size is under 1 GiB" >&2; exit 1; }
+# A MIRROR's userdata partition is about 5 GiB; outside this range it is not one.
+[ "$size" -ge $((1024 * 1024 * 1024)) ] && [ "$size" -le $((64 * 1024 * 1024 * 1024)) ] \
+    || { echo "partition size $size is not between 1 and 64 GiB" >&2; exit 1; }
 length=$(( (size - footer) / 4096 * 4096 ))
-
-# An ADB public key is one line: base64 of a 524-byte RSA key, then a name.
-python3 - "$key" <<'EOF'
-import base64, binascii, sys
-try:
-    with open(sys.argv[1], "rb") as f:
-        lines = f.read().decode("ascii").strip().splitlines()
-    assert len(lines) == 1
-    assert len(base64.b64decode(lines[0].split(" ")[0], validate=True)) == 524
-except (OSError, UnicodeDecodeError, AssertionError, binascii.Error, ValueError):
-    sys.exit(f"{sys.argv[1]} is not an ADB public key (adbkey.pub)")
-EOF
 
 out_marker=$root/src/out/.silvering-product-out-$target
 [ -f "$out_marker" ] || { echo "no build of $target in $root/src: run build.sh first" >&2; exit 1; }
@@ -81,7 +72,49 @@ out=$(cd "$(dirname "$out")" && pwd)/$(basename "$out")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stage/misc/adb" "$work/out"
-tr -d '\r' < "$key" | sed -e '$a\' > "$work/stage/misc/adb/adb_keys"
+# adbd (Android 6, adb_auth_client.cpp) reads each line up to the first space
+# or tab as base64 of a 2048-bit RSAPublicKey: len 64, n0inv, n[64], rr[64],
+# exponent, little-endian. Check it is one, and write it back in that form.
+python3 - "$key" "$work/stage/misc/adb/adb_keys" <<'EOF'
+import base64, binascii, re, struct, sys
+
+def refuse(why):
+    sys.exit(f"{sys.argv[1]} is not an ADB public key (adbkey.pub): {why}")
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        text = f.read().decode("ascii")
+except (OSError, UnicodeDecodeError) as e:
+    refuse(str(e))
+lines = [line for line in text.splitlines() if line.strip()]
+if len(lines) != 1:
+    refuse(f"{len(lines)} lines, not one")
+fields = lines[0].strip().split(None, 1)
+try:
+    blob = base64.b64decode(fields[0], validate=True)
+except (binascii.Error, ValueError):
+    refuse("not base64")
+if len(blob) != 524:
+    refuse(f"{len(blob)} bytes, not 524")
+words = struct.unpack("<131I", blob[:524])
+size, n0inv = words[0], words[1]
+n = int.from_bytes(blob[8:264], "little")
+rr = int.from_bytes(blob[264:520], "little")
+exponent = words[130]
+if size != 64:
+    refuse(f"length {size}, not 64 words")
+if n.bit_length() != 2048 or n % 2 == 0:
+    refuse("the modulus is not an odd 2048-bit number")
+if (n0inv * n) % (1 << 32) != (1 << 32) - 1:
+    refuse("n0inv does not match the modulus")
+if rr != pow(2, 4096, n):
+    refuse("rr does not match the modulus")
+if exponent not in (3, 65537):
+    refuse(f"exponent {exponent}")
+name = re.sub(r"[^\x21-\x7e ]", "", fields[1]).strip() if len(fields) > 1 else ""
+with open(sys.argv[2], "w") as out:
+    out.write(base64.b64encode(blob).decode("ascii") + " " + (name or "owner") + "\n")
+EOF
 cp "$contexts" "$work/file_contexts"
 # Owners and modes as the board's init.rc makes them (system 1000, shell
 # 2000, misc 9998).
