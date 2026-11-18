@@ -17,9 +17,9 @@
 #   FILE_CONTEXTS   SELinux labels (default: the build's root/file_contexts;
 #                   the unit's own, from its ramdisk, is better where read:
 #                   ~/silvering/units/<profile>/ramdisk/file_contexts)
-#   USB_CONFIG      USB functions for the first boot (default mtp,adb, what
-#                   a MIRROR that ADB already works with uses; empty: leave
-#                   it to build.prop, which on msm8916 asks for
+#   USB_CONFIG      USB functions for the first boot: mtp,adb (the default,
+#                   what a MIRROR that ADB already works with uses) or empty
+#                   (leave it to build.prop, which on msm8916 asks for
 #                   diag,serial_smd,rmnet_bam,adb)
 #   TARGET          lunch target whose host tools to use (default
 #                   silvering-userdebug)
@@ -57,11 +57,11 @@ contexts=${FILE_CONTEXTS:-$product_out/root/file_contexts}
 [ -f "$contexts" ] || { echo "no file_contexts at $contexts" >&2; exit 1; }
 grep -q '^/data/misc/adb(' "$contexts" || { echo "$contexts has no label for /data/misc/adb" >&2; exit 1; }
 usb_config=${USB_CONFIG-mtp,adb}
+# The board's init.qcom.usb.rc matches whole compositions; mtp,adb is the one
+# seen working with ADB on a MIRROR. Empty leaves build.prop's default.
 case "$usb_config" in
-    "") ;;
-    *[!a-z0-9_,]*|*adb*[!a-z0-9_,]*) echo "USB_CONFIG=$usb_config is not a list of USB functions" >&2; exit 1 ;;
-    *adb*) ;;
-    *) echo "USB_CONFIG=$usb_config has no adb: ADB would not answer" >&2; exit 1 ;;
+    ""|mtp,adb) ;;
+    *) echo "USB_CONFIG=$usb_config: only mtp,adb (or empty) is known to bring ADB up" >&2; exit 1 ;;
 esac
 
 out=${3:-$root/images/userdata-$(date +%Y%m%d-%H%M%S).img}
