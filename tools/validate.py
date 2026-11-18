@@ -3618,6 +3618,19 @@ def check_device_inventory(ctx: Context) -> None:
             lambda: ctx.api.call("GET", "/api/v1/device/files?root=/firmware").status != 409,
             timeout=110,
         )
+        # The server must also let go of the connection, not just the lock.
+        stalled.sock.settimeout(30)
+        drained = 0
+        try:
+            while True:
+                chunk = reply.read(1024 * 1024)
+                if not chunk:
+                    break
+                drained += len(chunk)
+        except (OSError, http.client.IncompleteRead) as ended:
+            if isinstance(ended, TimeoutError):
+                raise CheckFailed("The server kept the stalled connection open") from None
+        ctx.note("stalledDrainedBytes", drained)
     finally:
         stalled.close()
 
