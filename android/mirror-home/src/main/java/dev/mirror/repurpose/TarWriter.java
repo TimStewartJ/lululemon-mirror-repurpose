@@ -14,6 +14,8 @@ final class TarWriter {
     static final char REGULAR = '0';
     static final char SYMLINK = '2';
     static final char DIRECTORY = '5';
+    /** The largest size an 11-digit octal size field holds, plus one: 8 GiB. */
+    static final long MAX_SIZE = 1L << 33;
     private static final char LONG_NAME = 'L';
     private static final char LONG_LINK = 'K';
     private static final Charset UTF8 = Charset.forName("UTF-8");

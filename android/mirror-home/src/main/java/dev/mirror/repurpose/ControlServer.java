@@ -1135,29 +1135,72 @@ public final class ControlServer extends NanoHTTPD {
         }
         // A kernel pipe: java.io's piped streams hand bytes over one at a time on Android.
         java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
-        final java.io.OutputStream sink = new java.io.BufferedOutputStream(
-                new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]), 256 * 1024);
+        final java.util.concurrent.atomic.AtomicLong moved = new java.util.concurrent.atomic.AtomicLong();
+        final java.io.OutputStream pipeOut = new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]);
+        final java.io.OutputStream sink = new java.io.BufferedOutputStream(new java.io.FilterOutputStream(pipeOut) {
+            @Override
+            public void write(byte[] buffer, int offset, int length) throws IOException {
+                out.write(buffer, offset, length);
+                moved.addAndGet(length);
+            }
+        }, 256 * 1024);
+        final java.io.InputStream source = input;
+        final Thread[] holder = new Thread[1];
+        // A client that stops reading would otherwise hold the transfer for good:
+        // after a minute without progress both ends of the pipe are closed.
+        Thread watchdog = new Thread(() -> {
+            long last = -1;
+            long stalledSince = android.os.SystemClock.elapsedRealtime();
+            while (holder[0] != null && holder[0].isAlive()) {
+                long now = android.os.SystemClock.elapsedRealtime();
+                long seen = moved.get();
+                if (seen != last) {
+                    last = seen;
+                    stalledSince = now;
+                } else if (now - stalledSince > 60_000L) {
+                    android.util.Log.w("ControlServer", "Sending " + root + " stalled; ending it");
+                    closeQuietly(source);
+                    closeQuietly(pipeOut);
+                    holder[0].interrupt();
+                    return;
+                }
+                try {
+                    Thread.sleep(5_000L);
+                } catch (InterruptedException stop) {
+                    return;
+                }
+            }
+        }, "device-files-watchdog");
         Thread writer = new Thread(() -> {
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
             try {
                 new DeviceInventory(context).writeFiles(root, sink);
-            } catch (IOException | JSONException error) {
+            } catch (IOException | JSONException | RuntimeException error) {
                 android.util.Log.w("ControlServer", "Sending " + root + " ended: " + error.getMessage());
             } finally {
-                try {
-                    sink.close();
-                } catch (IOException ignored) {
-                    // The reader has gone.
-                }
+                closeQuietly(sink);
+                closeQuietly(pipeOut);
                 DeviceInventory.endSending();
             }
         }, "device-files");
+        holder[0] = writer;
+        writer.setUncaughtExceptionHandler((thread, error) -> DeviceInventory.endSending());
         writer.start();
+        watchdog.setDaemon(true);
+        watchdog.start();
         Response result = newChunkedResponse(Response.Status.OK, "application/x-tar", input);
         result.addHeader("Cache-Control", "no-store");
         result.addHeader("Content-Disposition",
                 "attachment; filename=\"" + root.substring(1) + ".tar\"");
         return result;
+    }
+
+    private static void closeQuietly(java.io.Closeable stream) {
+        try {
+            stream.close();
+        } catch (IOException ignored) {
+            // Already closed, or the other end has gone.
+        }
     }
 
     private Response logCopy(String name) {
