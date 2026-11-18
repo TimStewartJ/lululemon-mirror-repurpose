@@ -1,0 +1,22 @@
+{
+  "schema": "mirror-board-profile/1",
+  "id": "msm8916-g52cbf28",
+  "title": "MSM8916, kernel 3.10.49-perf-g52cbf28",
+  "evidence": "observed",
+  "sources": [
+    "tools/identify.py --mirror on the project's own unit, 2026-11-17"
+  ],
+  "board": {
+    "labels": [],
+    "soc": "Qualcomm APQ8016 / MSM8916"
+  },
+  "match": {
+    "kernelRelease": "3.10.49-perf-g52cbf28",
+    "platform": "msm8916"
+  },
+  "mirrorOsVersions": [
+    "1.5.1"
+  ],
+  "install": null,
+  "notes": "The project's own unit: MirrorOS 1.5.1, fingerprint mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329, kernel built 2019-06-25. Printed board label not recorded. SELinux enforcing. Its readable /system was copied privately for building Silvering."
+}

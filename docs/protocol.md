@@ -150,6 +150,20 @@ takes `{value}` from 1 to 255 and succeeds whichever applies.
 `vendor` when the factory service took it too, `local` when only Mirror Home
 keeps it. `status.mirrorBinderConnected` remains for older clients.
 
+`GET /api/v1/device/inventory` describes the unit from inside, for a unit
+whose ADB is not at hand: `properties` (Android's `ro.*` properties, none
+with "serial" in its name), `kernel` (`release`, `version`), `selinux`
+(`enforcing`, `permissive` or `null`), `partitions` (name and size, where
+the app may read the by-name links; often empty under SELinux), `mounts`,
+`packages` (factory and Mirror packages) and `fileRoots`.
+`GET /api/v1/device/files?root=/system` (or `/firmware`, where listed in
+`fileRoots`) streams a tar of every file, folder and link the app may read,
+ending with `MIRROR-FILES.json`: counts, bytes and each path `skipped` with
+its reason. Any other root answers 400; a second transfer while one runs
+answers 409. Both need a paired client and only read.
+`python tools/identify.py --mirror CONFIG` turns the inventory into the
+device report.
+
 `GET /api/v1/journal` returns what Mirror Home wrote down of what happened,
 which a restart of the Mirror does not erase; see
 [Afterwards: the journal](user-guide.md#afterwards-the-journal). `events`

@@ -39,7 +39,9 @@ installation yet.**
 
 It reads the unit over ADB (or, in fastboot, what the bootloader answers to
 `getvar all`) and changes nothing: no reboot, write, install or
-authorization. The board label is printed on the board and cannot be read by
+authorization. A unit with Mirror Home on Wi-Fi can be read without USB:
+`python tools\identify.py --mirror .secrets\mirror-background-video.json`
+(any JSON file with `host`, `port` and a paired client's `token`). The board label is printed on the board and cannot be read by
 software, so give it if you know it. The report names the profile the unit
 matches by its kernel release, and holds no serial number, network name, key
 or account, so it can be attached to an issue.
