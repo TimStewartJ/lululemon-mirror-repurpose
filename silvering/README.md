@@ -37,11 +37,28 @@ Every project is fetched shallow at its pinned commit (about 25 GB).
 ## Build
 
 ```sh
-./build.sh                    # msm8916_64-userdebug, goal systemimage
+./build.sh                    # silvering-userdebug, goal systemimage
 ./build.sh <lunch target> <make goals...>
 ```
+
+Signed `MirrorHome.apk` and `MirrorUpdater.apk` in `~/silvering/apps/` are
+built into the image; `msm8916_64-userdebug` builds Qualcomm's plain product
+for comparison.
 
 The build runs in an Ubuntu 14.04 container (OpenJDK 7, make 3.81, Python 2.7,
 as Android 6 requires), capped by default at 6 CPUs and 24 GB of memory with a
 low CPU weight, so other services on the host keep running. `CPUS`, `MEMORY`
 and `JOBS` change the caps. Logs go to `~/silvering/logs/`.
+
+## The board's own files
+
+```sh
+./unit-files.py system.tar ~/silvering/src/out/target/product/msm8916_64/system \
+    ~/silvering/src/vendor/mirror/unit
+```
+
+compares a copy of a unit's `/system` (Mirror Home's device-files transfer
+writes it) with a build's output and writes `vendor/mirror/unit/`, which the
+next build copies into the image: the Qualcomm files the build cannot make,
+the unit's kernel modules (they must match its kernel) and its hardware
+configuration where it differs. Keep that folder private.
