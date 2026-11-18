@@ -101,6 +101,24 @@ public final class ControlServer extends NanoHTTPD {
                 && !uri.startsWith("/api/v1/background-videos/upload/");
     }
 
+    /** The socket of the request this thread serves, so a stalled transfer can be cut off. */
+    private static final ThreadLocal<java.net.Socket> CLIENT_SOCKET = new ThreadLocal<>();
+
+    @Override
+    protected ClientHandler createClientHandler(final java.net.Socket socket, java.io.InputStream input) {
+        return new ClientHandler(input, socket) {
+            @Override
+            public void run() {
+                CLIENT_SOCKET.set(socket);
+                try {
+                    super.run();
+                } finally {
+                    CLIENT_SOCKET.remove();
+                }
+            }
+        };
+    }
+
     private Response route(IHTTPSession session) {
         if (Method.OPTIONS.equals(session.getMethod())) {
             return error(Response.Status.METHOD_NOT_ALLOWED, "Cross-origin requests are disabled");
@@ -1136,22 +1154,39 @@ public final class ControlServer extends NanoHTTPD {
         // A kernel pipe: java.io's piped streams hand bytes over one at a time on Android.
         java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
         final java.util.concurrent.atomic.AtomicLong moved = new java.util.concurrent.atomic.AtomicLong();
+        final java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean();
         final java.io.OutputStream pipeOut = new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]);
-        final java.io.OutputStream sink = new java.io.BufferedOutputStream(new java.io.FilterOutputStream(pipeOut) {
-            @Override
-            public void write(byte[] buffer, int offset, int length) throws IOException {
-                out.write(buffer, offset, length);
-                moved.addAndGet(length);
-            }
-        }, 256 * 1024);
+        final java.io.OutputStream sink = new java.io.BufferedOutputStream(pipeOut, 256 * 1024);
         final java.io.InputStream source = input;
+        // Progress is what the server has taken from the pipe to send: it reads a
+        // few kilobytes at a time, and only once the client has taken the last.
+        final java.io.InputStream counted = new java.io.FilterInputStream(source) {
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException {
+                int count = super.read(buffer, offset, length);
+                if (count < 0) {
+                    finished.set(true);
+                } else {
+                    moved.addAndGet(count);
+                }
+                return count;
+            }
+
+            @Override
+            public void close() throws IOException {
+                finished.set(true);
+                super.close();
+            }
+        };
+        final java.net.Socket client = CLIENT_SOCKET.get();
         final Thread[] holder = new Thread[1];
-        // A client that stops reading would otherwise hold the transfer for good:
-        // after a minute without progress both ends of the pipe are closed.
+        // A client that stops reading would otherwise hold the transfer, a server
+        // thread and its socket for good: after a minute without progress the
+        // socket and both ends of the pipe are closed.
         Thread watchdog = new Thread(() -> {
             long last = -1;
             long stalledSince = android.os.SystemClock.elapsedRealtime();
-            while (holder[0] != null && holder[0].isAlive()) {
+            while (!finished.get()) {
                 long now = android.os.SystemClock.elapsedRealtime();
                 long seen = moved.get();
                 if (seen != last) {
@@ -1159,9 +1194,14 @@ public final class ControlServer extends NanoHTTPD {
                     stalledSince = now;
                 } else if (now - stalledSince > 60_000L) {
                     android.util.Log.w("ControlServer", "Sending " + root + " stalled; ending it");
+                    if (client != null) {
+                        closeQuietly(client);
+                    }
                     closeQuietly(source);
                     closeQuietly(pipeOut);
-                    holder[0].interrupt();
+                    if (holder[0] != null) {
+                        holder[0].interrupt();
+                    }
                     return;
                 }
                 try {
@@ -1188,7 +1228,7 @@ public final class ControlServer extends NanoHTTPD {
         writer.start();
         watchdog.setDaemon(true);
         watchdog.start();
-        Response result = newChunkedResponse(Response.Status.OK, "application/x-tar", input);
+        Response result = newChunkedResponse(Response.Status.OK, "application/x-tar", counted);
         result.addHeader("Cache-Control", "no-store");
         result.addHeader("Content-Disposition",
                 "attachment; filename=\"" + root.substring(1) + ".tar\"");
