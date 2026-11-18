@@ -107,11 +107,14 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    fastboot -s <serial> flash system system.img
    ```
 
-   - Refused before anything was sent to the partition (for example
-     `FAILED (remote: ...)` on the first `Writing` step of a locked
-     bootloader): the unit is unchanged; `fastboot reboot` and **Stop**.
-   - Failed or cut off after writing began: `system` is in an unknown state.
-     Stay in fastboot, do not reboot, and flash a corrected `system`.
+   - Refused by the bootloader's policy before any data is written (CAF LK
+     answers `FAILED (remote: 'Partition flashing is not allowed')` and
+     similar `not allowed` messages), and no earlier flash succeeded: the unit
+     is unchanged; `fastboot reboot` and **Stop**.
+   - Any other failure, a cut-off transfer, or an answer that is not clear:
+     `system` is in an unknown state, because the bootloader writes the image
+     chunk by chunk. Stay in fastboot, do not reboot, and flash a corrected
+     `system`.
 
    Then, only after `system` succeeded:
 
@@ -119,7 +122,8 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    fastboot -s <serial> flash userdata userdata.img
    ```
 
-   If this fails, stay in fastboot and flash `userdata` again; do not reboot
+   If this fails for any reason, the unit is no longer unchanged: stay in
+   fastboot and flash `userdata` again (or a corrected one); do not reboot
    until it has succeeded. Then `fastboot -s <serial> reboot`.
 
    Never `flash boot`, `aboot`, `recovery`, `erase`, `format`, `-w` or `oem`.
