@@ -48,6 +48,7 @@ match the board's kernel, which is what [board profiles](profiles/README.md)
 record. **It does not exist yet**: no image has been built or accepted, so
 no unit can install it today. [OS replacement](docs/os-replacement.md)
 describes a different, blocked idea (a new kernel or Linux), not Silvering.
+Its build recipe, in progress, is in [silvering/](silvering/README.md).
 **MirrorOS** is the factory firmware a unit came with; `identify.py`
 reports its version as `android.mirrorOsVersion`.
 
