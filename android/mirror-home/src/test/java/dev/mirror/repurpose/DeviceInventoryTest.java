@@ -53,9 +53,14 @@ public final class DeviceInventoryTest {
     public void propertiesLeaveOutSerialsAndKeepOnlyReadOnlyOnes() throws Exception {
         JSONObject properties = DeviceInventory.properties(
                 "[ro.board.platform]: [msm8916]\n[ro.serialno]: [bebf077]\n"
-                        + "[ro.boot.serialno]: [bebf077]\n[persist.sys.timezone]: [UTC]\n");
+                        + "[ro.boot.serialno]: [bebf077]\n[persist.sys.timezone]: [UTC]\n"
+                        + "[ro.boot.mac]: [00:11:22:33:44:55]\n[ro.boot.wifimacaddr]: [00:11:22:33:44:56]\n"
+                        + "[ro.build.fingerprint]: [mirror/x]\n[ro.vendor.custom.id]: [owner-thing]\n");
         assertEquals("msm8916", properties.getString("ro.board.platform"));
+        assertEquals("mirror/x", properties.getString("ro.build.fingerprint"));
         assertFalse(properties.toString().contains("bebf077"));
+        assertFalse(properties.toString().contains("00:11:22"));
+        assertFalse(properties.has("ro.vendor.custom.id"));
         assertFalse(properties.has("persist.sys.timezone"));
     }
 

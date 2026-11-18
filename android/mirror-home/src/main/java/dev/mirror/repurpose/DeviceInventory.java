@@ -141,6 +141,10 @@ final class DeviceInventory {
             manifest.skip(path, "not a regular file");
             return;
         }
+        if (stat.st_size >= TarWriter.MAX_SIZE) {
+            manifest.skip(path, "larger than a tar entry can hold");
+            return;
+        }
         InputStream input;
         try {
             input = new FileInputStream(file);
@@ -181,18 +185,40 @@ final class DeviceInventory {
         }
     }
 
+    /** Property families that describe the build and board; everything else is left out. */
+    private static final String[] PROPERTY_PREFIXES = {
+            "ro.build.", "ro.product.", "ro.board.", "ro.bootimage.build.", "ro.hardware",
+            "ro.boot.hardware", "ro.boot.baseband", "ro.boot.bootdevice", "ro.boot.emmc",
+            "ro.boot.selinux", "ro.boot.authorized_kernel", "ro.baseband", "ro.revision",
+    };
+    /** Never sent even within those families: what could tell one unit or owner from another. */
+    private static final Pattern IDENTIFYING = Pattern.compile(
+            "serial|mac|addr|imei|meid|ssid|bdaddr|uuid|cid|android_id", Pattern.CASE_INSENSITIVE);
+
     static JSONObject properties(String getprop) throws JSONException {
         JSONObject result = new JSONObject();
         for (String line : getprop.split("\n")) {
             Matcher match = PROPERTY.matcher(line);
             if (match.matches()) {
                 String name = match.group(1);
-                if (name.startsWith("ro.") && !name.contains("serial")) {
+                if (describesTheBuild(name)) {
                     result.put(name, match.group(2));
                 }
             }
         }
         return result;
+    }
+
+    static boolean describesTheBuild(String name) {
+        if (IDENTIFYING.matcher(name).find()) {
+            return false;
+        }
+        for (String prefix : PROPERTY_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static JSONArray partitions(String procPartitions, Map<String, String> byName) throws JSONException {

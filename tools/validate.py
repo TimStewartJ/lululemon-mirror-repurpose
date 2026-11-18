@@ -3603,6 +3603,24 @@ def check_device_inventory(ctx: Context) -> None:
         timeout=10,
     )
 
+    # A client that stops reading must not hold the transfer for good.
+    stalled = http.client.HTTPConnection(ctx.api.host, ctx.api.port, timeout=120)
+    try:
+        stalled.request("GET", "/api/v1/device/files?root=/system",
+                        headers={"Authorization": "Bearer " + ctx.api.token})
+        reply = stalled.getresponse()
+        require(reply.status == 200, f"/system answered {reply.status}")
+        reply.read(64 * 1024)
+        require(ctx.api.call("GET", "/api/v1/device/files?root=/system").status == 409,
+                "A second transfer was not refused while the first was open")
+        wait_for(
+            "a stalled transfer to be ended",
+            lambda: ctx.api.call("GET", "/api/v1/device/files?root=/firmware").status != 409,
+            timeout=110,
+        )
+    finally:
+        stalled.close()
+
 
 EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("install", "Mirror Home installs and its API answers", check_install, False),
