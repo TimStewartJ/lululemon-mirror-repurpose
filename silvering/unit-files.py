@@ -126,9 +126,11 @@ def read_transfer_report(tar):
 
 def extract(tar, built_system, files_dir):
     damaged, unread = read_transfer_report(tar)
-    taken, symlinks, counts = [], [], {}
+    taken, symlinks, counts, folders = [], [], {}, {}
     for m in tar:
         rel = system_path(m.name)
+        if rel and m.isdir():
+            folders[rel] = [m.mode & 0o7777, m.uid, m.gid]
         if not rel or m.isdir():
             continue
         built = os.path.join(built_system, rel)
@@ -161,7 +163,17 @@ def extract(tar, built_system, files_dir):
         taken.append((rel, reason, [m.mode & 0o7777, m.uid, m.gid]))
     if not any(why == "kernel-module" and p.endswith(".ko") for p, why, _ in taken):
         raise Refused("no kernel modules (.ko) in the unit's /system")
-    return taken, symlinks, counts, unread
+    # Folders the build does not have keep the unit's owners and modes.
+    folder_meta = {}
+    for rel in [p for p, _, _ in taken] + [p for p, _ in symlinks]:
+        parts = rel.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            folder = "/".join(parts[:i])
+            if not os.path.isdir(os.path.join(built_system, folder)):
+                if folder not in folders:
+                    raise Refused(f"the transfer has no entry for the folder {folder}")
+                folder_meta[folder] = folders[folder]
+    return taken, symlinks, counts, unread, folder_meta
 
 
 def inside_git_checkout(path):
@@ -199,7 +211,7 @@ def main(argv=None):
         return refuse(str(e))
     try:
         with tarfile.open(args.system_tar) as tar:
-            taken, symlinks, counts, unread = extract(tar, args.built_system, work)
+            taken, symlinks, counts, unread, folder_meta = extract(tar, args.built_system, work)
         if unread and not args.allow_unread:
             raise Refused(f"the transfer could not read {len(unread)} files, for example "
                           f"{unread[0][0]} ({unread[0][1]}); they will be missing from the "
@@ -219,6 +231,7 @@ def main(argv=None):
                "taken": len(taken), "counts": counts, "unread": unread,
                "modules": "replace",
                "meta": {rel: meta for rel, _, meta in taken},
+               "folderMeta": folder_meta,
                "links": [[rel, target] for rel, target in sorted(symlinks)],
                "byReason": {r: sorted(p for p, why, _ in taken if why == r)
                             for r in ("kernel-module", "config", "missing")}}

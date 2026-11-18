@@ -25,12 +25,9 @@ python "$here/stage.py" stage "$unit" "$OUT/system" "$stage/system"
 # Owners and modes: fs_config's defaults for the whole tree, with the unit's
 # own for its files.
 ( cd "$stage" && find system -mindepth 1 \( -type d -printf '%p/\n' \) -o -printf '%p\n' ) | sort \
-    | { echo "system/"; cat; } | fs_config -C -D "$OUT" > "$stage/fs_config.defaults"
+    | { echo "system/"; cat; } | fs_config -C -D "$OUT/system" > "$stage/fs_config.defaults"
 python "$here/stage.py" fs-config "$unit" < "$stage/fs_config.defaults" > "$stage/fs_config.txt"
-cp "$info" "$stage/image_info.txt"
-echo "fs_config=$stage/fs_config.txt" >> "$stage/image_info.txt"
-build/tools/releasetools/build_image.py "$stage/system" "$stage/image_info.txt" \
-    "$stage/image/system.img" "$stage/system"
+python "$here/stage.py" build-image "$stage/system" "$info" "$stage/image/system.img" "$stage/fs_config.txt"
 
 # Read the image back. debugfs cannot dump the root folder itself, so the
 # root's entries are listed from the image and each is dumped on its own.
@@ -54,9 +51,8 @@ if ! diff -r --no-dereference -x lost+found "$stage/system" "$stage/check" > "$s
     tail -n 5 "$stage/rdump.log" >&2
     exit 1
 fi
-python -c 'import json, sys; [sys.stdout.write("stat \"/%s\"\n" % p) for p in sorted(json.load(open(sys.argv[1]))["meta"])]' \
-    "$unit/unit.json" > "$stage/stat.cmds"
-debugfs -f "$stage/stat.cmds" "$raw" 2>/dev/null | python "$here/stage.py" check-meta "$unit"
+python "$here/stage.py" check-commands "$unit" > "$stage/meta.cmds"
+debugfs -f "$stage/meta.cmds" "$raw" 2>/dev/null | python "$here/stage.py" check-meta "$unit"
 rm -f "$raw"
 
 mkdir -p "$dest"

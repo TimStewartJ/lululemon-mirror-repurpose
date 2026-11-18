@@ -45,8 +45,9 @@ class UnitFilesTest(unittest.TestCase):
     def setUp(self):
         self.tmp = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
 
-    def make_tar(self, unit, links=(), skipped=(), raw_names=()):
-        """unit: path -> bytes, or (bytes, mode, uid, gid)."""
+    def make_tar(self, unit, links=(), skipped=(), raw_names=(), folders=None):
+        """unit: path -> bytes, or (bytes, mode, uid, gid). Folders are
+        0755 root:root unless FOLDERS says otherwise."""
         path = self.tmp / "system.tar"
         report = {"schema": "mirror-files/1", "root": "/system",
                   "skipped": [{"path": p, "reason": r} for p, r in skipped]}
@@ -56,6 +57,13 @@ class UnitFilesTest(unittest.TestCase):
                 info.size, info.mode, info.uid, info.gid = len(data), mode, uid, gid
                 tar.addfile(info, io.BytesIO(data))
             add("MIRROR-FILES.json", json.dumps(report).encode())
+            parents = {"/".join(p.split("/")[:i]) for p in [*unit, *(r for r, _ in links)]
+                       for i in range(1, p.count("/") + 1)}
+            for rel in sorted(parents):
+                info = tarfile.TarInfo(f"system/{rel}")
+                info.type = tarfile.DIRTYPE
+                info.mode, info.uid, info.gid = (folders or {}).get(rel, (0o755, 0, 0))
+                tar.addfile(info)
             for rel, value in unit.items():
                 add(f"system/{rel}", *(value if isinstance(value, tuple) else (value,)))
             for name in raw_names:
@@ -89,6 +97,7 @@ class UnitFilesTest(unittest.TestCase):
         tar = self.make_tar(
             unit={
                 "vendor/lib/libqmi.so": b"blob",
+            "vendor/secret/key.bin": b"blob",
                 "bin/qmuxd": (b"daemon", 0o755, 0, 2000),
                 "bin/thermal-engine": b"short",
                 "lib/modules/pronto/pronto_wlan.ko": b"unit kernel",
@@ -107,6 +116,7 @@ class UnitFilesTest(unittest.TestCase):
             skipped=[("/system/bin/thermal-engine", "read ended early; padded with zeros"),
                      ("/system/bin/cnd", "lstat failed: EACCES (Permission denied)"),
                      ("/system/lost+found", "folder cannot be listed")],
+            folders={"vendor/secret": (0o750, 0, 1000)},
         )
         built = self.make_built({
             "lib/modules/pronto/pronto_wlan.ko": b"source kernel",
@@ -126,7 +136,7 @@ class UnitFilesTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.taken(out), ["bin/qmuxd", "etc/mixer_paths.xml",
                                            "lib/modules/pronto/pronto_wlan.ko",
-                                           "vendor/lib/libqmi.so"])
+                                           "vendor/lib/libqmi.so", "vendor/secret/key.bin"])
         summary = json.loads((out / "unit.json").read_text())
         # Module links are always kept: the whole module tree is replaced.
         # libfoo.so is a real file in the build, which wins.
@@ -134,6 +144,8 @@ class UnitFilesTest(unittest.TestCase):
             ["lib/modules/wlan.ko", "/system/lib/modules/pronto/pronto_wlan.ko"]])
         self.assertEqual([p for p, _ in summary["unread"]], ["/system/bin/thermal-engine", "/system/bin/cnd"])
         self.assertEqual(summary["meta"]["bin/qmuxd"], [0o755, 0, 2000])
+        # Folders the build lacks keep the unit's owner and mode.
+        self.assertEqual(summary["folderMeta"], {"vendor/secret": [0o750, 0, 1000]})
         self.assertEqual(summary["baseline"]["buildProp"], hashlib.sha256(BUILD_PROP).hexdigest())
 
     def test_refuses_unsafe_paths_and_keeps_the_previous_output(self):
@@ -178,12 +190,16 @@ class UnitFilesTest(unittest.TestCase):
         self.assertIn("system/bin/sh 0 2000 755 capabilities=0x0\n", out)
         code, _, err = run_stage("fs-config", unit, stdin="system 0 0 755\n")
         self.assertEqual(code, 1)
-        stat = ('debugfs:  stat "/vendor/bin/qmuxd"\n'
-                "Inode: 12   Type: regular    Mode:  0644   Flags: 0x0\n"
-                "User:     0   Group:     0   Size: 6\n")
-        code, _, err = run_stage("check-meta", unit, stdin=stat)
-        self.assertEqual(code, 1)
+        code, out, _ = run_stage("check-commands", unit)
+        self.assertEqual(out, 'ls -p "/vendor/bin"\n')
+        listing = ('debugfs:  ls -p "/vendor/bin"\n'
+                   "/11/040755/0/2000/./4096/\n"
+                   "/12/%s/0/2000/qmuxd/6/\n")
+        code, _, err = run_stage("check-meta", unit, stdin=listing % "104755")
+        self.assertEqual(code, 1)  # a setuid bit the unit does not have
         self.assertIn("vendor/bin/qmuxd: want 755 0:2000", err)
+        code, out, _ = run_stage("check-meta", unit, stdin=listing % "100755")
+        self.assertEqual(code, 0)
 
     @unittest.skipUnless(os.name == "posix", "needs symlinks")
     def test_stage_replaces_links_instead_of_writing_through_them(self):

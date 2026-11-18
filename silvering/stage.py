@@ -8,9 +8,14 @@
       itself, never written through, and no path may lead through a link.
   stage.py fs-config UNIT_DIR < DEFAULTS > FS_CONFIG
       Take fs_config's default owners and modes for the staged tree and give
-      the unit's files the owners and modes they have on the unit.
-  stage.py check-meta UNIT_DIR < DEBUGFS_STAT_OUTPUT
-      Check that the image gives the unit's files those owners and modes.
+      the unit's files, and its folders the build lacks, the owners and modes
+      they have on the unit.
+  stage.py build-image IN_DIR IMAGE_INFO OUT_FILE FS_CONFIG
+      Make system.img from IN_DIR with that complete owner and mode list.
+  stage.py check-commands UNIT_DIR > COMMANDS
+  stage.py check-meta UNIT_DIR < DEBUGFS_OUTPUT
+      Check that the image gives the unit's files and folders those owners
+      and modes.
 
 Runs in the build container, so it keeps to Python 2.7.
 """
@@ -135,49 +140,70 @@ def stage(unit, built, stage_dir):
     print("staged %d files and %d links over %s" % (len(present), len(links), built))
 
 
+def wanted(summary):
+    """Owners and modes the image must give, by path under /system."""
+    want = dict(summary.get("meta", {}))
+    want.update(summary.get("folderMeta", {}))
+    return want
+
+
 def fs_config(unit):
-    meta = load_unit(unit).get("meta", {})
+    want = wanted(load_unit(unit))
     seen = set()
     for line in sys.stdin:
         fields = line.split()
         if len(fields) >= 4 and fields[0].startswith("system/"):
-            rel = fields[0][len("system/"):]
-            if rel in meta:
-                mode, uid, gid = meta[rel]
+            rel = fields[0][len("system/"):].rstrip("/")
+            if rel in want:
+                mode, uid, gid = want[rel]
                 fields[1:4] = [str(uid), str(gid), "%o" % mode]
                 seen.add(rel)
         print(" ".join(fields))
-    missing = set(meta) - seen
+    missing = set(want) - seen
     if missing:
         fail("fs_config did not list %s" % sorted(missing)[:5])
 
 
+def build_image(in_dir, info, out_file, fs_config_file):
+    """build_image.py, but with fs_config set on the image's own properties:
+    the global ones it reads from INFO do not carry it over."""
+    sys.path.insert(0, os.path.join("build", "tools", "releasetools"))
+    import build_image as tool
+    props = tool.ImagePropFromGlobalDict(tool.LoadGlobalDict(info), "system")
+    props["fs_config"] = fs_config_file
+    if not tool.BuildImage(in_dir, props, out_file, in_dir):
+        fail("could not build %s from %s" % (out_file, in_dir))
+
+
+def check_commands(unit):
+    """debugfs commands listing the folders that hold the unit's entries."""
+    for parent in sorted(set(posixpath.dirname(p) for p in wanted(load_unit(unit)))):
+        print('ls -p "/%s"' % parent)
+
+
 def check_meta(unit):
-    meta = load_unit(unit).get("meta", {})
+    """Read `debugfs -f` output of check_commands: `ls -p` prints the full
+    mode, which `stat` cuts to its permission bits."""
+    want = wanted(load_unit(unit))
     found = {}
-    path = None
+    folder = None
     for line in sys.stdin:
-        command = re.match(r"debugfs:\s+stat\s+\"?/([^\"]+)\"?", line)
+        command = re.match(r'debugfs:\s+ls -p\s+"/([^"]*)"', line)
         if command:
-            path = command.group(1)
+            folder = command.group(1)
             continue
-        if path is None:
-            continue
-        mode = re.search(r"Mode:\s+(\d+)", line)
-        if mode:
-            found.setdefault(path, {})["mode"] = int(mode.group(1), 8) & 0o7777
-        owner = re.search(r"User:\s+(\d+)\s+Group:\s+(\d+)", line)
-        if owner:
-            found.setdefault(path, {})["owner"] = (int(owner.group(1)), int(owner.group(2)))
+        entry = re.match(r"^/(\d+)/(\d+)/(\d+)/(\d+)/([^/]+)/", line)
+        if entry and folder is not None:
+            rel = posixpath.join(folder, entry.group(5)) if folder else entry.group(5)
+            found[rel] = [int(entry.group(2), 8) & 0o7777, int(entry.group(3)), int(entry.group(4))]
     wrong = []
-    for rel, (mode, uid, gid) in sorted(meta.items()):
-        got = found.get(rel, {})
-        if got.get("mode") != mode or got.get("owner") != (uid, gid):
-            wrong.append("%s: want %o %d:%d, image has %s" % (rel, mode, uid, gid, got or "nothing"))
+    for rel, meta in sorted(want.items()):
+        if found.get(rel) != list(meta):
+            wrong.append("%s: want %o %d:%d, image has %s" % (rel, meta[0], meta[1], meta[2],
+                                                               found.get(rel, "nothing")))
     if wrong:
         fail("owners or modes differ in the image:\n  " + "\n  ".join(wrong[:20]))
-    print("owners and modes of %d unit files match" % len(meta))
-
+    print("owners and modes of %d unit entries match" % len(want))
 
 def main():
     args = sys.argv[1:]
@@ -185,6 +211,10 @@ def main():
         stage(*args[1:])
     elif len(args) == 2 and args[0] == "fs-config":
         fs_config(args[1])
+    elif len(args) == 5 and args[0] == "build-image":
+        build_image(*args[1:])
+    elif len(args) == 2 and args[0] == "check-commands":
+        check_commands(args[1])
     elif len(args) == 2 and args[0] == "check-meta":
         check_meta(args[1])
     else:
