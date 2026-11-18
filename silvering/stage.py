@@ -126,7 +126,7 @@ def stage(unit, built, stage_dir):
         dest = os.path.join(stage_dir, rel)
         clear(dest)
         shutil.copyfile(os.path.join(files, *rel.split("/")), dest)
-        os.chmod(dest, 0o644)
+        os.chmod(dest, 0o600)  # the image takes owners and modes from fs_config
 
     links = summary.get("links", [])
     for rel, target in links:
@@ -143,6 +143,7 @@ def stage(unit, built, stage_dir):
 def wanted(summary):
     """Owners and modes the image must give, by path under /system."""
     want = dict(summary.get("meta", {}))
+    want.update(summary.get("configMeta", {}))
     want.update(summary.get("folderMeta", {}))
     return want
 

@@ -8,6 +8,8 @@
 #
 # The build's own out/ is left as it was.
 set -euo pipefail
+# The stage and the image hold the unit's private files: owner only.
+umask 077
 
 unit=$1
 dest=$2
@@ -18,6 +20,9 @@ stage=$OUT/silvering-stage
 info=$OUT/obj/PACKAGING/systemimage_intermediates/system_image_info.txt
 [ -f "$info" ] || { echo "no $info: build the systemimage goal first" >&2; exit 1; }
 
+# debugfs restores read-only folder modes in its dump; make them removable.
+unlock() { [ -d "$1" ] && find "$1" -type d -exec chmod u+rwx {} + ; true; }
+unlock "$stage"
 rm -rf "$stage"
 mkdir -p "$stage/image" "$stage/check"
 python "$here/stage.py" stage "$unit" "$OUT/system" "$stage/system"
@@ -55,7 +60,9 @@ python "$here/stage.py" check-commands "$unit" > "$stage/meta.cmds"
 debugfs -f "$stage/meta.cmds" "$raw" 2>/dev/null | python "$here/stage.py" check-meta "$unit"
 rm -f "$raw"
 
+unlock "$stage/check"
 mkdir -p "$dest"
+chmod 600 "$stage/image/system.img"
 mv "$stage/image/system.img" "$dest/system.img"
 cp "$unit/unit.json" "$dest/unit.json"
 ( cd "$dest" && sha256sum system.img > system.img.sha256 )

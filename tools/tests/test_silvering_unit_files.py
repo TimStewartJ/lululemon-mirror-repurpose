@@ -146,6 +146,8 @@ class UnitFilesTest(unittest.TestCase):
         self.assertEqual(summary["meta"]["bin/qmuxd"], [0o755, 0, 2000])
         # Folders the build lacks keep the unit's owner and mode.
         self.assertEqual(summary["folderMeta"], {"vendor/secret": [0o750, 0, 1000]})
+        # A config with the build's bytes is not copied but keeps its owner and mode.
+        self.assertEqual(summary["configMeta"], {"etc/wifi/WCNSS_qcom_cfg.ini": [0o640, 0, 1010]})
         self.assertEqual(summary["baseline"]["buildProp"], hashlib.sha256(BUILD_PROP).hexdigest())
 
     def test_refuses_unsafe_paths_and_keeps_the_previous_output(self):
