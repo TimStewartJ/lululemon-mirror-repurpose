@@ -3627,18 +3627,23 @@ def check_device_inventory(ctx: Context) -> None:
         root_manifest["files"] + root_manifest["folders"] + root_manifest["links"] + 1 == len(names),
         f"The manifest of / does not count the archive's {len(names)} entries",
     )
-    crossed = [name for name in names if name.split("/")[0] in ("system", "proc", "sys", "data", "dev")]
-    require(not crossed, f"The ramdisk transfer crossed into other file systems: {crossed[:5]}")
     other = {entry["path"] for entry in root_manifest["skipped"] if entry["reason"] == "another file system"}
     require({"/system", "/proc"} <= other, f"Mounts not listed as other file systems: {sorted(other)}")
-    if default_prop is not None:
-        expected_prop = subprocess.run(
-            [str(ctx.adb.executable), "-s", ctx.adb.serial, "exec-out", "cat", "/default.prop"],
-            capture_output=True, timeout=60, check=True,
-        ).stdout
-        require(default_prop == expected_prop, "default.prop in the archive differs from the device's")
+    mounted = {path.lstrip("/") for path in other}
+    for line in ctx.adb.shell("cat", "/proc/mounts").splitlines():
+        fields = line.split()
+        if len(fields) > 1 and fields[1].count("/") == 1 and fields[1] != "/":
+            mounted.add(fields[1][1:])
+    crossed = [name for name in names if name.split("/")[0] in mounted]
+    require(not crossed, f"The ramdisk transfer crossed into other file systems: {crossed[:5]}")
+    require(default_prop is not None, "The ramdisk transfer has no default.prop")
+    require("adb_keys" not in names, "The ramdisk transfer sent adb_keys")
+    expected_prop = subprocess.run(
+        [str(ctx.adb.executable), "-s", ctx.adb.serial, "exec-out", "cat", "/default.prop"],
+        capture_output=True, timeout=60, check=True,
+    ).stdout
+    require(default_prop == expected_prop, "default.prop in the archive differs from the device's")
     ctx.note("ramdiskEntries", len(names) - 1)
-    ctx.note("ramdiskDefaultPropSent", default_prop is not None)
     ctx.note("ramdiskSkipped", len(root_manifest["skipped"]))
     # A finished transfer leaves nothing open behind it.
     def open_files() -> int:

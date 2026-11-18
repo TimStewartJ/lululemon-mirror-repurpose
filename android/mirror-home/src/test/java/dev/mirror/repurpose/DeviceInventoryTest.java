@@ -95,6 +95,8 @@ public final class DeviceInventoryTest {
                 "[ro.secure]: [1]\n[ro.debuggable]: [0]\n[ro.adb.secure]: [1]\n"
                         + "[ro.crypto.state]: [unencrypted]\n[partition.system.verified]: [2]\n"
                         + "[ro.boot.veritymode]: [enforcing]\n[persist.sys.usb.config]: [mtp,adb]\n"
+                        + "[ro.vold.forceencryption]: [0]\n[partition.data.guid]: [abc-123]\n"
+                        + "[sys.usb.configfs]: [0]\n[ro.crypto.fs_crypto_blkdev]: [/dev/block/dm-1]\n"
                         + "[ro.boot.serialno]: [bebf077]\n");
         assertEquals("1", properties.getString("ro.secure"));
         assertEquals("0", properties.getString("ro.debuggable"));
@@ -103,6 +105,10 @@ public final class DeviceInventoryTest {
         assertEquals("2", properties.getString("partition.system.verified"));
         assertEquals("enforcing", properties.getString("ro.boot.veritymode"));
         assertEquals("mtp,adb", properties.getString("persist.sys.usb.config"));
+        assertEquals("0", properties.getString("ro.vold.forceencryption"));
+        assertFalse(properties.has("partition.data.guid"));
+        assertFalse(properties.has("sys.usb.configfs"));
+        assertFalse(properties.has("ro.crypto.fs_crypto_blkdev"));
         assertFalse(properties.has("ro.boot.serialno"));
     }
 }
