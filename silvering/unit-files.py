@@ -126,7 +126,7 @@ def read_transfer_report(tar):
 
 def extract(tar, built_system, files_dir):
     damaged, unread = read_transfer_report(tar)
-    taken, symlinks, counts, folders = [], [], {}, {}
+    taken, symlinks, counts, folders, config_meta = [], [], {}, {}, {}
     for m in tar:
         rel = system_path(m.name)
         if rel and m.isdir():
@@ -149,7 +149,9 @@ def extract(tar, built_system, files_dir):
             continue
         take, reason = classify(rel, os.path.isfile(built) and not os.path.islink(built))
         if take and reason == "config" and same_content(m, tar, built):
+            # Same bytes, but the unit's owner and mode still apply.
             take, reason = False, "same"
+            config_meta[rel] = [m.mode & 0o7777, m.uid, m.gid]
         counts[reason] = counts.get(reason, 0) + 1
         if not take:
             continue
@@ -173,7 +175,7 @@ def extract(tar, built_system, files_dir):
                 if folder not in folders:
                     raise Refused(f"the transfer has no entry for the folder {folder}")
                 folder_meta[folder] = folders[folder]
-    return taken, symlinks, counts, unread, folder_meta
+    return taken, symlinks, counts, unread, folder_meta, config_meta
 
 
 def inside_git_checkout(path):
@@ -211,7 +213,8 @@ def main(argv=None):
         return refuse(str(e))
     try:
         with tarfile.open(args.system_tar) as tar:
-            taken, symlinks, counts, unread, folder_meta = extract(tar, args.built_system, work)
+            taken, symlinks, counts, unread, folder_meta, config_meta = extract(
+                tar, args.built_system, work)
         if unread and not args.allow_unread:
             raise Refused(f"the transfer could not read {len(unread)} files, for example "
                           f"{unread[0][0]} ({unread[0][1]}); they will be missing from the "
@@ -232,6 +235,7 @@ def main(argv=None):
                "modules": "replace",
                "meta": {rel: meta for rel, _, meta in taken},
                "folderMeta": folder_meta,
+               "configMeta": config_meta,
                "links": [[rel, target] for rel, target in sorted(symlinks)],
                "byReason": {r: sorted(p for p, why, _ in taken if why == r)
                             for r in ("kernel-module", "config", "missing")}}
