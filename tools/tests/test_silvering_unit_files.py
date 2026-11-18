@@ -102,7 +102,7 @@ class UnitFilesTest(unittest.TestCase):
                 "bin/thermal-engine": b"short",
                 "lib/modules/pronto/pronto_wlan.ko": b"unit kernel",
                 "etc/mixer_paths.xml": b"unit",
-                "etc/wifi/WCNSS_qcom_cfg.ini": b"same",
+                "etc/wifi/WCNSS_qcom_cfg.ini": (b"same", 0o640, 0, 1010),
                 "etc/hosts": b"factory",
                 "etc/security/mac_permissions.xml": b"factory keys",
                 "lib/libc.so": b"factory",
