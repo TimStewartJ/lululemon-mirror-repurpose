@@ -3632,9 +3632,10 @@ def check_device_inventory(ctx: Context) -> None:
     mounted = {path.lstrip("/") for path in other}
     for line in ctx.adb.shell("cat", "/proc/mounts").splitlines():
         fields = line.split()
-        if len(fields) > 1 and fields[1].count("/") == 1 and fields[1] != "/":
-            mounted.add(fields[1][1:])
-    crossed = [name for name in names if name.split("/")[0] in mounted]
+        if len(fields) > 1 and fields[1] != "/":
+            mounted.add(fields[1].lstrip("/"))
+    crossed = [name for name in names
+               if any(name.rstrip("/") == path or name.startswith(path + "/") for path in mounted)]
     require(not crossed, f"The ramdisk transfer crossed into other file systems: {crossed[:5]}")
     require(default_prop is not None, "The ramdisk transfer has no default.prop")
     require("adb_keys" not in names, "The ramdisk transfer sent adb_keys")
