@@ -5,7 +5,7 @@ FROM ubuntu:14.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bc bison build-essential ca-certificates ccache curl flex g++-multilib \
-        gcc-multilib git gnupg gperf lib32ncurses5-dev lib32z-dev libc6-dev-i386 \
+        gcc-multilib genisoimage git gnupg gperf lib32ncurses5-dev lib32z-dev libc6-dev-i386 \
         libgl1-mesa-dev libx11-dev libxml2-utils openjdk-7-jdk python rsync \
         unzip x11proto-core-dev xsltproc zip zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
