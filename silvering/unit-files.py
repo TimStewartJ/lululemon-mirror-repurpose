@@ -165,16 +165,16 @@ def extract(tar, built_system, files_dir):
         taken.append((rel, reason, [m.mode & 0o7777, m.uid, m.gid]))
     if not any(why == "kernel-module" and p.endswith(".ko") for p, why, _ in taken):
         raise Refused("no kernel modules (.ko) in the unit's /system")
-    # Folders the build does not have keep the unit's owners and modes.
+    # Every folder that holds a unit file or link keeps the unit's owner and
+    # mode, so a file never sits in a folder more open than on the unit.
     folder_meta = {}
     for rel in [p for p, _, _ in taken] + [p for p, _ in symlinks]:
         parts = rel.split("/")[:-1]
         for i in range(1, len(parts) + 1):
             folder = "/".join(parts[:i])
-            if not os.path.isdir(os.path.join(built_system, folder)):
-                if folder not in folders:
-                    raise Refused(f"the transfer has no entry for the folder {folder}")
-                folder_meta[folder] = folders[folder]
+            if folder not in folders:
+                raise Refused(f"the transfer has no entry for the folder {folder}")
+            folder_meta[folder] = folders[folder]
     return taken, symlinks, counts, unread, folder_meta, config_meta
 
 

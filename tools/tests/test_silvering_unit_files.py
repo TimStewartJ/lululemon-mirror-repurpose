@@ -144,8 +144,12 @@ class UnitFilesTest(unittest.TestCase):
             ["lib/modules/wlan.ko", "/system/lib/modules/pronto/pronto_wlan.ko"]])
         self.assertEqual([p for p, _ in summary["unread"]], ["/system/bin/thermal-engine", "/system/bin/cnd"])
         self.assertEqual(summary["meta"]["bin/qmuxd"], [0o755, 0, 2000])
-        # Folders the build lacks keep the unit's owner and mode.
-        self.assertEqual(summary["folderMeta"], {"vendor/secret": [0o750, 0, 1000]})
+        # Every folder holding a unit file or link keeps the unit's owner and
+        # mode, also where the build has that folder.
+        self.assertEqual(sorted(summary["folderMeta"]), [
+            "bin", "etc", "lib", "lib/modules", "lib/modules/pronto",
+            "vendor", "vendor/lib", "vendor/secret"])
+        self.assertEqual(summary["folderMeta"]["vendor/secret"], [0o750, 0, 1000])
         # A config with the build's bytes is not copied but keeps its owner and mode.
         self.assertEqual(summary["configMeta"], {"etc/wifi/WCNSS_qcom_cfg.ini": [0o640, 0, 1010]})
         self.assertEqual(summary["baseline"]["buildProp"], hashlib.sha256(BUILD_PROP).hexdigest())

@@ -93,7 +93,7 @@ extra=()
 in_container() {
     docker run --rm --name silvering-build \
         --cpus "$cpus" --cpu-shares 256 --memory "$memory" --memory-swap "$memory" \
-        -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" "${extra[@]}" \
+        -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" ${extra[@]+"${extra[@]}"} \
         "$image" bash -c "
             set -e
             ccache -M 50G >/dev/null
@@ -118,7 +118,7 @@ if [ -n "$system_tar" ]; then
     overlay=$root/overlays/$target
     allow=()
     if [ "${ALLOW_UNREAD:-}" = 1 ]; then allow=(--allow-unread); fi
-    python3 "$here/unit-files.py" "${allow[@]}" "$system_tar" "$product_out/system" "$overlay"
+    python3 "$here/unit-files.py" ${allow[@]+"${allow[@]}"} "$system_tar" "$product_out/system" "$overlay"
     extra=(-v "$overlay:/unit:ro" -v "$root/images:/images")
     in_container "bash /recipe/stage-image.sh /unit /images/$target-$(date +%Y%m%d-%H%M%S)"
 fi
