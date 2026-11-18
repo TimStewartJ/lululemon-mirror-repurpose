@@ -72,3 +72,11 @@ then lays the unit's files over a copy of the build's `/system`, gives them
 the owners and modes they have on the unit, makes `system.img` in
 `~/silvering/images/`, and checks that the image holds exactly that tree with
 those owners and modes. The overlay is kept in `~/silvering/overlays/`.
+
+## userdata and the first flash
+
+`userdata.sh <partition size> <adbkey.pub>` makes the userdata image a unit is
+first flashed with: an empty ext4 file system the size of the partition (less
+the 16 KiB footer the board's fstab reserves) holding only the owner's ADB
+key, labelled and owned as the board's init makes `/data/misc/adb`. The
+session itself is in [FIRST-FLASH.md](FIRST-FLASH.md).
