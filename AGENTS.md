@@ -24,6 +24,7 @@ what you were asked to, and ask the owner before anything in the last column.
 | Reads only | Changes the Mirror for a moment | Changes the Mirror: ask first |
 |---|---|---|
 | `python tools/identify.py --json` (works unauthorized and in fastboot) | `python tools/validate.py mirror --exercise` (sleeps and wakes it, sets brightness, puts things back) | `tools/mirrorctl.py install-home`, `rollback-home` |
+| `python tools/identify.py --mirror CONFIG --json` (over Wi-Fi through Mirror Home) | | |
 | `python tools/mirrorctl.py status` | `python tools/journal.py copy` (saves a copy of Android's log on the Mirror) | `tools/mirrorctl.py install-helper`, `restore-helper` (privileged) |
 | `python tools/validate.py mirror` | | `tools/otactl.py provision`, `recover-token`, `deprovision`, `push`, `rollback`, `grant-permission`, `revoke-permission` |
 | `python tools/otactl.py status`, `permissions` | | anything with `adb install`, `adb shell pm`, `settings put`, `fastboot flash` or `fastboot erase` |

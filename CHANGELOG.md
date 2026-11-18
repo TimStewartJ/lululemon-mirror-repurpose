@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Let Mirror Home describe its unit over Wi-Fi, for a unit whose ADB is not
+  at hand. `GET /api/v1/device/inventory` gives its kernel, Android
+  properties (without serial numbers), SELinux mode, mounts and packages,
+  and `GET /api/v1/device/files?root=/system` sends the system partition's
+  readable files as a tar with a list of what was left out.
+  `tools/identify.py --mirror CONFIG` writes the device report from it.
+  The project's own Mirror now has a board profile (`msm8916-g52cbf28`),
+  read this way.
+
 - Work without the Mirror's factory service. Mirror Home set the backlight
   and the Mirror's name only through `com.mirror.services`, so on a unit
   where that service is missing or does not answer (one owner reports it on
