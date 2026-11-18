@@ -1740,7 +1740,8 @@
         return 'Waiting for the microphone permission. Grant it from a computer: '
           + 'tools\\ota.ps1 grant-permission microphone --confirm';
       case 'listening':
-        return silent ? 'Listening, but the microphone delivers no sound.' : 'Listening for \u201cMirror\u201d.';
+        return silent ? 'Listening, but the microphone delivers no sound.'
+          : 'Listening for \u201c' + (voice.wakePhrase || (voiceReport && voiceReport.wakePhrase) || voice.wakeWord || 'hey mirror') + '\u201d.';
       case 'paused':
         return 'Paused while an update is installed. It starts again by itself.';
       case 'error':
