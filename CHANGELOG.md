@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Tell how the boot image guards the system it starts, read over Wi-Fi, so
+  that a rebuilt system can be checked against it before it is flashed. The
+  device inventory now includes `ro.secure`, `ro.debuggable`,
+  `ro.adb.secure`, `ro.crypto.*`, `partition.*` (verity) and the USB
+  configuration, and `GET /api/v1/device/files?root=/` sends the readable
+  files of the boot image's ramdisk (such as its SELinux file labels and
+  `default.prop`) without crossing into any other file system.
+
 - Let Mirror Home describe its unit over Wi-Fi, for a unit whose ADB is not
   at hand. `GET /api/v1/device/inventory` gives its kernel, Android
   properties (without serial numbers), SELinux mode, mounts and packages,

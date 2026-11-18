@@ -152,15 +152,20 @@ keeps it. `status.mirrorBinderConnected` remains for older clients.
 
 `GET /api/v1/device/inventory` describes the unit from inside, for a unit
 whose ADB is not at hand: `properties` (Android's build and board
-properties only, without anything that tells one unit from another, such as
+properties, and those that say how the boot image guards the system it starts:
+`ro.secure`, `ro.debuggable`, `ro.adb.secure`, `ro.crypto.*`, `partition.*`
+(set where verity checks a partition), `ro.boot.veritymode` and the USB
+configuration; never anything that tells one unit from another, such as
 serial numbers or MAC addresses), `kernel` (`release`, `version`), `selinux`
 (`enforcing`, `permissive` or `null`), `partitions` (name and size, where
 the app may read the by-name links; often empty under SELinux), `mounts`,
 `packages` (factory and Mirror packages) and `fileRoots`.
-`GET /api/v1/device/files?root=/system` (or `/firmware`, where listed in
-`fileRoots`) streams a tar of every file, folder and link the app may read,
-ending with `MIRROR-FILES.json`: counts, bytes and each path `skipped` with
-its reason. Any other root answers 400; a second transfer while one runs
+`GET /api/v1/device/files?root=/system` (or `/firmware`, or `/` for the boot
+image's ramdisk, where listed in `fileRoots`) streams a tar of every file,
+folder and link the app may read, ending with `MIRROR-FILES.json`: counts,
+bytes and each path `skipped` with its reason. `/` never crosses into another
+file system: mounts such as `/system`, `/data` and `/proc` are listed as
+skipped. Any other root answers 400; a second transfer while one runs
 answers 409, and a transfer that makes no progress for a minute is ended.
 Both need a paired client and only read.
 `python tools/identify.py --mirror CONFIG` turns the inventory into the

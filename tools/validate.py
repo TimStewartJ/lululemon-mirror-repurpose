@@ -3603,6 +3603,43 @@ def check_device_inventory(ctx: Context) -> None:
         timeout=10,
     )
 
+    # The ramdisk: files on the root file system only, never another mount.
+    require("/" in inventory["fileRoots"], f"File roots: {inventory['fileRoots']}")
+    connection = http.client.HTTPConnection(ctx.api.host, ctx.api.port, timeout=120)
+    try:
+        connection.request("GET", "/api/v1/device/files?root=/",
+                           headers={"Authorization": "Bearer " + ctx.api.token})
+        response = connection.getresponse()
+        require(response.status == 200, f"/ answered {response.status}")
+        names = []
+        root_manifest = default_prop = None
+        with tarfile.open(fileobj=response, mode="r|") as archive:
+            for member in archive:
+                names.append(member.name)
+                if member.name == "MIRROR-FILES.json":
+                    root_manifest = json.loads(archive.extractfile(member).read())
+                elif member.name == "default.prop":
+                    default_prop = archive.extractfile(member).read()
+    finally:
+        connection.close()
+    require(root_manifest and root_manifest["root"] == "/", f"Manifest: {describe(root_manifest)}")
+    require(
+        root_manifest["files"] + root_manifest["folders"] + root_manifest["links"] + 1 == len(names),
+        f"The manifest of / does not count the archive's {len(names)} entries",
+    )
+    crossed = [name for name in names if name.split("/")[0] in ("system", "proc", "sys", "data", "dev")]
+    require(not crossed, f"The ramdisk transfer crossed into other file systems: {crossed[:5]}")
+    other = {entry["path"] for entry in root_manifest["skipped"] if entry["reason"] == "another file system"}
+    require({"/system", "/proc"} <= other, f"Mounts not listed as other file systems: {sorted(other)}")
+    if default_prop is not None:
+        expected_prop = subprocess.run(
+            [str(ctx.adb.executable), "-s", ctx.adb.serial, "exec-out", "cat", "/default.prop"],
+            capture_output=True, timeout=60, check=True,
+        ).stdout
+        require(default_prop == expected_prop, "default.prop in the archive differs from the device's")
+    ctx.note("ramdiskEntries", len(names) - 1)
+    ctx.note("ramdiskDefaultPropSent", default_prop is not None)
+    ctx.note("ramdiskSkipped", len(root_manifest["skipped"]))
     # A finished transfer leaves nothing open behind it.
     def open_files() -> int:
         return ctx.health()["memory"]["openFiles"]

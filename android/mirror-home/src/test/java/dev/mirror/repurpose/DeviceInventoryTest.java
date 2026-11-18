@@ -79,11 +79,30 @@ public final class DeviceInventoryTest {
     }
 
     @Test
-    public void onlyTheSystemAndFirmwareMayBeFetched() {
+    public void onlyTheSystemFirmwareAndRamdiskMayBeFetched() {
         assertTrue(DeviceInventory.isFileRoot("/system"));
         assertTrue(DeviceInventory.isFileRoot("/firmware"));
+        assertTrue(DeviceInventory.isFileRoot("/"));
         assertFalse(DeviceInventory.isFileRoot("/data"));
         assertFalse(DeviceInventory.isFileRoot("/system/../data"));
+        assertFalse(DeviceInventory.isFileRoot("//"));
         assertFalse(DeviceInventory.isFileRoot(""));
+    }
+
+    @Test
+    public void bootGuardPropertiesAreReported() throws Exception {
+        JSONObject properties = DeviceInventory.properties(
+                "[ro.secure]: [1]\n[ro.debuggable]: [0]\n[ro.adb.secure]: [1]\n"
+                        + "[ro.crypto.state]: [unencrypted]\n[partition.system.verified]: [2]\n"
+                        + "[ro.boot.veritymode]: [enforcing]\n[persist.sys.usb.config]: [mtp,adb]\n"
+                        + "[ro.boot.serialno]: [bebf077]\n");
+        assertEquals("1", properties.getString("ro.secure"));
+        assertEquals("0", properties.getString("ro.debuggable"));
+        assertEquals("1", properties.getString("ro.adb.secure"));
+        assertEquals("unencrypted", properties.getString("ro.crypto.state"));
+        assertEquals("2", properties.getString("partition.system.verified"));
+        assertEquals("enforcing", properties.getString("ro.boot.veritymode"));
+        assertEquals("mtp,adb", properties.getString("persist.sys.usb.config"));
+        assertFalse(properties.has("ro.boot.serialno"));
     }
 }
