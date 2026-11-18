@@ -25,6 +25,10 @@ goals=${*:-systemimage}
 image=silvering-build:trusty
 
 [ -d "$root/src/.repo" ] || { echo "no sources in $root/src: run sync.sh first" >&2; exit 1; }
+# One build at a time per root: a second one would rewrite the product tree
+# under the first.
+exec 9>"$root/build.lock"
+flock -n 9 || { echo "another build is running in $root" >&2; exit 1; }
 # The sources, images and a unit's files hold Qualcomm's and the board maker's
 # files: keep them out of this checkout.
 checkout=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || true)
@@ -69,6 +73,8 @@ clean=
 if [ "$(cat "$stamp" 2>/dev/null)" != "$inputs" ]; then
     clean="make installclean"
 fi
+# Until this build succeeds, out/ may hold files of other inputs.
+rm -f "$stamp"
 
 unit_mount=()
 stage=

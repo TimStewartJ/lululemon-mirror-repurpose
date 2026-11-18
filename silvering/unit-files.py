@@ -34,6 +34,7 @@ import posixpath
 import shutil
 import sys
 import tarfile
+import tempfile
 
 SKIP_PREFIXES = (
     "app/", "priv-app/", "framework/", "vendor/app/", "vendor/framework/",
@@ -155,8 +156,8 @@ def extract(tar, built_system, files_dir):
             shutil.copyfileobj(src, out)
         os.chmod(dest, 0o644)
         taken.append((rel, reason))
-    if not any(why == "kernel-module" for _, why in taken):
-        raise Refused("no kernel modules in the unit's /system")
+    if not any(why == "kernel-module" and p.endswith(".ko") for p, why in taken):
+        raise Refused("no kernel modules (.ko) in the unit's /system")
     return taken, symlinks, counts, left_out
 
 
@@ -178,23 +179,25 @@ def main(argv=None):
     ap.add_argument("out_dir")
     args = ap.parse_args(argv)
 
+    def refuse(message):
+        print(f"unit-files: {message}", file=sys.stderr)
+        return 1
+
+    if inside_git_checkout(args.out_dir):
+        return refuse(f"{args.out_dir} is inside a git checkout; keep the unit's files out of it")
+    if not os.path.isfile(os.path.join(args.built_system, "build.prop")):
+        return refuse(f"{args.built_system} is not a built /system (no build.prop)")
     try:
-        if inside_git_checkout(args.out_dir):
-            raise Refused(f"{args.out_dir} is inside a git checkout; keep the unit's files out of it")
-        if not os.path.isfile(os.path.join(args.built_system, "build.prop")):
-            raise Refused(f"{args.built_system} is not a built /system (no build.prop)")
         os.makedirs(args.out_dir, exist_ok=True)
-        work = os.path.join(args.out_dir, "files.new")
-        if os.path.isdir(work):
-            shutil.rmtree(work)
-        os.makedirs(work)
+        work = tempfile.mkdtemp(prefix="files.new-", dir=args.out_dir)
+    except OSError as e:
+        return refuse(str(e))
+    try:
         with tarfile.open(args.system_tar) as tar:
             taken, symlinks, counts, left_out = extract(tar, args.built_system, work)
     except (Refused, OSError, tarfile.TarError, ValueError) as e:
-        print(f"unit-files: {e}", file=sys.stderr)
-        if os.path.isdir(os.path.join(args.out_dir, "files.new")):
-            shutil.rmtree(os.path.join(args.out_dir, "files.new"))
-        return 1
+        shutil.rmtree(work, ignore_errors=True)
+        return refuse(str(e))
 
     files_dir = os.path.join(args.out_dir, "files")
     if os.path.isdir(files_dir):
