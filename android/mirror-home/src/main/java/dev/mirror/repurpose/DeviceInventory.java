@@ -39,10 +39,12 @@ import java.util.regex.Pattern;
 final class DeviceInventory {
     /**
      * Folders whose files may be fetched; anything else is refused. {@code /} is
-     * the boot image's ramdisk: only what lies on the root file system itself,
-     * never another file system mounted in it.
+     * the boot image's ramdisk, the same on every unit of a firmware: only what
+     * lies on the root file system itself, never another file system mounted in it.
      */
     static final List<String> FILE_ROOTS = Arrays.asList("/system", "/firmware", "/");
+    /** Keys of computers allowed to use ADB: left out even where readable. */
+    private static final List<String> NEVER_SENT = Arrays.asList("/adb_keys");
     private static final String[] PACKAGE_PREFIXES = {"com.mirror.", "co.mirror.", "dev.mirror."};
     private static final Pattern PROPERTY = Pattern.compile("^\\[([^\\]]+)\\]: \\[(.*)\\]\\s*$");
     private static final Charset UTF8 = Charset.forName("UTF-8");
@@ -117,6 +119,10 @@ final class DeviceInventory {
             throws IOException {
         String path = file.getPath();
         String name = path.startsWith("/") ? path.substring(1) : path;
+        if (NEVER_SENT.contains(path)) {
+            manifest.skip(path, "never sent");
+            return;
+        }
         StructStat stat;
         try {
             stat = Os.lstat(path);
@@ -206,18 +212,20 @@ final class DeviceInventory {
         }
     }
 
-    /**
-     * Property families that describe the build and board, and how the boot image
-     * guards the system it starts (verity, encryption, ADB); everything else is left out.
-     */
+    /** Property families that describe the build and board; everything else is left out. */
     private static final String[] PROPERTY_PREFIXES = {
             "ro.build.", "ro.product.", "ro.board.", "ro.bootimage.build.", "ro.hardware",
             "ro.boot.hardware", "ro.boot.baseband", "ro.boot.bootdevice", "ro.boot.emmc",
             "ro.boot.selinux", "ro.boot.authorized_kernel", "ro.baseband", "ro.revision",
-            "ro.secure", "ro.debuggable", "ro.adb.secure", "ro.crypto.", "partition.",
-            "ro.boot.veritymode", "ro.boot.verifiedbootstate", "ro.boot.flash.locked",
-            "ro.oem_unlock_supported", "ro.zygote", "persist.sys.usb.config", "sys.usb.config",
     };
+    /** Single properties that say how the boot image guards the system it starts. */
+    private static final List<String> BOOT_GUARD_PROPERTIES = Arrays.asList(
+            "ro.secure", "ro.debuggable", "ro.adb.secure", "ro.crypto.state", "ro.crypto.type",
+            "ro.vold.forceencryption", "ro.boot.veritymode", "ro.boot.verifiedbootstate",
+            "ro.boot.flash.locked", "ro.oem_unlock_supported", "ro.zygote",
+            "persist.sys.usb.config", "sys.usb.config");
+    /** Set by Android 6's fs_mgr for a partition that dm-verity checks. */
+    private static final Pattern VERIFIED_PARTITION = Pattern.compile("^partition\\.[a-z0-9_]+\\.verified$");
     /** Never sent even within those families: what could tell one unit or owner from another. */
     private static final Pattern IDENTIFYING = Pattern.compile(
             "serial|mac|addr|imei|meid|ssid|bdaddr|uuid|cid|android_id", Pattern.CASE_INSENSITIVE);
@@ -239,6 +247,9 @@ final class DeviceInventory {
     static boolean describesTheBuild(String name) {
         if (IDENTIFYING.matcher(name).find()) {
             return false;
+        }
+        if (BOOT_GUARD_PROPERTIES.contains(name) || VERIFIED_PARTITION.matcher(name).matches()) {
+            return true;
         }
         for (String prefix : PROPERTY_PREFIXES) {
             if (name.startsWith(prefix)) {

@@ -5,7 +5,8 @@
 - Tell how the boot image guards the system it starts, read over Wi-Fi, so
   that a rebuilt system can be checked against it before it is flashed. The
   device inventory now includes `ro.secure`, `ro.debuggable`,
-  `ro.adb.secure`, `ro.crypto.*`, `partition.*` (verity) and the USB
+  `ro.adb.secure`, `ro.crypto.state`, `ro.vold.forceencryption`,
+  `partition.<name>.verified` (verity) and the USB
   configuration, and `GET /api/v1/device/files?root=/` sends the readable
   files of the boot image's ramdisk (such as its SELinux file labels and
   `default.prop`) without crossing into any other file system.
