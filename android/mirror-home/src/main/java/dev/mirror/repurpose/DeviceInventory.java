@@ -33,11 +33,16 @@ import java.util.regex.Pattern;
  * the same facts {@code tools/identify.py} reads over ADB, and the files of the
  * system partition that a rebuilt Android for this board is assembled from.
  * Everything here only reads; nothing personal is included (no serial number,
- * no user data: the roots are the read-only system and firmware partitions).
+ * no user data: the roots are the read-only system and firmware partitions and
+ * the boot image's ramdisk).
  */
 final class DeviceInventory {
-    /** Folders whose files may be fetched; anything else is refused. */
-    static final List<String> FILE_ROOTS = Arrays.asList("/system", "/firmware");
+    /**
+     * Folders whose files may be fetched; anything else is refused. {@code /} is
+     * the boot image's ramdisk: only what lies on the root file system itself,
+     * never another file system mounted in it.
+     */
+    static final List<String> FILE_ROOTS = Arrays.asList("/system", "/firmware", "/");
     private static final String[] PACKAGE_PREFIXES = {"com.mirror.", "co.mirror.", "dev.mirror."};
     private static final Pattern PROPERTY = Pattern.compile("^\\[([^\\]]+)\\]: \\[(.*)\\]\\s*$");
     private static final Charset UTF8 = Charset.forName("UTF-8");
@@ -90,7 +95,15 @@ final class DeviceInventory {
     void writeFiles(String root, OutputStream out) throws IOException, JSONException {
         TarWriter tar = new TarWriter(out);
         Manifest manifest = new Manifest(root);
-        walk(new File(root), tar, manifest, new byte[64 * 1024]);
+        long device = -1;
+        if ("/".equals(root)) {
+            try {
+                device = Os.lstat(root).st_dev;
+            } catch (ErrnoException error) {
+                throw new IOException(error.getMessage(), error);
+            }
+        }
+        walk(new File(root), tar, manifest, new byte[64 * 1024], device);
         byte[] json = manifest.toJson().toString(1).getBytes(UTF8);
         tar.header("MIRROR-FILES.json", TarWriter.REGULAR, 0644, 0, 0, json.length,
                 System.currentTimeMillis() / 1000L, null);
@@ -99,7 +112,9 @@ final class DeviceInventory {
         tar.finish();
     }
 
-    private void walk(File file, TarWriter tar, Manifest manifest, byte[] buffer) throws IOException {
+    /** {@code device}: when not -1, entries on any other file system are left out. */
+    private void walk(File file, TarWriter tar, Manifest manifest, byte[] buffer, long device)
+            throws IOException {
         String path = file.getPath();
         String name = path.startsWith("/") ? path.substring(1) : path;
         StructStat stat;
@@ -107,6 +122,10 @@ final class DeviceInventory {
             stat = Os.lstat(path);
         } catch (ErrnoException error) {
             manifest.skip(path, error.getMessage());
+            return;
+        }
+        if (device != -1 && stat.st_dev != device) {
+            manifest.skip(path, "another file system");
             return;
         }
         if (OsConstants.S_ISLNK(stat.st_mode)) {
@@ -128,12 +147,14 @@ final class DeviceInventory {
                 manifest.skip(path, "folder cannot be listed");
                 return;
             }
-            tar.header(name + "/", TarWriter.DIRECTORY, stat.st_mode, stat.st_uid, stat.st_gid, 0,
-                    stat.st_mtime, null);
-            manifest.folders++;
+            if (!name.isEmpty()) {
+                tar.header(name + "/", TarWriter.DIRECTORY, stat.st_mode, stat.st_uid, stat.st_gid, 0,
+                        stat.st_mtime, null);
+                manifest.folders++;
+            }
             Arrays.sort(children);
             for (String child : children) {
-                walk(new File(file, child), tar, manifest, buffer);
+                walk(new File(file, child), tar, manifest, buffer, device);
             }
             return;
         }
@@ -185,11 +206,17 @@ final class DeviceInventory {
         }
     }
 
-    /** Property families that describe the build and board; everything else is left out. */
+    /**
+     * Property families that describe the build and board, and how the boot image
+     * guards the system it starts (verity, encryption, ADB); everything else is left out.
+     */
     private static final String[] PROPERTY_PREFIXES = {
             "ro.build.", "ro.product.", "ro.board.", "ro.bootimage.build.", "ro.hardware",
             "ro.boot.hardware", "ro.boot.baseband", "ro.boot.bootdevice", "ro.boot.emmc",
             "ro.boot.selinux", "ro.boot.authorized_kernel", "ro.baseband", "ro.revision",
+            "ro.secure", "ro.debuggable", "ro.adb.secure", "ro.crypto.", "partition.",
+            "ro.boot.veritymode", "ro.boot.verifiedbootstate", "ro.boot.flash.locked",
+            "ro.oem_unlock_supported", "ro.zygote", "persist.sys.usb.config", "sys.usb.config",
     };
     /** Never sent even within those families: what could tell one unit or owner from another. */
     private static final Pattern IDENTIFYING = Pattern.compile(
