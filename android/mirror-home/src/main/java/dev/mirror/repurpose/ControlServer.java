@@ -415,6 +415,12 @@ public final class ControlServer extends NanoHTTPD {
                     && "/api/v1/wifi/scan-guard".equals(uri)) {
                 return updateScanGuard(readJson(session));
             }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/device/inventory".equals(uri)) {
+                return response(Response.Status.OK, new DeviceInventory(context).snapshot());
+            }
+            if (Method.GET.equals(session.getMethod()) && "/api/v1/device/files".equals(uri)) {
+                return deviceFiles(parameter(session, "root"));
+            }
             if (Method.GET.equals(session.getMethod()) && "/api/v1/journal".equals(uri)) {
                 return journal(session);
             }
@@ -1109,6 +1115,49 @@ public final class ControlServer extends NanoHTTPD {
         }
         Journal.note(context, "log", "copied", new JSONObject(copy.toString()));
         return response(Response.Status.CREATED, copy);
+    }
+
+    /** A tar stream of one allowed folder, written by a background thread as it is read. */
+    private Response deviceFiles(String root) throws IOException {
+        if (!DeviceInventory.isFileRoot(root)) {
+            return error(Response.Status.BAD_REQUEST,
+                    "root must be one of " + DeviceInventory.FILE_ROOTS);
+        }
+        if (!DeviceInventory.beginSending()) {
+            return error(Response.Status.CONFLICT, "Files are being sent already");
+        }
+        android.os.ParcelFileDescriptor[] pipe;
+        try {
+            pipe = android.os.ParcelFileDescriptor.createPipe();
+        } catch (IOException error) {
+            DeviceInventory.endSending();
+            throw error;
+        }
+        // A kernel pipe: java.io's piped streams hand bytes over one at a time on Android.
+        java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
+        final java.io.OutputStream sink = new java.io.BufferedOutputStream(
+                new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]), 256 * 1024);
+        Thread writer = new Thread(() -> {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+            try {
+                new DeviceInventory(context).writeFiles(root, sink);
+            } catch (IOException | JSONException error) {
+                android.util.Log.w("ControlServer", "Sending " + root + " ended: " + error.getMessage());
+            } finally {
+                try {
+                    sink.close();
+                } catch (IOException ignored) {
+                    // The reader has gone.
+                }
+                DeviceInventory.endSending();
+            }
+        }, "device-files");
+        writer.start();
+        Response result = newChunkedResponse(Response.Status.OK, "application/x-tar", input);
+        result.addHeader("Cache-Control", "no-store");
+        result.addHeader("Content-Disposition",
+                "attachment; filename=\"" + root.substring(1) + ".tar\"");
+        return result;
     }
 
     private Response logCopy(String name) {

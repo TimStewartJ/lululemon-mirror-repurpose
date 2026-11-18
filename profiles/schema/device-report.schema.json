@@ -22,6 +22,10 @@
       "description": "android: ADB is authorized. android-unauthorized: ADB sees the unit but it has not trusted this computer. fastboot: the bootloader is waiting. none: nothing was found.",
       "enum": ["android", "android-unauthorized", "fastboot", "none"]
     },
+    "via": {
+      "description": "mirror-home when read over Wi-Fi through Mirror Home's API instead of ADB or fastboot.",
+      "enum": ["mirror-home"]
+    },
     "board": {
       "type": "object",
       "required": ["label"],
