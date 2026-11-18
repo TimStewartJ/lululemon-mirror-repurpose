@@ -3603,6 +3603,18 @@ def check_device_inventory(ctx: Context) -> None:
         timeout=10,
     )
 
+    # A finished transfer leaves nothing open behind it.
+    def open_files() -> int:
+        return ctx.health()["memory"]["openFiles"]
+
+    before = open_files()
+    for _ in range(3):
+        require(ctx.api.call("GET", "/api/v1/device/files?root=/firmware").status == 200, "/firmware was refused")
+    time.sleep(2)
+    after = open_files()
+    require(after <= before + 2, f"Three transfers left {after - before} more files open ({before} -> {after})")
+    ctx.note("openFilesAroundTransfers", [before, after])
+
     # A client that stops reading must not hold the transfer for good.
     stalled = http.client.HTTPConnection(ctx.api.host, ctx.api.port, timeout=120)
     try:
