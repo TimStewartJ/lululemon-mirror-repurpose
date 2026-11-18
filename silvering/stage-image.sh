@@ -24,12 +24,21 @@ python "$here/stage.py" "$unit" "$OUT/system" "$stage/system"
 build/tools/releasetools/build_image.py "$stage/system" "$info" "$stage/image/system.img" "$stage/system"
 
 # Read the image back and compare it with the staged tree. debugfs cannot dump
-# the root folder itself, so each top-level entry is dumped on its own.
+# the root folder itself, so the root's entries are listed from the image and
+# each is dumped on its own.
 raw=$stage/image/system.raw.img
 simg2img "$stage/image/system.img" "$raw" 2>/dev/null || cp "$stage/image/system.img" "$raw"
-for entry in $(ls -A "$stage/system"); do
-    echo "rdump /$entry $stage/check"
-done > "$stage/rdump.cmds"
+debugfs -R "ls -p /" "$raw" 2>/dev/null | awk -F/ 'NF >= 7 && $6 != "." && $6 != ".." && $6 != "lost+found" { print $6 }' \
+    | sort > "$stage/image-root.txt"
+( cd "$stage/system" && ls -A ) | sort > "$stage/stage-root.txt"
+if ! cmp -s "$stage/image-root.txt" "$stage/stage-root.txt"; then
+    echo "system.img's top level differs from the staged tree:" >&2
+    diff "$stage/stage-root.txt" "$stage/image-root.txt" >&2 || true
+    exit 1
+fi
+while IFS= read -r entry; do
+    printf 'rdump "/%s" "%s"\n' "$entry" "$stage/check"
+done < "$stage/image-root.txt" > "$stage/rdump.cmds"
 debugfs -f "$stage/rdump.cmds" "$raw" > "$stage/rdump.log" 2>&1 || true
 rm -f "$raw"
 if ! diff -r --no-dereference -x lost+found "$stage/system" "$stage/check" > "$stage/check.diff" 2>&1; then

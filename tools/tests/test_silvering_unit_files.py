@@ -130,7 +130,8 @@ class UnitFilesTest(unittest.TestCase):
         code, _, err = self.run_tool(tar, self.make_built({}))
         self.assertEqual(code, 1)
         self.assertIn("kernel modules were not all read", err)
-        code, _, err = self.run_tool(self.make_tar({"bin/qmuxd": b"d"}), self.make_built({}))
+        only_metadata = self.make_tar({"lib/modules/modules.dep": b"", "bin/qmuxd": b"d"})
+        code, _, err = self.run_tool(only_metadata, self.make_built({}))
         self.assertEqual(code, 1)
         self.assertIn("no kernel modules", err)
 
@@ -141,8 +142,12 @@ class UnitFilesTest(unittest.TestCase):
         unit = self.tmp / "unit"
         (unit / "files/lib").mkdir(parents=True)
         (unit / "files/lib/cfg").write_bytes(b"unit")
+        (unit / "files/lib/modules/pronto").mkdir(parents=True)
+        (unit / "files/lib/modules/pronto/pronto_wlan.ko").write_bytes(b"unit kernel")
         (unit / "unit.json").write_text(json.dumps({
             "schema": "silvering-unit/1", "modules": "replace",
+            "byReason": {"config": ["lib/cfg"],
+                         "kernel-module": ["lib/modules/pronto/pronto_wlan.ko"]},
             "links": [["lib/modules/wlan.ko", "/system/lib/modules/pronto/pronto_wlan.ko"]]}))
         staged = self.tmp / "stage"
         argv = sys.argv
@@ -157,8 +162,18 @@ class UnitFilesTest(unittest.TestCase):
         self.assertFalse((staged / "lib/cfg").is_symlink())
         self.assertEqual((staged / "lib/cfg").read_bytes(), b"unit")
         self.assertFalse((staged / "lib/modules/old.ko").exists())
+        self.assertEqual((staged / "lib/modules/pronto/pronto_wlan.ko").read_bytes(), b"unit kernel")
         self.assertEqual(os.readlink(staged / "lib/modules/wlan.ko"),
                          "/system/lib/modules/pronto/pronto_wlan.ko")
+
+        # A payload that does not match unit.json is refused before staging.
+        (unit / "files/lib/cfg").unlink()
+        sys.argv = ["stage.py", str(unit), str(built), str(staged)]
+        try:
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                stage.main()
+        finally:
+            sys.argv = argv
 
 
 if __name__ == "__main__":

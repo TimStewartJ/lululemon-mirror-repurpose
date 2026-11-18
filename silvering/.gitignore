@@ -9,5 +9,5 @@ device/apps/prebuilt/
 unit/
 files/
 images/
-files.new/
+files.new-*/
 silvering-stage/

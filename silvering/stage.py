@@ -59,28 +59,47 @@ def main():
     if not os.path.isfile(os.path.join(built, "build.prop")):
         fail("%s is not a built /system" % built)
 
+    # The payload must be exactly what unit.json lists, before anything of the
+    # build is removed.
+    files = os.path.join(unit, "files")
+    declared = set()
+    for paths in summary.get("byReason", {}).values():
+        declared.update(paths)
+    present = set()
+    if not os.path.isdir(files) or os.path.islink(files):
+        fail("%s has no files/ folder" % unit)
+    for folder, dirs, names in os.walk(files):
+        for name in dirs + names:
+            path = os.path.join(folder, name)
+            if os.path.islink(path):
+                fail("unexpected link in the unit's files: %s" % path)
+            if name in names and not os.path.isfile(path):
+                fail("not a regular file: %s" % path)
+        for name in names:
+            present.add(os.path.relpath(os.path.join(folder, name), files).replace(os.sep, "/"))
+    if present != declared:
+        fail("the unit's files do not match unit.json: missing %s, unexpected %s"
+             % (sorted(declared - present)[:5], sorted(present - declared)[:5]))
+    if summary.get("modules") == "replace" and not any(
+            p.startswith("lib/modules/") and p.endswith(".ko") for p in present):
+        fail("unit.json replaces the kernel modules but has none")
+
     if os.path.lexists(stage):
         shutil.rmtree(stage)
     shutil.copytree(built, stage, symlinks=True)
     if summary.get("modules") == "replace":
         clear(os.path.join(stage, "lib", "modules"))
 
-    files = os.path.join(unit, "files")
     count = 0
-    for folder, dirs, names in os.walk(files):
-        for name in dirs + names:
-            if os.path.islink(os.path.join(folder, name)):
-                fail("unexpected link in the unit's files: %s" % os.path.join(folder, name))
-        for name in names:
-            src = os.path.join(folder, name)
-            rel = os.path.relpath(src, files).replace(os.sep, "/")
-            check_rel(rel)
-            make_parents(stage, rel)
-            dest = os.path.join(stage, rel)
-            clear(dest)
-            shutil.copyfile(src, dest)
-            os.chmod(dest, 0o644)
-            count += 1
+    for rel in sorted(present):
+        src = os.path.join(files, *rel.split("/"))
+        check_rel(rel)
+        make_parents(stage, rel)
+        dest = os.path.join(stage, rel)
+        clear(dest)
+        shutil.copyfile(src, dest)
+        os.chmod(dest, 0o644)
+        count += 1
 
     for rel, target in summary.get("links", []):
         check_rel(rel)
