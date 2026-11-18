@@ -116,7 +116,7 @@ class UnitFilesTest(unittest.TestCase):
             skipped=[("/system/bin/thermal-engine", "read ended early; padded with zeros"),
                      ("/system/bin/cnd", "lstat failed: EACCES (Permission denied)"),
                      ("/system/lost+found", "folder cannot be listed")],
-            folders={"vendor/secret": (0o750, 0, 1000)},
+            folders={"vendor/secret": (0o750, 0, 1000), "etc/wifi": (0o750, 0, 1010)},
         )
         built = self.make_built({
             "lib/modules/pronto/pronto_wlan.ko": b"source kernel",
@@ -147,8 +147,9 @@ class UnitFilesTest(unittest.TestCase):
         # Every folder holding a unit file or link keeps the unit's owner and
         # mode, also where the build has that folder.
         self.assertEqual(sorted(summary["folderMeta"]), [
-            "bin", "etc", "lib", "lib/modules", "lib/modules/pronto",
+            "bin", "etc", "etc/wifi", "lib", "lib/modules", "lib/modules/pronto",
             "vendor", "vendor/lib", "vendor/secret"])
+        self.assertEqual(summary["folderMeta"]["etc/wifi"], [0o750, 0, 1010])
         self.assertEqual(summary["folderMeta"]["vendor/secret"], [0o750, 0, 1000])
         # A config with the build's bytes is not copied but keeps its owner and mode.
         self.assertEqual(summary["configMeta"], {"etc/wifi/WCNSS_qcom_cfg.ini": [0o640, 0, 1010]})

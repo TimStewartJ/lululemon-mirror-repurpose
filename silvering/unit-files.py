@@ -168,7 +168,7 @@ def extract(tar, built_system, files_dir):
     # Every folder that holds a unit file or link keeps the unit's owner and
     # mode, so a file never sits in a folder more open than on the unit.
     folder_meta = {}
-    for rel in [p for p, _, _ in taken] + [p for p, _ in symlinks]:
+    for rel in [p for p, _, _ in taken] + [p for p, _ in symlinks] + list(config_meta):
         parts = rel.split("/")[:-1]
         for i in range(1, len(parts) + 1):
             folder = "/".join(parts[:i])
