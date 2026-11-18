@@ -28,6 +28,7 @@ could not read completely are never taken.
   unit-files.py SYSTEM_TAR BUILT_SYSTEM_DIR OUT_DIR
 """
 import argparse
+import hashlib
 import json
 import os
 import posixpath
@@ -107,9 +108,11 @@ def read_transfer_report(tar):
     report = json.load(tar.extractfile(member))
     if report.get("schema") != "mirror-files/1" or report.get("root") != "/system":
         raise Refused("MIRROR-FILES.json is not a mirror-files/1 transfer of /system")
-    damaged = set()
+    damaged, unread = set(), []
     for entry in report.get("skipped", []):
         path = entry.get("path", "")
+        if path != "/system/lost+found":
+            unread.append([path, entry.get("reason", "")])
         modules = "/system/" + MODULE_PREFIX
         if (path + "/").startswith(modules) or modules.startswith(path.rstrip("/") + "/"):
             # The unit's modules replace the build's whole set, so that set
@@ -118,12 +121,12 @@ def read_transfer_report(tar):
                           f"({entry.get('reason', '')})")
         if "padded" in entry.get("reason", "") and path.startswith("/system/"):
             damaged.add(path[len("/system/"):])
-    return damaged
+    return damaged, unread
 
 
 def extract(tar, built_system, files_dir):
-    damaged = read_transfer_report(tar)
-    taken, symlinks, counts, left_out = [], [], {}, sorted(damaged)
+    damaged, unread = read_transfer_report(tar)
+    taken, symlinks, counts = [], [], {}
     for m in tar:
         rel = system_path(m.name)
         if not rel or m.isdir():
@@ -155,10 +158,10 @@ def extract(tar, built_system, files_dir):
         with tar.extractfile(m) as src, open(dest, "wb") as out:
             shutil.copyfileobj(src, out)
         os.chmod(dest, 0o644)
-        taken.append((rel, reason))
-    if not any(why == "kernel-module" and p.endswith(".ko") for p, why in taken):
+        taken.append((rel, reason, [m.mode & 0o7777, m.uid, m.gid]))
+    if not any(why == "kernel-module" and p.endswith(".ko") for p, why, _ in taken):
         raise Refused("no kernel modules (.ko) in the unit's /system")
-    return taken, symlinks, counts, left_out
+    return taken, symlinks, counts, unread
 
 
 def inside_git_checkout(path):
@@ -177,6 +180,8 @@ def main(argv=None):
     ap.add_argument("system_tar")
     ap.add_argument("built_system")
     ap.add_argument("out_dir")
+    ap.add_argument("--allow-unread", action="store_true",
+                    help="build although the transfer could not read some files")
     args = ap.parse_args(argv)
 
     def refuse(message):
@@ -194,7 +199,11 @@ def main(argv=None):
         return refuse(str(e))
     try:
         with tarfile.open(args.system_tar) as tar:
-            taken, symlinks, counts, left_out = extract(tar, args.built_system, work)
+            taken, symlinks, counts, unread = extract(tar, args.built_system, work)
+        if unread and not args.allow_unread:
+            raise Refused(f"the transfer could not read {len(unread)} files, for example "
+                          f"{unread[0][0]} ({unread[0][1]}); they will be missing from the "
+                          "image. Pass --allow-unread to build without them.")
     except (Refused, OSError, tarfile.TarError, ValueError) as e:
         shutil.rmtree(work, ignore_errors=True)
         return refuse(str(e))
@@ -203,16 +212,20 @@ def main(argv=None):
     if os.path.isdir(files_dir):
         shutil.rmtree(files_dir)
     os.rename(work, files_dir)
-    summary = {"schema": "silvering-unit/1",
-               "taken": len(taken), "counts": counts, "damaged": left_out,
+    with open(os.path.join(args.built_system, "build.prop"), "rb") as f:
+        build_prop = hashlib.sha256(f.read()).hexdigest()
+    summary = {"schema": "silvering-unit/2",
+               "baseline": {"buildProp": build_prop},
+               "taken": len(taken), "counts": counts, "unread": unread,
                "modules": "replace",
+               "meta": {rel: meta for rel, _, meta in taken},
                "links": [[rel, target] for rel, target in sorted(symlinks)],
-               "byReason": {r: sorted(p for p, why in taken if why == r)
+               "byReason": {r: sorted(p for p, why, _ in taken if why == r)
                             for r in ("kernel-module", "config", "missing")}}
     with open(os.path.join(args.out_dir, "unit.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps({"taken": len(taken), "counts": counts,
-                      "links": len(symlinks), "damaged": len(left_out)}))
+                      "links": len(symlinks), "unread": len(unread)}))
     return 0
 
 

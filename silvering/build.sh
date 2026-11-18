@@ -7,8 +7,10 @@
 #   SILVERING_ROOT  sources, out and ccache (default ~/silvering); signed
 #                   MirrorHome.apk and MirrorUpdater.apk are taken from its
 #                   apps/ folder when present
-#   UNIT            a unit-files.py output folder: lay that unit's files over
-#                   the build and write the image to $SILVERING_ROOT/images/
+#   SYSTEM_TAR      a copy of a unit's /system (Mirror Home's device-files
+#                   transfer): take that unit's files against this build and
+#                   write system.img to $SILVERING_ROOT/images/
+#   ALLOW_UNREAD    1: build although the transfer could not read some files
 #   CPUS            CPU cap for the container (default 6)
 #   MEMORY          memory cap (default 24g)
 #   JOBS            make -j (default CPUS)
@@ -32,7 +34,7 @@ flock -n 9 || { echo "another build is running in $root" >&2; exit 1; }
 # The sources, images and a unit's files hold Qualcomm's and the board maker's
 # files: keep them out of this checkout.
 checkout=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || true)
-for private in "$root" "${UNIT:-}"; do
+for private in "$root"; do
     if [ -n "$checkout" ] && [ -n "$private" ]; then
         case "$(cd "$private" && pwd -P)/" in
             "$(cd "$checkout" && pwd -P)/"*) echo "$private is inside the checkout $checkout" >&2; exit 1 ;;
@@ -76,36 +78,47 @@ fi
 # Until this build succeeds, out/ may hold files of other inputs.
 rm -f "$stamp"
 
-unit_mount=()
-stage=
-if [ -n "${UNIT:-}" ]; then
-    [ -f "$UNIT/unit.json" ] || { echo "UNIT=$UNIT has no unit.json: run unit-files.py first" >&2; exit 1; }
-    case " $goals " in *" systemimage "*) ;; *) goals="$goals systemimage" ;; esac
-    dest=/images/$target-$(date +%Y%m%d-%H%M%S)
-    unit_mount=(-v "$(cd "$UNIT" && pwd):/unit:ro" -v "$root/images:/images")
-    stage="bash /recipe/stage-image.sh /unit $dest"
+system_tar=${SYSTEM_TAR:-}
+if [ -n "$system_tar" ]; then
+    [ -f "$system_tar" ] || { echo "SYSTEM_TAR=$system_tar does not exist" >&2; exit 1; }
+    system_tar=$(cd "$(dirname "$system_tar")" && pwd)/$(basename "$system_tar")
+    for goal in systemimage fs_config; do
+        case " $goals " in *" $goal "*) ;; *) goals="$goals $goal" ;; esac
+    done
 fi
 
 docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
 
+extra=()
+in_container() {
+    docker run --rm --name silvering-build \
+        --cpus "$cpus" --cpu-shares 256 --memory "$memory" --memory-swap "$memory" \
+        -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" "${extra[@]}" \
+        "$image" bash -c "
+            set -e
+            ccache -M 50G >/dev/null
+            source build/envsetup.sh >/dev/null
+            lunch $target
+            $1"
+}
+
 log=$root/logs/build-$(date +%Y%m%d-%H%M%S).log
+exec > >(tee -a "$log") 2>&1
 echo "building $target ($goals) with $cpus CPUs / $memory; log: $log"
-set +e
-docker run --rm --name silvering-build \
-    --cpus "$cpus" --cpu-shares 256 --memory "$memory" --memory-swap "$memory" \
-    -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" "${unit_mount[@]}" \
-    "$image" bash -c "
-        set -e
-        ccache -M 50G >/dev/null
-        source build/envsetup.sh >/dev/null
-        lunch $target
-        $clean
-        make -j$jobs $goals
-        $stage
-    " 2>&1 | tee "$log"
-status=${PIPESTATUS[0]}
-set -e
-if [ "$status" -eq 0 ]; then
-    echo "$inputs" > "$stamp"
+in_container "
+            $clean
+            make -j$jobs $goals
+            echo \$OUT > /src/out/.silvering-product-out-$target"
+echo "$inputs" > "$stamp"
+
+# With the unit's /system: take its files against exactly this build, then
+# make the image from both.
+if [ -n "$system_tar" ]; then
+    product_out=$root/src/$(sed 's|^/src/||' "$root/src/out/.silvering-product-out-$target")
+    overlay=$root/overlays/$target
+    allow=()
+    if [ "${ALLOW_UNREAD:-}" = 1 ]; then allow=(--allow-unread); fi
+    python3 "$here/unit-files.py" "${allow[@]}" "$system_tar" "$product_out/system" "$overlay"
+    extra=(-v "$overlay:/unit:ro" -v "$root/images:/images")
+    in_container "bash /recipe/stage-image.sh /unit /images/$target-$(date +%Y%m%d-%H%M%S)"
 fi
-exit "$status"

@@ -58,17 +58,17 @@ input configuration. They come from a copy of the unit's `/system` (Mirror
 Home's device-files transfer writes it as a tar) and stay private.
 
 ```sh
-./build.sh                                           # 1. the build alone
-./unit-files.py system.tar ~/silvering/src/out/target/product/msm8916_64/system \
-    ~/silvering/units/<profile>/unit                 # 2. what the build lacks
-UNIT=~/silvering/units/<profile>/unit ./build.sh     # 3. the image
+SYSTEM_TAR=~/silvering/units/<profile>/system.tar ./build.sh
 ```
 
-`unit-files.py` compares the unit's copy with the build's output (which it
-never changes) and keeps what the build cannot make, the unit's kernel
-modules, and board configuration where the unit's differs; never apps,
+After the build, `unit-files.py` compares the unit's copy with exactly that
+build's output (which it never changes) and keeps what the build cannot make,
+the unit's kernel modules (the whole set, which must have been read
+completely), and board configuration where the unit's differs; never apps,
 framework jars or security policy, and never a file the transfer could not
-read completely. With `UNIT` set, `build.sh` lays those files over a copy of
-the build's `/system` after everything else, so they always win (the unit's
-kernel modules replace the build's whole set), makes `system.img` from it in
-`~/silvering/images/`, and checks that the image holds exactly that tree.
+read completely. Files the transfer could not read at all are listed in
+`unit.json`; the build stops on them unless `ALLOW_UNREAD=1`. `stage-image.sh`
+then lays the unit's files over a copy of the build's `/system`, gives them
+the owners and modes they have on the unit, makes `system.img` in
+`~/silvering/images/`, and checks that the image holds exactly that tree with
+those owners and modes. The overlay is kept in `~/silvering/overlays/`.
