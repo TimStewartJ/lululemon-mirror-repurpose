@@ -1,0 +1,2 @@
+add_lunch_combo silvering-userdebug
+add_lunch_combo silvering-user
