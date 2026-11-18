@@ -15,7 +15,12 @@
 #   adb public key  the owner's computer's adbkey.pub (~/.android/adbkey.pub)
 #   output image    default $SILVERING_ROOT/images/userdata-<time>.img
 #   FILE_CONTEXTS   SELinux labels (default: the build's root/file_contexts;
-#                   the unit's own, from its ramdisk, is better where read)
+#                   the unit's own, from its ramdisk, is better where read:
+#                   ~/silvering/units/<profile>/ramdisk/file_contexts)
+#   USB_CONFIG      USB functions for the first boot (default mtp,adb, what
+#                   a MIRROR that ADB already works with uses; empty: leave
+#                   it to build.prop, which on msm8916 asks for
+#                   diag,serial_smd,rmnet_bam,adb)
 #   TARGET          lunch target whose host tools to use (default
 #                   silvering-userdebug)
 #
@@ -29,7 +34,7 @@ target=${TARGET:-silvering-userdebug}
 image=silvering-build:trusty
 footer=16384
 
-[ $# -ge 2 ] || { sed -n '2,23p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,28p' "$0" >&2; exit 2; }
 case "$1" in
     0x*|0X*|[0-9]*) ;;
     *) echo "partition size must be a number of bytes, not $1" >&2; exit 2 ;;
@@ -60,6 +65,13 @@ host_bin=$root/src/out/host/linux-x86/bin
 contexts=${FILE_CONTEXTS:-$product_out/root/file_contexts}
 [ -f "$contexts" ] || { echo "no file_contexts at $contexts" >&2; exit 1; }
 grep -q '^/data/misc/adb(' "$contexts" || { echo "$contexts has no label for /data/misc/adb" >&2; exit 1; }
+usb_config=${USB_CONFIG-mtp,adb}
+case "$usb_config" in
+    "") ;;
+    *[!a-z0-9_,]*|*adb*[!a-z0-9_,]*) echo "USB_CONFIG=$usb_config is not a list of USB functions" >&2; exit 1 ;;
+    *adb*) ;;
+    *) echo "USB_CONFIG=$usb_config has no adb: ADB would not answer" >&2; exit 1 ;;
+esac
 
 out=${3:-$root/images/userdata-$(date +%Y%m%d-%H%M%S).img}
 mkdir -p "$(dirname "$out")"
@@ -79,6 +91,16 @@ data/misc 1000 9998 01771
 data/misc/adb 1000 2000 02750
 data/misc/adb/adb_keys 1000 2000 0640
 EOF
+# A persistent property overrides build.prop. Android 6 takes only files
+# owned by root, open to no one else, holding the value without a newline.
+if [ -n "$usb_config" ]; then
+    mkdir -p "$work/stage/property"
+    printf '%s' "$usb_config" > "$work/stage/property/persist.sys.usb.config"
+    cat >> "$work/fs_config" <<'EOF'
+data/property 0 0 0700
+data/property/persist.sys.usb.config 0 0 0600
+EOF
+fi
 
 docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
 docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
