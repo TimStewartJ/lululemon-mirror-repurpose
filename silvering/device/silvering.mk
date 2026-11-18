@@ -11,5 +11,6 @@ PRODUCT_MANUFACTURER := Silvering
 
 PRODUCT_PACKAGES += MirrorHome MirrorUpdater
 
-# Files taken from the owner's own unit at build time. Never committed.
--include vendor/mirror/unit/unit.mk
+# The board's own files (Qualcomm's libraries, the unit's kernel modules and
+# configuration) are not part of the product: build.sh lays them over the
+# finished /system with stage-image.sh, so they always win.

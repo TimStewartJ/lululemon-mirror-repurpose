@@ -1,1 +1,11 @@
+# Build inputs and outputs that hold a unit's or Qualcomm's files, or signed
+# apps. They belong outside the checkout (SILVERING_ROOT); never commit them.
 device/apps/prebuilt/
+*.img
+*.img.sha256
+*.tar
+*.ko
+*.so
+unit/
+files/
+images/
