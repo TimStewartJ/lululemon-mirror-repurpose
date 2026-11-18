@@ -288,7 +288,17 @@ def match_profile(report: dict, profiles: list[dict]) -> dict:
 
 def identify(tools: Tools, serial: str | None, label: str | None, profiles: list[dict], version: str) -> dict:
     state, found = find_unit(tools, serial)
-    report = {
+    report = empty_report(state, label, version)
+    if state == "android":
+        report.update(read_android(tools, found))
+    elif state == "fastboot":
+        report.update(read_bootloader(tools, found))
+    report["match"] = match_profile(report, profiles)
+    return report
+
+
+def empty_report(state: str, label: str | None, version: str) -> dict:
+    return {
         "schema": REPORT_SCHEMA,
         "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "tool": {"name": "identify", "version": version},
@@ -301,10 +311,75 @@ def identify(tools: Tools, serial: str | None, label: str | None, profiles: list
         "bootloader": None,
         "match": {},
     }
-    if state == "android":
-        report.update(read_android(tools, found))
-    elif state == "fastboot":
-        report.update(read_bootloader(tools, found))
+
+
+# ---------------------------------------------------------------------------
+# Over Wi-Fi, through Mirror Home's API, for a unit without ADB at hand.
+# ---------------------------------------------------------------------------
+
+Fetch = Callable[[str], bytes]
+
+
+def load_mirror_config(path: pathlib.Path) -> dict:
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Unable to read {path}: {error}") from error
+    if not config.get("host") or not config.get("token"):
+        raise RuntimeError(f"{path} needs host and token from a paired client")
+    return config
+
+
+def http_fetcher(config: dict, timeout: float = 30) -> Fetch:
+    import urllib.error
+    import urllib.request
+
+    base = f"http://{config['host']}:{config.get('port', 8787)}"
+
+    def fetch(path: str) -> bytes:
+        request = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {config['token']}"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise RuntimeError(
+                    "This Mirror Home cannot describe its unit; update it to a version with /api/v1/device/inventory"
+                ) from error
+            raise RuntimeError(f"Mirror Home answered {error.code} for {path}") from error
+        except (urllib.error.URLError, OSError) as error:
+            raise RuntimeError(f"Mirror Home at {base} could not be reached: {error}") from error
+
+    return fetch
+
+
+def read_mirror_home(fetch: Fetch) -> dict:
+    inventory = json.loads(fetch("/api/v1/device/inventory"))
+    props = inventory["properties"]
+    sdk = props.get("ro.build.version.sdk", "")
+    return {
+        "android": {
+            "fingerprint": props.get("ro.build.fingerprint", ""),
+            "release": props.get("ro.build.version.release", ""),
+            "sdk": int(sdk) if sdk.isdigit() else None,
+            "product": props.get("ro.product.name", ""),
+            "device": props.get("ro.product.device", ""),
+            "platform": props.get("ro.board.platform", ""),
+            "hardware": props.get("ro.hardware", ""),
+            "buildId": props.get("ro.build.id", ""),
+            "buildType": props.get("ro.build.type", ""),
+            "mirrorOsVersion": props.get("ro.build.version.mirror") or None,
+        },
+        "kernel": inventory["kernel"] if inventory["kernel"].get("release") else None,
+        "partitions": inventory["partitions"],
+        "packages": inventory["packages"],
+    }
+
+
+def identify_over_wifi(fetch: Fetch, label: str | None, profiles: list[dict], version: str) -> dict:
+    report = empty_report("android", label, version)
+    report["via"] = "mirror-home"
+    report.update(read_mirror_home(fetch))
     report["match"] = match_profile(report, profiles)
     return report
 
@@ -390,7 +465,7 @@ def summary(report: dict) -> str:
 ERROR_SCHEMA = "mirror-identify-error/1"
 
 
-def main(argv: list[str] | None = None, tools: Tools | None = None) -> int:
+def main(argv: list[str] | None = None, tools: Tools | None = None, fetch_override: Fetch | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
         epilog="Exit codes: 0 report written, 1 the unit could not be read, 2 adb and fastboot are missing.",
@@ -403,6 +478,12 @@ def main(argv: list[str] | None = None, tools: Tools | None = None) -> int:
         action="store_true",
         help="for programs: print only JSON on standard output, errors included, and no summary",
     )
+    parser.add_argument(
+        "--mirror",
+        type=pathlib.Path,
+        metavar="CONFIG",
+        help="read over Wi-Fi through Mirror Home instead of ADB: a JSON file with host, port and a paired token",
+    )
     arguments = parser.parse_args(argv)
 
     def fail(code: int, message: str) -> int:
@@ -412,12 +493,16 @@ def main(argv: list[str] | None = None, tools: Tools | None = None) -> int:
             print(message, file=sys.stderr)
         return code
 
-    tools = tools or Tools(find_tool("adb"), find_tool("fastboot"))
-    if not tools.adb_path and not tools.fastboot_path:
-        return fail(2, "Neither adb nor fastboot was found; install Android platform-tools.")
     try:
-        report = identify(tools, arguments.serial, arguments.board_label, load_profiles(), repository_version())
-    except RuntimeError as error:
+        if arguments.mirror:
+            fetch = fetch_override or http_fetcher(load_mirror_config(arguments.mirror))
+            report = identify_over_wifi(fetch, arguments.board_label, load_profiles(), repository_version())
+        else:
+            tools = tools or Tools(find_tool("adb"), find_tool("fastboot"))
+            if not tools.adb_path and not tools.fastboot_path:
+                return fail(2, "Neither adb nor fastboot was found; install Android platform-tools.")
+            report = identify(tools, arguments.serial, arguments.board_label, load_profiles(), repository_version())
+    except (RuntimeError, KeyError, ValueError) as error:
         return fail(1, str(error))
     errors = schema_errors(report, load_schema("device-report"))
     if errors:

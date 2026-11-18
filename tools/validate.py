@@ -27,6 +27,7 @@ import os
 import pathlib
 import re
 import subprocess
+import tarfile
 import sys
 import time
 import traceback
@@ -3533,6 +3534,76 @@ def check_no_vendor_service(ctx: Context) -> None:
         ctx.api.expect("POST", "/api/v1/control/name", {"name": name or "Mirror"})
 
 
+def check_device_inventory(ctx: Context) -> None:
+    inventory = ctx.api.expect("GET", "/api/v1/device/inventory")
+    require(inventory["schema"] == "mirror-inventory/1", f"Inventory: {describe(inventory)}")
+    require(
+        inventory["kernel"]["release"] == ctx.adb.shell("uname", "-r").strip(),
+        f"The kernel release {inventory['kernel']['release']!r} is not what uname says",
+    )
+    require(
+        inventory["properties"].get("ro.build.fingerprint") == ctx.adb.property("ro.build.fingerprint"),
+        "The fingerprint differs from getprop's",
+    )
+    require(
+        not any("serial" in name for name in inventory["properties"]),
+        "The inventory carries a serial number",
+    )
+    require("/system" in inventory["fileRoots"], f"File roots: {inventory['fileRoots']}")
+    require(
+        any(package["name"] == PACKAGE for package in inventory["packages"]),
+        f"Mirror Home is not among the packages: {inventory['packages']}",
+    )
+    refused = ctx.api.call("GET", "/api/v1/device/files?root=/data")
+    require(refused.status == 400, f"Asked for /data the Mirror answered {refused.status}")
+    anonymous = ctx.api.call("GET", "/api/v1/device/inventory", token=None)
+    require(anonymous.status == 401, f"Without a credential the inventory answered {anonymous.status}")
+
+    expected = subprocess.run(
+        [str(ctx.adb.executable), "-s", ctx.adb.serial, "exec-out", "cat", "/system/build.prop"],
+        capture_output=True, timeout=60, check=True,
+    ).stdout
+    connection = http.client.HTTPConnection(ctx.api.host, ctx.api.port, timeout=120)
+    started = time.monotonic()
+    try:
+        connection.request("GET", "/api/v1/device/files?root=/system",
+                           headers={"Authorization": "Bearer " + ctx.api.token})
+        response = connection.getresponse()
+        require(response.status == 200, f"/system answered {response.status}")
+        require(
+            ctx.api.call("GET", "/api/v1/device/files?root=/system").status == 409,
+            "A second transfer was not refused while the first ran",
+        )
+        entries = 0
+        build_prop = manifest = None
+        with tarfile.open(fileobj=response, mode="r|") as archive:
+            for member in archive:
+                entries += 1
+                if member.name == "system/build.prop":
+                    build_prop = archive.extractfile(member).read()
+                elif member.name == "MIRROR-FILES.json":
+                    manifest = json.loads(archive.extractfile(member).read())
+    finally:
+        connection.close()
+    seconds = time.monotonic() - started
+    require(build_prop == expected, "system/build.prop in the archive differs from the device's")
+    require(manifest and manifest["root"] == "/system", f"Manifest: {describe(manifest)}")
+    require(
+        manifest["files"] + manifest["folders"] + manifest["links"] + 1 == entries,
+        f"The manifest counts {manifest['files']}+{manifest['folders']}+{manifest['links']}, the archive has {entries}",
+    )
+    require(manifest["files"] > 500, f"Only {manifest['files']} files were sent")
+    ctx.note("systemFiles", manifest["files"])
+    ctx.note("systemBytes", manifest["bytes"])
+    ctx.note("systemSkipped", len(manifest["skipped"]))
+    ctx.note("systemSeconds", round(seconds, 1))
+    wait_for(
+        "the transfer to be over",
+        lambda: ctx.api.call("GET", "/api/v1/device/files?root=/firmware").status in (200, 400, 500),
+        timeout=10,
+    )
+
+
 EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("install", "Mirror Home installs and its API answers", check_install, False),
     ("setup-screen", "Unpaired, the glass shows the setup screen with a pairing code", check_setup_screen, False),
@@ -3555,6 +3626,7 @@ EMULATOR_CHECKS: list[tuple[str, str, Callable[[Context], None], bool]] = [
     ("control-page", "The control page and everything it loads are served", check_control_page, False),
     ("health", "The health report describes this device and shows no faults", check_health, False),
     ("no-vendor-service", "Without the factory service, Home's window or Android's setting holds the brightness and Home keeps the name", check_no_vendor_service, False),
+    ("device-inventory", "Mirror Home describes its unit as ADB does, and sends the system partition as a tar that matches the device", check_device_inventory, False),
     ("scan-guard", "Asked to, Android stops scanning for Wi-Fi while connected; asked again, it scans as before", check_scan_guard, False),
     ("updater-held", "Mirror Home keeps the OTA supervisor from being ended first, and the supervisor does not need it to", check_updater_held, False),
     ("journal", "What happens is written where a restart does not erase it, and Android's log is copied when asked", check_journal, False),

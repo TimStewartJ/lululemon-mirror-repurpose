@@ -222,6 +222,56 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn("platform-tools", err)
 
 
+INVENTORY = {
+    "schema": "mirror-inventory/1",
+    "properties": identify.parse_getprop(GETPROP) | {"ro.serialno": "should not be used"},
+    "kernel": {"release": KERNEL, "version": f"Linux version {KERNEL}"},
+    "selinux": "permissive",
+    "partitions": [{"name": "system", "sizeBytes": 1610612736}],
+    "mounts": [],
+    "packages": [{"name": "dev.mirror.repurpose", "versionName": "2.3.0"}],
+    "fileRoots": ["/system"],
+}
+
+
+class OverWifiTest(unittest.TestCase):
+    def test_mirror_home_inventory_becomes_the_same_report(self):
+        asked = []
+
+        def fetch(path):
+            asked.append(path)
+            return json.dumps(INVENTORY).encode()
+
+        config = pathlib.Path(__file__).with_name("mirror-config-test.json")
+        config.write_text(json.dumps({"host": "10.0.0.2", "token": "t"}), encoding="utf-8")
+        self.addCleanup(config.unlink)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = identify.main(["--mirror", str(config), "--json"], fetch_override=fetch)
+        report = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(asked, ["/api/v1/device/inventory"])
+        self.assertEqual(identify.schema_errors(report, identify.load_schema("device-report")), [])
+        self.assertEqual((report["state"], report["via"]), ("android", "mirror-home"))
+        self.assertEqual(report["kernel"]["release"], KERNEL)
+        self.assertEqual(report["match"]["profile"], "msm8916-gf46dad5260f")
+        self.assertNotIn("should not be used", out.getvalue())
+
+    def test_an_older_mirror_home_says_what_to_do(self):
+        config = pathlib.Path(__file__).with_name("mirror-config-test.json")
+        config.write_text(json.dumps({"host": "10.0.0.2", "token": "t"}), encoding="utf-8")
+        self.addCleanup(config.unlink)
+
+        def fetch(path):
+            raise RuntimeError("This Mirror Home cannot describe its unit; update it")
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = identify.main(["--mirror", str(config), "--json"], fetch_override=fetch)
+        self.assertEqual(code, 1)
+        self.assertIn("update it", json.loads(out.getvalue())["error"])
+
+
 class ProfilesTest(unittest.TestCase):
     def test_every_profile_follows_its_schema(self):
         schema = identify.load_schema("board-profile")
