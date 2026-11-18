@@ -1164,9 +1164,7 @@ public final class ControlServer extends NanoHTTPD {
             @Override
             public int read(byte[] buffer, int offset, int length) throws IOException {
                 int count = super.read(buffer, offset, length);
-                if (count < 0) {
-                    finished.set(true);
-                } else {
+                if (count > 0) {
                     moved.addAndGet(count);
                 }
                 return count;
@@ -1174,6 +1172,8 @@ public final class ControlServer extends NanoHTTPD {
 
             @Override
             public void close() throws IOException {
+                // The server closes the response after its last write; until then
+                // the end of the pipe is not the end of the transfer.
                 finished.set(true);
                 super.close();
             }
@@ -1228,7 +1228,18 @@ public final class ControlServer extends NanoHTTPD {
         writer.start();
         watchdog.setDaemon(true);
         watchdog.start();
-        Response result = newChunkedResponse(Response.Status.OK, "application/x-tar", counted);
+        // NanoHTTPD never closes a response's stream; this one is closed once its
+        // last byte is sent, which frees the pipe and tells the watchdog it is over.
+        Response result = new Response(Response.Status.OK, "application/x-tar", counted, -1) {
+            @Override
+            protected void send(java.io.OutputStream outputStream) {
+                try {
+                    super.send(outputStream);
+                } finally {
+                    closeQuietly(counted);
+                }
+            }
+        };
         result.addHeader("Cache-Control", "no-store");
         result.addHeader("Content-Disposition",
                 "attachment; filename=\"" + root.substring(1) + ".tar\"");
