@@ -1,5 +1,6 @@
 # Mirror Home and the OTA supervisor as signed prebuilts. build.sh copies them
-# into prebuilt/ from $SILVERING_ROOT/apps; a module whose APK is absent is
+# into prebuilt/ from $SILVERING_ROOT/apps, with Mirror Home's arm64 libraries
+# unpacked into prebuilt/MirrorHome-lib/; a module whose APK is absent is
 # left out.
 LOCAL_PATH := $(call my-dir)
 
@@ -14,8 +15,8 @@ LOCAL_CERTIFICATE := PRESIGNED
 LOCAL_DEX_PREOPT := false
 LOCAL_OVERRIDES_PACKAGES := Launcher2 Launcher3
 LOCAL_MULTILIB := 64
-LOCAL_PREBUILT_JNI_LIBS := $(addprefix @,$(filter lib/arm64-v8a/%.so,\
-    $(shell unzip -Z1 $(LOCAL_PATH)/prebuilt/MirrorHome.apk)))
+LOCAL_PREBUILT_JNI_LIBS := $(patsubst $(LOCAL_PATH)/%,%,\
+    $(wildcard $(LOCAL_PATH)/prebuilt/MirrorHome-lib/*.so))
 include $(BUILD_PREBUILT)
 endif
 

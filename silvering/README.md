@@ -52,13 +52,23 @@ and `JOBS` change the caps. Logs go to `~/silvering/logs/`.
 
 ## The board's own files
 
+The image needs the board's own files: Qualcomm's libraries, daemons and
+firmware, the kernel modules for the board's kernel, and its audio, Wi-Fi and
+input configuration. They come from a copy of the unit's `/system` (Mirror
+Home's device-files transfer writes it as a tar) and stay private.
+
 ```sh
+./build.sh                                           # 1. the build alone
 ./unit-files.py system.tar ~/silvering/src/out/target/product/msm8916_64/system \
-    ~/silvering/src/vendor/mirror/unit
+    ~/silvering/units/<profile>/unit                 # 2. what the build lacks
+UNIT=~/silvering/units/<profile>/unit ./build.sh     # 3. the image
 ```
 
-compares a copy of a unit's `/system` (Mirror Home's device-files transfer
-writes it) with a build's output and writes `vendor/mirror/unit/`, which the
-next build copies into the image: the Qualcomm files the build cannot make,
-the unit's kernel modules (they must match its kernel) and its hardware
-configuration where it differs. Keep that folder private.
+`unit-files.py` compares the unit's copy with the build's output (which it
+never changes) and keeps what the build cannot make, the unit's kernel
+modules, and board configuration where the unit's differs; never apps,
+framework jars or security policy, and never a file the transfer could not
+read completely. With `UNIT` set, `build.sh` lays those files over a copy of
+the build's `/system` after everything else, so they always win (the unit's
+kernel modules replace the build's whole set), makes `system.img` from it in
+`~/silvering/images/`, and checks that the image holds exactly that tree.
