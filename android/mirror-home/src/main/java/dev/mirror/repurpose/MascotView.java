@@ -87,8 +87,8 @@ final class MascotView extends View {
 
     /** A mascot's pen on a Canvas that was moved and scaled to the mascot's box. */
     private static final class Pen implements MascotPen {
-        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
+        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
         private final Path path = new Path();
         private final RectF box = new RectF();
         Canvas canvas;

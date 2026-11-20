@@ -63,6 +63,7 @@ public final class ControlServerService extends Service {
             // Android forgets the scan guard when it restarts Wi-Fi, and a hold when the supervisor is replaced.
             ScanGuard.getInstance(ControlServerService.this).checkSoon();
             SupervisorHold.getInstance(ControlServerService.this).check();
+            QualcommDisplayPostProcDisabler.getInstance(ControlServerService.this).ensureLinearSoon();
             handler.postDelayed(this, RestartAdvice.SAMPLE_INTERVAL_MS);
         }
     };

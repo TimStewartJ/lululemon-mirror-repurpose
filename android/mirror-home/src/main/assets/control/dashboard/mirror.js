@@ -5,6 +5,18 @@
 (function (global) {
   'use strict';
 
+  var ua = typeof navigator !== 'undefined' ? String(navigator.userAgent || '') : '';
+  var NATIVE_1080_VIEWPORT = ua.indexOf('MirrorNative1080/1') >= 0;
+  if (NATIVE_1080_VIEWPORT && typeof document !== 'undefined') {
+    var viewportMeta = document.querySelector('meta[name="viewport"]');
+    if (viewportMeta) {
+      viewportMeta.setAttribute(
+        'content',
+        'width=1080, initial-scale=0.6666666667, minimum-scale=0.6666666667, maximum-scale=0.6666666667, user-scalable=no'
+      );
+    }
+  }
+
   var TEXT_TYPES = { clock: true, date: true, name: true, note: true, board: true };
   var NOTE_WEIGHTS = { thin: true, light: true, regular: true, medium: true };
   /* Fixed note sizes scale with the shorter stage edge so they read the same
@@ -12,7 +24,7 @@
   var NOTE_SIZES = { small: 0.022, medium: 0.032, large: 0.046 };
   /* The board lists what programs posted (see BoardItems.java). Its type is a
      fixed size, like a note's, and what does not fit waits on a later page. */
-  var BOARD_SIZES = { small: 0.022, medium: 0.028, large: 0.036 };
+  var BOARD_SIZES = { small: 0.024, medium: 0.030, large: 0.038 };
   var BOARD_PAGE_MS = 10000;
   var BOARD_MARKS = {
     note: '<circle class="mr-fill" cx="12" cy="12" r="2.6"/>',
@@ -109,6 +121,36 @@
     return typeof value === 'number' ? Math.round(value) + '\u00b0' : '--';
   }
 
+  /* Fold alpha directly into rgb()/rgba() text colors so Chromium 44 on <1 GB RAM
+     never allocates 16-bit dithered offscreen transparency layers for opacity < 1. */
+  function parseHexRgb(color) {
+    var text = String(color || '').replace(/^\s+|\s+$/g, '');
+    if (/^#[0-9a-fA-F]{6}$/.test(text)) {
+      return [
+        parseInt(text.slice(1, 3), 16),
+        parseInt(text.slice(3, 5), 16),
+        parseInt(text.slice(5, 7), 16)
+      ];
+    }
+    if (/^#[0-9a-fA-F]{3}$/.test(text)) {
+      return [
+        parseInt(text.charAt(1) + text.charAt(1), 16),
+        parseInt(text.charAt(2) + text.charAt(2), 16),
+        parseInt(text.charAt(3) + text.charAt(3), 16)
+      ];
+    }
+    return [255, 255, 255];
+  }
+
+  function colorWithAlpha(color, alpha) {
+    var rgb = parseHexRgb(color);
+    var clamped = Math.max(0, Math.min(1, Number(alpha)));
+    if (isNaN(clamped) || clamped >= 0.999) {
+      return 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+    }
+    return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + Number(clamped.toFixed(3)) + ')';
+  }
+
   /* Stroke icons on a 24-unit grid; WMO weather codes map onto them. */
   var CLOUD = 'M7 18.5h10a3.5 3.5 0 0 0 .5-6.96A5.5 5.5 0 0 0 7 12.5a3 3 0 0 0 0 6z';
   var CLOUD_HIGH = 'M7 15h10a3.5 3.5 0 0 0 .5-6.96A5.5 5.5 0 0 0 7 9a3 3 0 0 0 0 6z';
@@ -146,9 +188,32 @@
     return 'cloud';
   }
 
-  function iconSvg(code, daylight, className) {
-    return '<span class="' + className + '"><svg class="mr-icon-svg" viewBox="0 0 24 24" ' +
+  function iconSvg(code, daylight, className, tone) {
+    return '<span class="' + className + '"' + (tone ? ' data-tone="' + tone + '"' : '') +
+      '><svg class="mr-icon-svg" viewBox="0 0 24 24" ' +
       'aria-hidden="true">' + ICONS[iconName(code, daylight)] + '</svg></span>';
+  }
+
+  function hourDaylight(hourTimeMs, daily, localHourDate) {
+    if (Array.isArray(daily)) {
+      var hasSunWindow = false;
+      for (var i = 0; i < daily.length; i += 1) {
+        var day = daily[i];
+        if (day && typeof day.sunrise === 'number' && typeof day.sunset === 'number'
+            && day.sunset > day.sunrise) {
+          if (Math.abs(hourTimeMs - day.sunrise) <= 36 * 3600 * 1000
+              || Math.abs(hourTimeMs - day.sunset) <= 36 * 3600 * 1000) {
+            hasSunWindow = true;
+          }
+          if (hourTimeMs >= day.sunrise && hourTimeMs < day.sunset) {
+            return true;
+          }
+        }
+      }
+      if (hasSunWindow) return false;
+    }
+    var hourOfDay = localHourDate.getUTCHours();
+    return hourOfDay >= 6 && hourOfDay < 20;
   }
 
   function weatherData(runtime, editing) {
@@ -173,10 +238,14 @@
     var slideTimer = null;
     var SLIDE_INTERVAL_MS = 20000;
     var LIBRARY_TTL_MS = 60000;
-    var pixelRatio = window.devicePixelRatio || 1;
+    function effectiveScale() {
+      var width = container.clientWidth || 1;
+      if (NATIVE_1080_VIEWPORT && width >= 1000) return 1;
+      return window.devicePixelRatio || 1;
+    }
     /* Pick the smallest server-side variant that still fills the box crisply. */
     var resolvePhoto = settings.resolvePhoto || function (name, done, box) {
-      var edge = box ? Math.max(box.width, box.height) * pixelRatio : Infinity;
+      var edge = box ? Math.max(box.width, box.height) * effectiveScale() : Infinity;
       var variant = edge <= 320 ? '/thumbnail' : '/display';
       done('/photos/' + encodeURIComponent(name) + variant);
     };
@@ -225,12 +294,45 @@
       return { width: container.clientWidth || 1, height: container.clientHeight || 1 };
     }
 
+    /* Full-screen Mirror glass stage (1080x1920 1:1 physical when MirrorNative1080/1
+       is active, or 720x1280 CSS @ 1.5x DPR). Snapping coordinates and spans to even
+       physical pixels lands every widget box and flex-centered baseline cleanly on
+       integer physical pixel boundaries with zero subpixel quantization drift. */
+    function isFullGlass(stage) {
+      return !editing && stage.width >= 600 && stage.height >= 600;
+    }
+
+    function snapCoord(cssPx) {
+      var scale = effectiveScale();
+      if (scale === 1.5 || scale === 1) return Math.round(cssPx / 2) * 2;
+      return Math.round(cssPx * scale) / scale;
+    }
+
+    function snapSpan(cssPx) {
+      var scale = effectiveScale();
+      if (scale === 1.5) return Math.max(4, Math.round(cssPx / 4) * 4);
+      if (scale === 1) return Math.max(4, Math.round(cssPx / 2) * 2);
+      return Math.max(2, Math.round(cssPx * scale / 2) * 2 / scale);
+    }
+
+    function snapFont(cssPx, minCssPx) {
+      var scale = effectiveScale();
+      var minScaled = (minCssPx || 6) * (stageSize().width >= 1000 ? 1.5 : 1);
+      var clamped = Math.max(minScaled, cssPx);
+      if (scale === 1.5) {
+        return Math.round(clamped * 1.5) / 1.5;
+      }
+      return Math.round(clamped * scale) / scale;
+    }
+
     function boxSize(widget) {
       var stage = stageSize();
-      return {
-        width: stage.width * widget.w / 1000,
-        height: stage.height * widget.h / 1000
-      };
+      var rawW = stage.width * widget.w / 1000;
+      var rawH = stage.height * widget.h / 1000;
+      if (isFullGlass(stage)) {
+        return { width: snapSpan(rawW), height: snapSpan(rawH) };
+      }
+      return { width: rawW, height: rawH };
     }
 
     function baseFontSize(widget, box) {
@@ -250,7 +352,8 @@
       var scale = NOTE_SIZES[widget.size];
       if (!scale) return Math.min(box.height * 0.3, box.width * 0.075);
       var stage = stageSize();
-      return Math.min(stage.width, stage.height) * scale;
+      var raw = Math.min(stage.width, stage.height) * scale;
+      return isFullGlass(stage) ? snapFont(raw, 13) : raw;
     }
 
     /* Fixed-size notes and the board keep their size and clip; everything
@@ -272,11 +375,14 @@
     }
 
     function fitContent(node, widget, probeHtml) {
+      var stage = stageSize();
+      var full = isFullGlass(stage);
+      var minCss = full ? 14 : 6;
       var box = boxSize(widget);
       var base = baseFontSize(widget, box);
       var inner = node.inner;
       var element = node.element;
-      element.style.fontSize = base + 'px';
+      element.style.fontSize = (full ? snapFont(base, minCss) : base) + 'px';
       if (!shrinksToFit(widget)) return;
       var realHtml = inner.innerHTML;
       if (probeHtml) inner.innerHTML = probeHtml;
@@ -286,17 +392,28 @@
       var height = Math.max(inner.offsetHeight, inner.scrollHeight);
       if (width > box.width || height > box.height) {
         var ratio = Math.min(box.width / Math.max(1, width), box.height / Math.max(1, height));
-        element.style.fontSize = Math.max(6, Math.floor(base * ratio * 0.985)) + 'px';
+        var fitted = base * ratio * 0.985;
+        element.style.fontSize = (full ? snapFont(fitted, minCss) : Math.max(6, Math.floor(fitted))) + 'px';
       }
       if (probeHtml) inner.innerHTML = realHtml;
     }
 
-    /* Keep the weather detail on one line: drop the least valuable segments
-       (rain chance, then the condition the icon already conveys), then shrink. */
+    /* Keep the weather detail on one line: first try stepping down detail font
+       size gently (down to 0.23em) so conditions like "Partly cloudy" stay visible,
+       then drop least valuable segments (rain chance, then condition) if needed. */
     function trimDetail(node, widget) {
       var detail = node.inner.querySelector('.mr-detail');
       if (!detail) return;
+      detail.style.fontSize = '';
       var limit = boxSize(widget).width;
+      if (detail.scrollWidth <= limit) return;
+      var baseEm = 0.30;
+      var minReadableEm = 0.23;
+      var neededEm = baseEm * limit / Math.max(1, detail.scrollWidth) * 0.985;
+      if (neededEm >= minReadableEm) {
+        detail.style.fontSize = neededEm.toFixed(3) + 'em';
+        return;
+      }
       var segments = detail.querySelectorAll('.mr-seg');
       while (detail.scrollWidth > limit && segments.length > 1) {
         var victim = segments[0];
@@ -311,28 +428,34 @@
         if (separator && separator.className === 'mr-sep') detail.removeChild(separator);
         detail.removeChild(victim);
         segments = detail.querySelectorAll('.mr-seg');
+        var retryEm = baseEm * limit / Math.max(1, detail.scrollWidth) * 0.985;
+        if (retryEm >= minReadableEm && retryEm < baseEm) {
+          detail.style.fontSize = retryEm.toFixed(3) + 'em';
+          break;
+        }
       }
       if (detail.scrollWidth > limit) {
-        detail.style.fontSize = (0.29 * limit / detail.scrollWidth * 0.98).toFixed(3) + 'em';
+        detail.style.fontSize = (baseEm * limit / detail.scrollWidth * 0.98).toFixed(3) + 'em';
       }
     }
 
     function clockHtml(local) {
       var parts = timeParts(local, runtime && runtime.clock24Hour);
       return '<span class="mr-line"><span class="mr-digits mr-thin">' + parts.digits + '</span>' +
-        (parts.meridiem ? '<span class="mr-meridiem mr-light">' + parts.meridiem + '</span>' : '') +
+        (parts.meridiem ? '<span class="mr-meridiem mr-regular">' + parts.meridiem + '</span>' : '') +
         '</span>';
     }
 
     function clockProbe() {
       var twentyFour = runtime && runtime.clock24Hour;
       return '<span class="mr-line"><span class="mr-digits mr-thin">' + (twentyFour ? '00:00' : '10:00') +
-        '</span>' + (twentyFour ? '' : '<span class="mr-meridiem mr-light">PM</span>') + '</span>';
+        '</span>' + (twentyFour ? '' : '<span class="mr-meridiem mr-regular">PM</span>') + '</span>';
     }
 
     function metric(label, value, quiet) {
-      return '<span class="mr-label mr-medium">' + label + '</span><span class="mr-value mr-light' +
-        (quiet ? ' mr-quiet' : '') + '">' + value + '</span>';
+      return '<span class="mr-label mr-medium" data-tone="0.8">' + label +
+        '</span><span class="mr-value mr-light' +
+        (quiet ? ' mr-quiet" data-tone="0.72' : '') + '">' + value + '</span>';
     }
 
     function scheduleValue(automation) {
@@ -364,6 +487,8 @@
       var current = data.current;
       var today = data.daily && data.daily[0];
       var stale = runtime && runtime.weather && runtime.weather.stale;
+      var detailTone = stale ? '0.6' : '0.96';
+      var sepTone = stale ? '0.33' : '0.62';
       var details = ['<span class="mr-seg" data-drop="2">' + escapeHtml(current.condition || '') + '</span>'];
       if (today) {
         details.push('<span class="mr-seg" data-drop="1">' + temperature(today.high) + ' / ' + temperature(today.low) + '</span>');
@@ -373,9 +498,9 @@
       }
       return '<span class="mr-now mr-fit">' +
         iconSvg(Number(current.weatherCode), current.daylight !== false, 'mr-icon') +
-        '<span class="mr-temp mr-thin">' + temperature(current.temperature) + '</span></span>' +
-        '<span class="mr-detail mr-regular' + (stale ? ' mr-stale' : '') + '">' +
-        details.join('<span class="mr-sep">&middot;</span>') + '</span>';
+        '<span class="mr-temp mr-light">' + temperature(current.temperature) + '</span></span>' +
+        '<span class="mr-detail mr-regular' + (stale ? ' mr-stale' : '') + '" data-tone="' + detailTone + '">' +
+        details.join('<span class="mr-sep" data-tone="' + sepTone + '">&middot;</span>') + '</span>';
     }
 
     function forecastHtml(widget) {
@@ -385,13 +510,14 @@
       var hours = data.hourly.slice(0, Math.min(data.hourly.length, forecastColumns(box)));
       var clock24Hour = runtime && runtime.clock24Hour;
       return '<span class="mr-hours">' + hours.map(function (hour) {
-        var date = new Date(Number(hour.time) + offsetAt(Number(hour.time), runtime) * 60000);
+        var hourTime = Number(hour.time);
+        var date = new Date(hourTime + offsetAt(hourTime, runtime) * 60000);
         var rain = Number(hour.precipitationProbability || 0);
         return '<span class="mr-hour">' +
-          '<span class="mr-hour-label mr-medium">' + escapeHtml(hourLabel(date, clock24Hour)) + '</span>' +
-          iconSvg(Number(hour.weatherCode), true, 'mr-hour-icon') +
-          '<span class="mr-hour-temp mr-light">' + temperature(hour.temperature) + '</span>' +
-          '<span class="mr-hour-rain mr-regular">' + (rain >= 10 ? rain + '%' : '') + '</span>' +
+          '<span class="mr-hour-label mr-medium" data-tone="0.9">' + escapeHtml(hourLabel(date, clock24Hour)) + '</span>' +
+          iconSvg(Number(hour.weatherCode), hourDaylight(hourTime, data.daily, date), 'mr-hour-icon', '0.98') +
+          '<span class="mr-hour-temp mr-regular">' + temperature(hour.temperature) + '</span>' +
+          '<span class="mr-hour-rain mr-regular" data-tone="0.86">' + (rain >= 10 ? rain + '%' : '') + '</span>' +
           '</span>';
       }).join('') + '</span>';
     }
@@ -496,6 +622,7 @@
         node.pendingHtml = null;
         node.inner.innerHTML = html;
         fitContent(node, widget, null);
+        applyTones(node.inner, widget);
         /* Markup that arrived faded out has to be laid out once in that
            state, or it would appear at full strength instead of fading in. */
         void node.inner.offsetHeight;
@@ -507,7 +634,8 @@
 
     function boardFontSize(widget) {
       var stage = stageSize();
-      return Math.min(stage.width, stage.height) * (BOARD_SIZES[widget.size] || BOARD_SIZES.medium);
+      var raw = Math.min(stage.width, stage.height) * (BOARD_SIZES[widget.size] || BOARD_SIZES.medium);
+      return isFullGlass(stage) ? snapFont(raw, 14) : raw;
     }
 
     /* The items a board widget lists right now, in the order the Mirror
@@ -585,22 +713,27 @@
       var standing = boardStanding(item);
       var priority = item.priority === 'high' || item.priority === 'low' ? item.priority : 'normal';
       var mark = BOARD_MARKS[item.done ? 'done' : item.kind] || BOARD_MARKS.note;
-      return '<span class="mr-board-row mr-board-' + standing.state + ' mr-board-' + priority + '">' +
-        '<span class="mr-board-mark"><svg class="mr-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' +
+      var rowTone = standing.state === 'done' ? 0.42 : (priority === 'low' ? 0.6 : 1);
+      var markTone = standing.state === 'overdue' ? rowTone : Number((rowTone * 0.8).toFixed(3));
+      var whenTone = standing.state === 'open' ? Number((rowTone * 0.78).toFixed(3)) : rowTone;
+      var bodyTone = Number((rowTone * 0.78).toFixed(3));
+      return '<span class="mr-board-row mr-board-' + standing.state + ' mr-board-' + priority + '"' +
+        (rowTone < 1 ? ' data-tone="' + rowTone + '"' : '') + '>' +
+        '<span class="mr-board-mark" data-tone="' + markTone + '"><svg class="mr-icon-svg" viewBox="0 0 24 24" aria-hidden="true">' +
         mark + '</svg></span><span class="mr-board-text">' +
         '<span class="mr-board-title ' + (priority === 'high' ? 'mr-medium' : 'mr-regular') + '">' +
         escapeHtml(item.title) + '</span>' +
-        (standing.when ? '<span class="mr-board-when mr-medium">' + escapeHtml(standing.when) + '</span>' : '') +
-        (item.body ? '<span class="mr-board-body">' + escapeHtml(item.body) + '</span>' : '') +
+        (standing.when ? '<span class="mr-board-when mr-medium" data-tone="' + whenTone + '">' + escapeHtml(standing.when) + '</span>' : '') +
+        (item.body ? '<span class="mr-board-body" data-tone="' + bodyTone + '">' + escapeHtml(item.body) + '</span>' : '') +
         '</span></span>';
     }
 
     function boardDotsHtml(count, current) {
       if (count < 2) return '';
-      var html = '<span class="mr-board-dots">';
+      var html = '<span class="mr-board-dots" data-tone="0.7">';
       if (count > 8) return html + (current + 1) + ' / ' + count + '</span>';
       for (var index = 0; index < count; index++) {
-        html += '<span class="mr-board-dot' + (index === current ? ' mr-on' : '') + '"></span>';
+        html += '<span class="mr-board-dot' + (index === current ? ' mr-on" data-tone="0.7' : '" data-tone="0.385') + '"></span>';
       }
       return html + '</span>';
     }
@@ -675,7 +808,7 @@
       var stage = stageSize();
       var view = {
         heading: widget.text
-          ? '<span class="mr-board-heading mr-medium">' + escapeHtml(widget.text) + '</span>'
+          ? '<span class="mr-board-heading mr-medium" data-tone="0.62">' + escapeHtml(widget.text) + '</span>'
           : '',
         rows: items.map(boardRowHtml)
       };
@@ -709,6 +842,7 @@
           node.pendingHtml = null;
           node.inner.className = 'mr-inner';
           node.inner.innerHTML = html;
+          applyTones(node.inner, widget);
           var shownRows = node.inner.querySelectorAll('.mr-board-row');
           for (var row = 0; row < gained.length; row++) {
             if (shownRows[gained[row]]) shownRows[gained[row]].className += ' mr-board-new';
@@ -718,6 +852,7 @@
         /* Measuring left its own markup behind; fade from what was showing. */
         if (measured) {
           node.inner.innerHTML = previous;
+          applyTones(node.inner, widget);
           void node.inner.offsetHeight;
         }
         fadeSwap(node, widget, html);
@@ -727,6 +862,7 @@
       node.pendingHtml = null;
       node.inner.className = 'mr-inner';
       node.inner.innerHTML = html;
+      applyTones(node.inner, widget);
     }
 
     /* ---- Photo frames ---- */
@@ -785,7 +921,7 @@
       var name = photoName(widget, node);
       if (!widget.photo) ensureSlideshow();
       /* Re-request only when the photo or the variant-relevant size changes. */
-      var bucket = Math.max(box.width, box.height) * pixelRatio <= 320 ? 'small' : 'large';
+      var bucket = Math.max(box.width, box.height) * effectiveScale() <= 320 ? 'small' : 'large';
       var key = name + '|' + bucket;
       if (key === node.photoKey) return;
       node.photoKey = key;
@@ -896,6 +1032,7 @@
 
     function applyGeometry(node, widget) {
       var element = node.element;
+      var stage = stageSize();
       var isPhoto = widget.type === 'photo';
       var isNote = widget.type === 'note';
       element.className = 'mr-widget mr-' + widget.type +
@@ -911,13 +1048,36 @@
         (node.leaving ? ' mr-leaving' : '') +
         (node.dissolving ? ' mr-dissolving' : '') +
         (node.covered ? ' mr-covered' : '');
-      element.style.left = (widget.x / 10) + '%';
-      element.style.top = (widget.y / 10) + '%';
-      element.style.width = (widget.w / 10) + '%';
-      element.style.height = (widget.h / 10) + '%';
-      element.style.opacity = String(widget.opacity / 100);
+      if (isFullGlass(stage)) {
+        element.style.left = snapCoord(stage.width * widget.x / 1000) + 'px';
+        element.style.top = snapCoord(stage.height * widget.y / 1000) + 'px';
+        element.style.width = snapSpan(stage.width * widget.w / 1000) + 'px';
+        element.style.height = snapSpan(stage.height * widget.h / 1000) + 'px';
+      } else {
+        element.style.left = (widget.x / 10) + '%';
+        element.style.top = (widget.y / 10) + '%';
+        element.style.width = (widget.w / 10) + '%';
+        element.style.height = (widget.h / 10) + '%';
+      }
+      var baseColor = TEXT_TYPES[widget.type] ? layout.textColor : layout.accentColor;
       element.style.zIndex = String(2 + Number(widget.layer || 0));
-      element.style.color = TEXT_TYPES[widget.type] ? layout.textColor : layout.accentColor;
+      if (isPhoto) {
+        element.style.opacity = String(widget.opacity / 100);
+        element.style.color = baseColor;
+      } else {
+        element.style.opacity = '';
+        element.style.color = colorWithAlpha(baseColor, widget.opacity / 100);
+      }
+    }
+
+    function applyTones(containerEl, widget) {
+      var baseColor = TEXT_TYPES[widget.type] ? layout.textColor : layout.accentColor;
+      var widgetAlpha = Math.max(0, Math.min(1, Number(widget.opacity) / 100));
+      var toned = containerEl.querySelectorAll('[data-tone]');
+      for (var i = 0; i < toned.length; i++) {
+        var factor = Number(toned[i].getAttribute('data-tone'));
+        toned[i].style.color = colorWithAlpha(baseColor, widgetAlpha * (isNaN(factor) ? 1 : factor));
+      }
     }
 
     function ensureNode(widget) {
@@ -946,7 +1106,9 @@
       var node = ensureNode(widget);
       node.widget = widget;
       if (node.dissolving && !node.settling && !force) return;
-      var geometry = geometryKey(widget) + '|' + layout.textColor + '|' + layout.accentColor;
+      var stage = stageSize();
+      var geometry = geometryKey(widget) + '|' + layout.textColor + '|' + layout.accentColor +
+        (isFullGlass(stage) ? '|' + stage.width + 'x' + stage.height : '');
       var geometryChanged = force || geometry !== node.geometry;
       if (geometryChanged) {
         var shape = shapeKey(widget);
@@ -991,6 +1153,7 @@
         node.inner.innerHTML = html;
         fitContent(node, widget, widget.type === 'clock' ? clockProbe() : null);
         if (widget.type === 'weather') trimDetail(node, widget);
+        applyTones(node.inner, widget);
       }
     }
 
