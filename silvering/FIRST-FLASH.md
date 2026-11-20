@@ -53,7 +53,7 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    computer keeps (`otactl.py build-supervisor`). Older supervisors accept
    updates only on the factory fingerprint, so OTA and rollback would fail on
    Silvering. The image's `build.prop` fingerprint is
-   `mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.<recipe commit>:...`.
+   `mirror/silvering/msm8916_64:6.0.1/MMB29M/<recipe commit>:...`.
 2. The flashing computer's `fastboot` is platform-tools **35.0.1-11580240**
    (`fastboot --version`; **Stop** on any other version). Its `flash` sends the
    image straight to the partition without erasing first (`do_flash` in that

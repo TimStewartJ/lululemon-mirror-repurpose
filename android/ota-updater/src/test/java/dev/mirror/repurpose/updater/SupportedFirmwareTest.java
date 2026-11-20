@@ -14,9 +14,18 @@ public final class SupportedFirmwareTest {
         assertTrue(SupportedFirmware.supports(
                 "mirror/silvering/msm8916_64:6.0.1/MMB29M/builder11180644:userdebug/test-keys"));
         assertTrue(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys"));
+                "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/test-keys"));
         assertTrue(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:user/release-keys"));
+                "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:user/release-keys"));
+    }
+
+    @Test
+    public void theLongestSilveringBuildNumberFitsAnAndroidProperty() {
+        // build.sh refuses a build number over 30 bytes; Android keeps at most 91.
+        String longest = "mirror/silvering/msm8916_64:6.0.1/MMB29M/"
+                + "54b14ca1d2e3.modified-------" + "--:userdebug/test-keys";
+        assertTrue(longest.length() <= 91);
+        assertTrue(SupportedFirmware.supports(longest));
     }
 
     @Test
@@ -27,24 +36,24 @@ public final class SupportedFirmwareTest {
         assertFalse(SupportedFirmware.supports(
                 "mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/412:user/release-keys"));
         assertFalse(SupportedFirmware.supports(
-                "mirror/silvering/msm8909:6.0.1/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys"));
+                "mirror/silvering/msm8909:6.0.1/MMB29M/54b14ca1d2e3:userdebug/test-keys"));
         assertFalse(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:7.1.2/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys"));
+                "mirror/silvering/msm8916_64:7.1.2/MMB29M/54b14ca1d2e3:userdebug/test-keys"));
         assertFalse(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:6.0.1/LMY47V/silvering.54b14ca1d2e3:userdebug/test-keys"));
+                "mirror/silvering/msm8916_64:6.0.1/LMY47V/54b14ca1d2e3:userdebug/test-keys"));
         // A plain CAF build is not Silvering; neither is an eng build.
         assertFalse(SupportedFirmware.supports(
                 "Android/msm8916_64/msm8916_64:6.0.1/MMB29M/builder10280100:userdebug/test-keys"));
         assertFalse(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:eng/test-keys"));
+                "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:eng/test-keys"));
         // Nothing missing, nothing extra.
         assertFalse(SupportedFirmware.supports(
                 "mirror/silvering/msm8916_64:6.0.1/MMB29M/:userdebug/test-keys"));
         assertFalse(SupportedFirmware.supports(
                 "mirror/silvering/msm8916_64:6.0.1/MMB29M/a/b:userdebug/test-keys"));
         assertFalse(SupportedFirmware.supports(
-                "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.1:userdebug/test-keys\n"));
+                "mirror/silvering/msm8916_64:6.0.1/MMB29M/1:userdebug/test-keys\n"));
         assertFalse(SupportedFirmware.supports(
-                "xmirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.1:userdebug/test-keys"));
+                "xmirror/silvering/msm8916_64:6.0.1/MMB29M/1:userdebug/test-keys"));
     }
 }

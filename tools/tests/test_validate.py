@@ -23,7 +23,7 @@ from validate import Api, CheckFailed, CheckSkipped, Reply
 
 
 MIRROR_FINGERPRINT = "mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys"
-SILVERING_FINGERPRINT = "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys"
+SILVERING_FINGERPRINT = "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/test-keys"
 EMULATOR_FINGERPRINT = "Android/sdk_phone_x86_64/generic_x86_64:6.0/MASTER/4174734:userdebug/test-keys"
 # 2026-10-01T12:00:00Z, a month before Los Angeles leaves daylight time.
 OCTOBER_FIRST = 1_790_856_000_000
