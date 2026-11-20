@@ -53,6 +53,10 @@ not literal values. Do not commit real serials, credentials, or local logs.
    **Expected:** profile `ifc6309-mirror-329` and no conflicting owner.
    If already enrolled, use the existing supervisor/credentials or the
    authentication recovery flow below; do not repeat ownership setup.
+   This profile check is for the factory image only. A unit flashed to
+   Silvering already carries the supervisor in `/system` and fails it by
+   design: follow steps 4 and 5 from
+   [the first-flash runbook](../silvering/FIRST-FLASH.md) instead.
 
 2. Build the signed supervisor with an independent bootstrap capability:
 

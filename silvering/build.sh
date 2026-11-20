@@ -89,15 +89,21 @@ fi
 
 docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
 
-# The build number (in the fingerprint and ro.build.version.incremental) names
+# The build number (in the fingerprint and ro.build.version.incremental) is
 # the recipe commit instead of the build's date, so a unit says which recipe
 # built its system. The OTA supervisor accepts any build number here
-# (android/ota-updater SupportedFirmware): [0-9A-Za-z._-] only.
-recipe=$(git -C "$here" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-if [ "$recipe" != unknown ] && [ -n "$(git -C "$here" status --porcelain -- . 2>/dev/null)" ]; then
-    recipe=$recipe.modified
+# (android/ota-updater SupportedFirmware): [0-9A-Za-z._-] only. Android keeps
+# at most 91 bytes of a property, and the rest of the fingerprint
+# (mirror/silvering/msm8916_64:6.0.1/MMB29M/:userdebug/test-keys) takes 61.
+build_number=$(git -C "$here" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+if [ "$build_number" != unknown ] &&
+        [ -n "$(git -C "$here" status --porcelain --untracked-files=normal -- . 2>/dev/null)" ]; then
+    build_number=$build_number.modified
 fi
-build_number=silvering.$recipe
+if [ ${#build_number} -gt 30 ] || ! [[ $build_number =~ ^[0-9A-Za-z._-]+$ ]]; then
+    echo "build number '$build_number' does not fit the fingerprint" >&2
+    exit 1
+fi
 
 extra=()
 in_container() {
