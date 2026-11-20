@@ -24,9 +24,12 @@ Mirror Home health check on loopback TCP 8787
 ```
 
 The supervisor accepts only `dev.mirror.repurpose` APKs signed by the same
-release certificate as the supervisor. It is also pinned to the exact supported
-firmware fingerprint. The Android release private key never resides on the
-Mirror.
+release certificate as the supervisor. It also installs only on firmware it
+knows: the factory image's exact fingerprint, or, from supervisor 1.4.0,
+[Silvering](../silvering/README.md) for the same board
+(`mirror/silvering/msm8916_64:6.0.1/MMB29M/<build number>`, user or
+userdebug). `status` says which with `firmwareSupported`. The Android release
+private key never resides on the Mirror.
 
 ## One-time provisioning
 

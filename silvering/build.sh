@@ -89,6 +89,16 @@ fi
 
 docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
 
+# The build number (in the fingerprint and ro.build.version.incremental) names
+# the recipe commit instead of the build's date, so a unit says which recipe
+# built its system. The OTA supervisor accepts any build number here
+# (android/ota-updater SupportedFirmware): [0-9A-Za-z._-] only.
+recipe=$(git -C "$here" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+if [ "$recipe" != unknown ] && [ -n "$(git -C "$here" status --porcelain -- . 2>/dev/null)" ]; then
+    recipe=$recipe.modified
+fi
+build_number=silvering.$recipe
+
 extra=()
 in_container() {
     docker run --rm --name silvering-build \
@@ -97,6 +107,7 @@ in_container() {
         "$image" bash -c "
             set -e
             ccache -M 50G >/dev/null
+            export BUILD_NUMBER=$build_number
             source build/envsetup.sh >/dev/null
             lunch $target
             $1"
@@ -104,9 +115,12 @@ in_container() {
 
 log=$root/logs/build-$(date +%Y%m%d-%H%M%S).log
 exec > >(tee -a "$log") 2>&1
-echo "building $target ($goals) with $cpus CPUs / $memory; log: $log"
+echo "building $target ($goals, build number $build_number) with $cpus CPUs / $memory; log: $log"
 in_container "
             $clean
+            # build.prop depends on the build's makefiles only, not on the
+            # build number: make it again so that it carries this one.
+            rm -f \$OUT/obj/ETC/system_build_prop_intermediates/build.prop
             make -j$jobs $goals
             echo \$OUT > /src/out/.silvering-product-out-$target"
 echo "$inputs" > "$stamp"

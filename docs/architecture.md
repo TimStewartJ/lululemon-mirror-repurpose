@@ -131,8 +131,9 @@ for setup and recovery. It keeps no credentials.
 
 The OTA supervisor is deliberately separate from Mirror Home. It exposes only a
 signed-update protocol on TCP `8791`, has no shell capability, and accepts only
-newer Home APKs matching its own signing certificate and the exact device
-fingerprint. It remains alive across Home replacement and reboot, allowing it to
+newer Home APKs matching its own signing certificate on firmware it knows (the
+factory image's exact fingerprint, or Silvering for the same board). It remains
+alive across Home replacement and reboot, allowing it to
 health-check the loopback Home API and perform an in-place rollback.
 
 From 1.3.0 it also offers one bindable service, to apps signed with its own
