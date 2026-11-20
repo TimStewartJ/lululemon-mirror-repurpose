@@ -36,15 +36,11 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
 ## Not ready yet (each one is a Stop until done)
 
-1. **OTA on Silvering.** The OTA supervisor accepts updates only on the factory
-   fingerprint (`SUPPORTED_FINGERPRINT`), and Silvering's differs. Until a
-   supervisor that knows Silvering's fingerprint is in the image, the OTA and
-   rollback checks cannot pass.
-2. **The files apps cannot read** (listed under `unread` in the image's
+1. **The files apps cannot read** (listed under `unread` in the image's
    `unit.json`): there is no step yet that adds files pulled over ADB, with
    their owners, modes and labels, to the unit's copy. Without them the image
    lacks Qualcomm daemons (Wi-Fi, modem, thermal and others).
-3. **Restore path.** Before the first write, show that fastboot is reachable by
+2. **Restore path.** Before the first write, show that fastboot is reachable by
    hand (hold VOL- while powering on) and that `fastboot reboot` returns to
    Android. If the bootloader refuses a write before writing anything (a locked
    bootloader may), the unit is unchanged; that ends the session.
@@ -52,7 +48,12 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 ## Before the cable
 
 1. On lazrik, the image without unread files: `SYSTEM_TAR=... ./build.sh`
-   (no `ALLOW_UNREAD`).
+   (no `ALLOW_UNREAD`), with `~/silvering/apps/MirrorUpdater.apk` at OTA
+   supervisor **1.4.0** or later, built with the bootstrap secret this
+   computer keeps (`otactl.py build-supervisor`). Older supervisors accept
+   updates only on the factory fingerprint, so OTA and rollback would fail on
+   Silvering. The image's `build.prop` fingerprint is
+   `mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.<recipe commit>:...`.
 2. The flashing computer's `fastboot` is platform-tools **35.0.1-11580240**
    (`fastboot --version`; **Stop** on any other version). Its `flash` sends the
    image straight to the partition without erasing first (`do_flash` in that
