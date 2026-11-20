@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- OTA supervisor 1.4.0 installs updates on Silvering as well as on the
+  factory image: any Silvering build for the same board
+  (`mirror/silvering/msm8916_64:6.0.1/MMB29M/...`, user or userdebug).
+  `status` now says `firmwareSupported`, and `validate.py mirror` uses it.
+  Silvering's build number is now `silvering.<recipe commit>` instead of the
+  build's date, so a unit's fingerprint names the recipe that built it.
+
 - Tell how the boot image guards the system it starts, read over Wi-Fi, so
   that a rebuilt system can be checked against it before it is flashed. The
   device inventory now includes `ro.secure`, `ro.debuggable`,

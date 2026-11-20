@@ -23,6 +23,7 @@ from validate import Api, CheckFailed, CheckSkipped, Reply
 
 
 MIRROR_FINGERPRINT = "mirror/mirror/msm8916_64:6.0.1/IFC-6309-2.0-MIR/329:user/release-keys"
+SILVERING_FINGERPRINT = "mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys"
 EMULATOR_FINGERPRINT = "Android/sdk_phone_x86_64/generic_x86_64:6.0/MASTER/4174734:userdebug/test-keys"
 # 2026-10-01T12:00:00Z, a month before Los Angeles leaves daylight time.
 OCTOBER_FIRST = 1_790_856_000_000
@@ -467,6 +468,8 @@ class RequireEmulatorTest(unittest.TestCase):
     def test_refuses_mirror_firmware_whatever_it_is_called(self):
         with self.assertRaisesRegex(CheckFailed, "mirror/mirror/msm8916_64"):
             validate.require_emulator(self.Device("emulator-5580", "1", MIRROR_FINGERPRINT))
+        with self.assertRaisesRegex(CheckFailed, "mirror/silvering/msm8916_64"):
+            validate.require_emulator(self.Device("emulator-5580", "1", SILVERING_FINGERPRINT))
 
     def test_the_suite_only_reads_properties_before_refusing_a_device(self):
         commands = []
@@ -2972,6 +2975,13 @@ class UpdaterCheckTest(unittest.TestCase):
             "crashes": {"count": 0, "last": None},
         }))
         self.assertEqual({"runId": 12, "uptimeHours": 2.0, "previousEnd": "killed"}, ctx.details["supervisorRun"])
+
+    def test_a_supervisor_that_says_it_supports_silvering_passes(self):
+        self.check(dict(self.STATUS, deviceFingerprint=SILVERING_FINGERPRINT, firmwareSupported=True))
+
+    def test_the_supervisors_own_answer_wins_over_the_fingerprints(self):
+        with self.assertRaisesRegex(CheckFailed, "does not support this firmware"):
+            self.check(dict(self.STATUS, firmwareSupported=False))
 
 
 class DashboardFrameTest(unittest.TestCase):

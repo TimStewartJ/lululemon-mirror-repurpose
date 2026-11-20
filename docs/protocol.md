@@ -482,7 +482,10 @@ lowercase-body-sha256
 ```
 
 See [LAN OTA updates](ota-updates.md) for lifecycle and recovery behavior.
-From supervisor 1.3.0, `status` carries `heldByHome`.
+From supervisor 1.3.0, `status` carries `heldByHome`. From 1.4.0 it also
+carries `firmwareSupported` (whether it installs updates on this firmware) and
+`supportedFingerprintPatterns` (the Silvering builds it accepts besides
+`supportedFingerprint`).
 
 From supervisor 1.2.0, a permission change accepts only this shape:
 

@@ -68,7 +68,7 @@ HOLD_SECONDS = 40
 ZONE_TABLE = REPO / "android" / "mirror-home" / "src" / "main" / "assets" / "zone-offsets.json"
 DEFAULT_MIRROR_CONFIG = REPO / ".secrets" / "mirror-background-video.json"
 DEFAULT_OTA_CONFIG = REPO / ".secrets" / "mirror-ota.json"
-MIRROR_FINGERPRINT_MARKER = "mirror/mirror/"
+MIRROR_FINGERPRINT_MARKERS = ("mirror/mirror/", "mirror/silvering/")
 DASHBOARD_PAGE = "/dashboard/custom.html"
 OFFLINE_PAGE = "/dashboard/offline.html"
 # Nothing listens on the discard port, so this page can never load.
@@ -4024,7 +4024,7 @@ def require_emulator(adb: Adb) -> None:
     if (
         not android_emulator.is_emulator_serial(adb.serial)
         or adb.property("ro.kernel.qemu") != "1"
-        or MIRROR_FINGERPRINT_MARKER in fingerprint
+        or any(marker in fingerprint for marker in MIRROR_FINGERPRINT_MARKERS)
     ):
         raise CheckFailed(
             f"{adb.serial} ({fingerprint or 'unknown device'}) is not an Android emulator; "
@@ -4446,7 +4446,12 @@ def mirror_updater(ctx: MirrorContext) -> None:
     problems = []
     if not status.get("deviceOwner"):
         problems.append("the supervisor is not the device owner, so it cannot install updates")
-    if status.get("deviceFingerprint") != status.get("supportedFingerprint"):
+    # From supervisor 1.4.0 it says itself whether it supports the firmware
+    # (the factory image or Silvering); an older one knows only the factory's.
+    firmware_supported = status.get("firmwareSupported")
+    if firmware_supported is None:
+        firmware_supported = status.get("deviceFingerprint") == status.get("supportedFingerprint")
+    if firmware_supported is not True:
         problems.append("the supervisor does not support this firmware")
     if status.get("state") == "recovery_required":
         problems.append(f"the last update needs recovery: {status.get('message')}")

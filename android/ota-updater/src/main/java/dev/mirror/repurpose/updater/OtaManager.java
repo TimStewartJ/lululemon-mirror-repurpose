@@ -161,7 +161,7 @@ final class OtaManager {
                 throw new OtaException("Uploaded APK SHA-256 does not match");
             }
 
-            if (!BuildConfig.SUPPORTED_FINGERPRINT.equals(Build.FINGERPRINT)) {
+            if (!SupportedFirmware.supports(Build.FINGERPRINT)) {
                 throw new OtaException("OTA supervisor does not support this firmware");
             }
             ApkInspector.Metadata candidate = inspector.inspectArchive(temporaryCandidate);
@@ -272,7 +272,10 @@ final class OtaManager {
                     .put("packageName", OtaConstants.HOME_PACKAGE)
                     .put("allowlist", new JSONArray(RuntimePermissions.ALLOWLIST)));
             result.put("deviceFingerprint", Build.FINGERPRINT);
-            result.put("supportedFingerprint", BuildConfig.SUPPORTED_FINGERPRINT);
+            result.put("supportedFingerprint", SupportedFirmware.FACTORY);
+            result.put("supportedFingerprintPatterns", new JSONArray()
+                    .put(SupportedFirmware.SILVERING_PATTERN));
+            result.put("firmwareSupported", SupportedFirmware.supports(Build.FINGERPRINT));
             result.put("state", state());
             result.put("active", isActive(state()));
             result.put("message", preferences.getString(KEY_MESSAGE, ""));

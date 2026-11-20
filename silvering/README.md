@@ -43,7 +43,12 @@ Every project is fetched shallow at its pinned commit (about 25 GB).
 
 Signed `MirrorHome.apk` and `MirrorUpdater.apk` in `~/silvering/apps/` are
 built into the image; `msm8916_64-userdebug` builds Qualcomm's plain product
-for comparison.
+for comparison. The OTA supervisor installs updates on Silvering from 1.4.0.
+
+The build number is `silvering.<recipe commit>` (with `.modified` when
+`silvering/` has uncommitted changes), so a unit's fingerprint, such as
+`mirror/silvering/msm8916_64:6.0.1/MMB29M/silvering.54b14ca1d2e3:userdebug/test-keys`,
+names the recipe that built its system.
 
 The build runs in an Ubuntu 14.04 container (OpenJDK 7, make 3.81, Python 2.7,
 as Android 6 requires), capped by default at 6 CPUs and 24 GB of memory with a
