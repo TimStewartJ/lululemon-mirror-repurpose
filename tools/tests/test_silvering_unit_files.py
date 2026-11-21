@@ -133,7 +133,7 @@ class UnitFilesTest(unittest.TestCase):
         })
         code, _, err = self.run_tool(tar, built)
         self.assertEqual(code, 1)
-        self.assertIn("could not read 2 files that the build does not make", err)
+        self.assertIn("could not read 2 files that the image needs from the unit", err)
 
         code, out, _ = self.run_tool(tar, built, "--allow-unread")
         self.assertEqual(code, 0)
@@ -169,6 +169,29 @@ class UnitFilesTest(unittest.TestCase):
         summary = json.loads((out / "unit.json").read_text())
         self.assertEqual(summary["unread"], [])
         self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/wpa_supplicant", "built"]])
+
+    def test_unread_files_must_match_the_approved_list(self):
+        tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},
+                            skipped=[("/system/bin/perfd", "lstat failed: EACCES"),
+                                     ("/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES")])
+        built = self.make_built({"etc/wifi/WCNSS_qcom_cfg.ini": b"caf"})
+        approved = self.tmp / "approved.txt"
+        approved.write_text("# owner, 2026-11-21\n/system/bin/perfd\n")
+        code, _, err = self.run_tool(tar, built, "--expect-unread", str(approved))
+        self.assertEqual(code, 1)
+        self.assertIn("not listed ['/system/etc/wifi/WCNSS_qcom_cfg.ini']", err)
+        approved.write_text("/system/bin/perfd\n/system/etc/wifi/WCNSS_qcom_cfg.ini\n/system/bin/cnd\n")
+        code, _, err = self.run_tool(tar, built, "--expect-unread", str(approved))
+        self.assertEqual(code, 1)
+        self.assertIn("listed but read or not needed ['/system/bin/cnd']", err)
+        approved.write_text("/system/etc/wifi/WCNSS_qcom_cfg.ini\n/system/bin/perfd\n")
+        code, out, err = self.run_tool(tar, built, "--expect-unread", str(approved))
+        self.assertEqual(code, 0, err)
+        summary = json.loads((out / "unit.json").read_text())
+        # The image has the build's copy of the configuration, not nothing.
+        self.assertEqual(summary["unread"], [["/system/bin/perfd", "lstat failed: EACCES"]])
+        self.assertEqual(summary["unreadBuildCopy"],
+                         [["/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES"]])
 
     def test_refuses_unsafe_paths_and_keeps_the_previous_output(self):
         built = self.make_built({})
