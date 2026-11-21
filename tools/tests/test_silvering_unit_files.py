@@ -170,6 +170,21 @@ class UnitFilesTest(unittest.TestCase):
         self.assertEqual(summary["unread"], [])
         self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/wpa_supplicant", "built"]])
 
+    @unittest.skipUnless(os.name == "posix", "needs symlinks")
+    def test_an_unread_path_with_a_working_built_link_is_not_missing(self):
+        tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},
+                            skipped=[("/system/bin/getevent", "lstat failed: EACCES"),
+                                     ("/system/bin/dangling", "lstat failed: EACCES")])
+        built = self.make_built({"bin/toolbox": b"tool"})
+        os.symlink("toolbox", built / "bin" / "getevent")
+        os.symlink("/system/bin/nothing", built / "bin" / "dangling")
+        code, out, err = self.run_tool(tar, built, "--allow-unread")
+        self.assertEqual(code, 0, err)
+        summary = json.loads((out / "unit.json").read_text())
+        # A built link to a built program works; one that leads nowhere does not.
+        self.assertEqual(summary["unread"], [["/system/bin/dangling", "lstat failed: EACCES"]])
+        self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/getevent", "built-link"]])
+
     def test_unread_files_must_match_the_approved_list(self):
         tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},
                             skipped=[("/system/bin/perfd", "lstat failed: EACCES"),

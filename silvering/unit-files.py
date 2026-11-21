@@ -124,6 +124,23 @@ def read_transfer_report(tar):
     return damaged, unread
 
 
+def built_link_works(built_system, path):
+    """Whether PATH in the built /system is a link that ends at a regular file
+    of that /system (CAF installs toolbox commands such as bin/getevent so)."""
+    root = os.path.realpath(built_system)
+    for _ in range(10):
+        if not os.path.islink(path):
+            return os.path.isfile(path) and os.path.realpath(path).startswith(root + os.sep)
+        target = os.readlink(path)
+        if target.startswith("/system/"):
+            path = os.path.join(built_system, *target[len("/system/"):].split("/"))
+        elif target.startswith("/"):
+            return False
+        else:
+            path = os.path.join(os.path.dirname(path), target)
+    return False
+
+
 def extract(tar, built_system, files_dir):
     damaged, unread = read_transfer_report(tar)
     taken, symlinks, counts, folders, config_meta = [], [], {}, {}, {}
@@ -177,6 +194,8 @@ def extract(tar, built_system, files_dir):
             continue
         built = os.path.join(built_system, *rel.split("/"))
         take, why = classify(rel, os.path.isfile(built) and not os.path.islink(built))
+        if take and why == "missing" and built_link_works(built_system, built):
+            take, why = False, "built-link"
         if not take:
             not_needed.append([path, why])
         elif why == "config":
