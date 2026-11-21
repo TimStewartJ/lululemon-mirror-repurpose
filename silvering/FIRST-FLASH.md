@@ -134,16 +134,20 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    ```sh
    adb -s <serial> shell cat /sys/module/msm_thermal/parameters/enabled
    adb -s <serial> shell ls /proc/device-tree/soc/qcom,msm-thermal
+   adb -s <serial> shell od -An -tx1 /proc/device-tree/soc/qcom,msm-thermal/<property>
    adb -s <serial> shell dmesg | grep -i -E "msm_thermal|tsens"
    ```
 
-   Go on only if `enabled` is `Y` (which alone is not proof: the driver sets
-   it before registering its frequency limits and keeps it if that fails),
-   the device tree's `qcom,msm-thermal` node sets limits (`qcom,limit-temp`
-   with `qcom,freq-step`, or `qcom,therm-reset-temp`, a reset of the chip
-   that needs no daemon; read each with `cat` and note the values), and the
-   kernel log shows those limits registered with no error. Anything missing,
-   unreadable or failed: **Stop**. After the first boot, while the owner is
+   Device-tree values are big-endian 32-bit cells (`od` shows their bytes;
+   `cat` does not show numbers). Go on only if `enabled` is `Y` (which alone
+   is not proof: the driver sets it before registering its frequency limits
+   and keeps it if that fails), the kernel log shows the limits registered
+   with no error, and the `qcom,msm-thermal` node sets either a chip reset
+   that needs no daemon (`qcom,therm-reset-temp`) or frequency throttling:
+   `qcom,limit-temp`, a positive `qcom,freq-step`, and a
+   `qcom,freq-control-mask` that covers the CPUs (the driver throttles no CPU
+   whose bit is clear, so an absent or zero mask means no throttling). Note
+   each value. Anything missing, unreadable or failed: **Stop**. After the first boot, while the owner is
    at the unit, read every `/sys/class/thermal/thermal_zone*/temp` every ten
    seconds through ten minutes of Mirror Home playing a film; power the unit
    off if any zone passes 90 °C (a zone reports degrees or thousandths of a

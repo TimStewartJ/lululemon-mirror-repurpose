@@ -176,19 +176,29 @@ class UnitFilesTest(unittest.TestCase):
                             skipped=[("/system/bin/getevent", "lstat failed: EACCES"),
                                      ("/system/xbin/getevent", "lstat failed: EACCES"),
                                      ("/system/bin/dangling", "lstat failed: EACCES"),
+                                     ("/system/bin/through-nothing", "lstat failed: EACCES"),
+                                     ("/system/outside/thermal-engine", "lstat failed: EACCES"),
                                      ("/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES")])
         built = self.make_built({"bin/toolbox": b"tool", "etc/caf/WCNSS_qcom_cfg.ini": b"caf"})
         os.symlink("toolbox", built / "bin" / "getevent")
         os.symlink("/system/bin", built / "xbin")
         os.symlink("/system/bin/nothing", built / "bin" / "dangling")
+        # Linux needs old-dir to exist to go back up from it.
+        os.symlink("old-dir/../toolbox", built / "bin" / "through-nothing")
+        host = self.tmp / "host"
+        host.mkdir()
+        (host / "thermal-engine").write_bytes(b"not the build's")
+        os.symlink(host, built / "outside")
         os.symlink("caf", built / "etc" / "wifi")
         code, out, err = self.run_tool(tar, built, "--allow-unread")
         self.assertEqual(code, 0, err)
         summary = json.loads((out / "unit.json").read_text())
         # A built link to a built program works, also through a linked folder;
-        # one that leads nowhere does not; linked configuration is still the
-        # build's copy, which the owner approves.
-        self.assertEqual(summary["unread"], [["/system/bin/dangling", "lstat failed: EACCES"]])
+        # one that leads nowhere, or out of the build, does not; linked
+        # configuration is still the build's copy, which the owner approves.
+        self.assertEqual(summary["unread"], [["/system/bin/dangling", "lstat failed: EACCES"],
+                                             ["/system/bin/through-nothing", "lstat failed: EACCES"],
+                                             ["/system/outside/thermal-engine", "lstat failed: EACCES"]])
         self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/getevent", "built-link"],
                                                       ["/system/xbin/getevent", "built-link"]])
         self.assertEqual(summary["unreadBuildCopy"],
