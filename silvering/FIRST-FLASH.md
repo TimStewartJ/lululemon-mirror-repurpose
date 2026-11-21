@@ -55,19 +55,23 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    `unreadNotNeeded`. The other **65 are not in the image** (`unread` in
    `unit.json`; `unreadBuildCopy` would list board configuration the image
    carries in the build's version instead). The unit loses them for good once
-   `system` is written. On 2026-11-21 the factory image (`init.svc.*`, read
-   through Mirror Home 2.3.0-dev.29) ran 19 of them as services: `audiod`,
-   `cnd`, `cnss-daemon`, `dpmd`, `fidodaemon`, `imsqmidaemon`,
-   `loc_launcher`, `mapd`, `per_mgr` (`pm-service`), `perfd`, `ppd`
-   (`mm-pp-daemon`), `ptt_socket_app`, `qcamerasvr` (`mm-qcamera-daemon`),
-   `qcomsysd`, `qseecomd`, `rfs_access`, `rmt_storage`, `tftp_server` and
-   `time_daemon`. Four crash and restart there already: `thermal-engine`,
-   `adsprpcd`, `ims_rtp_daemon` and `imsdatadaemon`. The rest never ran.
+   `system` is written. On 2026-11-21 the factory image's service states
+   (`init.svc.*`, read through Mirror Home 2.3.0-dev.29) showed 19 of them
+   running: `audiod`, `cnd`, `cnss-daemon`, `dpmd`, `fidodaemon`,
+   `imsqmidaemon`, `loc_launcher`, `mapd`, `per_mgr` (`pm-service`), `perfd`,
+   `ppd` (`mm-pp-daemon`), `ptt_socket_app`, `qcamerasvr`
+   (`mm-qcamera-daemon`), `qcomsysd`, `qseecomd`, `rfs_access`, `rmt_storage`,
+   `tftp_server` and `time_daemon`. Four were `restarting` in each of eight
+   readings over two and a half minutes, so they do not stay up on the
+   factory image either: `thermal-engine`, `adsprpcd`, `ims_rtp_daemon` and
+   `imsdatadaemon`. The rest were not observed as services (a program that
+   another program or a one-off init command starts has no service state).
    init skips a service whose program is missing. What their absence costs
    (the modem's storage servers, TrustZone's `qseecomd`, the clock's
    `time_daemon`) is not known until Silvering runs. The owner approves the
    list before the write, and the image is built with it (`ALLOW_UNREAD=<the
-   approved list>`), so it can lack no other file.
+   approved list>`), so the files the transfer reported unread and the image
+   lacks are exactly the approved ones.
 2. **Restore path.** Before the first write, show that fastboot is reachable by
    hand (hold VOL- while powering on) and that `fastboot reboot` returns to
    Android. If the bootloader refuses a write before writing anything (a locked
@@ -120,14 +124,22 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    and `ro.vold.forceencryption` is empty or `0`. Anything else, or a file
    that cannot be read: **Stop**.
 
-   Silvering has no `thermal-engine` (and the factory's keeps crashing), so
-   the kernel's own thermal limits must be on:
+   **Thermal protection is the owner's call.** Silvering has no
+   `thermal-engine`, and the factory's does not stay up either (above), so
+   the unit already runs without it. What is left is the kernel's own
+   `msm_thermal` and whatever over-temperature shutdown the hardware has.
+   Read the kernel's flag for the record:
 
    ```sh
    adb -s <serial> shell cat /sys/module/msm_thermal/parameters/enabled
    ```
 
-   Anything but `Y`, or no answer: **Stop**.
+   `Y` is not proof that it limits anything (the driver sets it before
+   registering its frequency limits, and keeps it if that fails). The owner
+   decides before the write whether to go on on that basis; after the first
+   boot, `/sys/class/thermal/thermal_zone*/temp` is watched for ten minutes
+   of Mirror Home playing a film, and the unit is powered off if any zone
+   passes 90 °C (a zone reports degrees or thousandths of a degree).
 3. **Fastboot by hand.** Power off, hold VOL- while powering on;
    `fastboot devices` shows the unit. Then:
 
