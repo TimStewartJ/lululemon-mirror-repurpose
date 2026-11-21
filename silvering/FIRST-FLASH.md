@@ -70,8 +70,9 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    (the modem's storage servers, TrustZone's `qseecomd`, the clock's
    `time_daemon`) is not known until Silvering runs. The owner approves the
    list before the write, and the image is built with it (`ALLOW_UNREAD=<the
-   approved list>`), so the files the transfer reported unread and the image
-   lacks are exactly the approved ones.
+   approved list>`), so the files the transfer reported unread are, apart
+   from those the build makes, exactly the approved ones: absent from the
+   image (`unread`) or carried in the build's version (`unreadBuildCopy`).
 2. **Restore path.** Before the first write, show that fastboot is reachable by
    hand (hold VOL- while powering on) and that `fastboot reboot` returns to
    Android. If the bootloader refuses a write before writing anything (a locked
@@ -124,22 +125,29 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    and `ro.vold.forceencryption` is empty or `0`. Anything else, or a file
    that cannot be read: **Stop**.
 
-   **Thermal protection is the owner's call.** Silvering has no
-   `thermal-engine`, and the factory's does not stay up either (above), so
-   the unit already runs without it. What is left is the kernel's own
-   `msm_thermal` and whatever over-temperature shutdown the hardware has.
-   Read the kernel's flag for the record:
+   **Thermal protection (Stop until shown).** Silvering has no
+   `thermal-engine`. The factory's does not stay up (above), but it may set
+   limits before it exits, so that is no proof the unit is safe without it.
+   Before any write, show over ADB that the kernel protects the chip on its
+   own:
 
    ```sh
    adb -s <serial> shell cat /sys/module/msm_thermal/parameters/enabled
+   adb -s <serial> shell ls /proc/device-tree/soc/qcom,msm-thermal
+   adb -s <serial> shell dmesg | grep -i -E "msm_thermal|tsens"
    ```
 
-   `Y` is not proof that it limits anything (the driver sets it before
-   registering its frequency limits, and keeps it if that fails). The owner
-   decides before the write whether to go on on that basis; after the first
-   boot, `/sys/class/thermal/thermal_zone*/temp` is watched for ten minutes
-   of Mirror Home playing a film, and the unit is powered off if any zone
-   passes 90 °C (a zone reports degrees or thousandths of a degree).
+   Go on only if `enabled` is `Y` (which alone is not proof: the driver sets
+   it before registering its frequency limits and keeps it if that fails),
+   the device tree's `qcom,msm-thermal` node sets limits (`qcom,limit-temp`
+   with `qcom,freq-step`, or `qcom,therm-reset-temp`, a reset of the chip
+   that needs no daemon; read each with `cat` and note the values), and the
+   kernel log shows those limits registered with no error. Anything missing,
+   unreadable or failed: **Stop**. After the first boot, while the owner is
+   at the unit, read every `/sys/class/thermal/thermal_zone*/temp` every ten
+   seconds through ten minutes of Mirror Home playing a film; power the unit
+   off if any zone passes 90 °C (a zone reports degrees or thousandths of a
+   degree) or if a reading cannot be taken.
 3. **Fastboot by hand.** Power off, hold VOL- while powering on;
    `fastboot devices` shows the unit. Then:
 
