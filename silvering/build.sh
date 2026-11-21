@@ -10,7 +10,9 @@
 #   SYSTEM_TAR      a copy of a unit's /system (Mirror Home's device-files
 #                   transfer): take that unit's files against this build and
 #                   write system.img to $SILVERING_ROOT/images/
-#   ALLOW_UNREAD    1: build although the transfer could not read some files
+#   ALLOW_UNREAD    files the transfer could not read and the image needs:
+#                   a file listing the approved paths (the image is made only
+#                   if they are exactly those), or 1 for a test image
 #   CPUS            CPU cap for the container (default 6)
 #   MEMORY          memory cap (default 24g)
 #   JOBS            make -j (default CPUS)
@@ -86,12 +88,16 @@ case "$target" in
         buildspec=/src/device/mirror/silvering/BoardConfigSilvering.mk
         board=$(sha256sum "$product/BoardConfigSilvering.mk" | cut -d' ' -f1) ;;
 esac
-# One stamp for the whole out/: silvering and msm8916_64 share a product
-# folder, so it records the settings that folder was last compiled under.
-board_stamp=$root/src/out/.silvering-board
-if [ -d "$root/src/out/target" ] && [ "$(cat "$board_stamp" 2>/dev/null)" != "$board" ]; then
-    clean='rm -rf "$OUT"'
-fi
+# The stamp belongs to the product folder lunch picks ($OUT), which other
+# targets may share (msm8916_64 records "none"); it is checked and written
+# in the container, right after any clean, so a failed build is not cleaned
+# again.
+board_check="board_stamp=/src/out/.silvering-board-\$(basename \"\$OUT\")
+            if [ -d \"\$OUT\" ] && [ \"\$(cat \"\$board_stamp\" 2>/dev/null)\" != $board ]; then
+                echo \"board settings changed: building \$OUT again\"
+                rm -rf \"\$OUT\"
+            fi
+            mkdir -p /src/out && echo $board > \"\$board_stamp\""
 # Until this build succeeds, out/ may hold files of other inputs.
 rm -f "$stamp"
 
@@ -141,9 +147,8 @@ log=$root/logs/build-$(date +%Y%m%d-%H%M%S).log
 exec > >(tee -a "$log") 2>&1
 echo "building $target ($goals, build number $build_number) with $cpus CPUs / $memory; log: $log"
 in_container "
+            $board_check
             $clean
-            # Objects compiled from here on follow these board settings.
-            mkdir -p /src/out && echo $board > /src/out/.silvering-board
             # build.prop depends on the build's makefiles only, not on the
             # build number: make it again so that it carries this one.
             rm -f \$OUT/obj/ETC/system_build_prop_intermediates/build.prop
@@ -157,7 +162,12 @@ if [ -n "$system_tar" ]; then
     product_out=$root/src/$(sed 's|^/src/||' "$root/src/out/.silvering-product-out-$target")
     overlay=$root/overlays/$target
     allow=()
-    if [ "${ALLOW_UNREAD:-}" = 1 ]; then allow=(--allow-unread); fi
+    case "${ALLOW_UNREAD:-}" in
+        "") ;;
+        1) allow=(--allow-unread) ;;
+        *) [ -f "$ALLOW_UNREAD" ] || { echo "ALLOW_UNREAD=$ALLOW_UNREAD is neither 1 nor a file" >&2; exit 1; }
+           allow=(--expect-unread "$(cd "$(dirname "$ALLOW_UNREAD")" && pwd)/$(basename "$ALLOW_UNREAD")") ;;
+    esac
     python3 "$here/unit-files.py" ${allow[@]+"${allow[@]}"} "$system_tar" "$product_out/system" "$overlay"
     extra=(-v "$overlay:/unit:ro" -v "$root/images:/images")
     in_container "bash /recipe/stage-image.sh /unit /images/$target-$(date +%Y%m%d-%H%M%S)"

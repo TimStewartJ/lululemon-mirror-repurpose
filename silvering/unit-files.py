@@ -165,10 +165,11 @@ def extract(tar, built_system, files_dir):
         taken.append((rel, reason, [m.mode & 0o7777, m.uid, m.gid]))
     if not any(why == "kernel-module" and p.endswith(".ko") for p, why, _ in taken):
         raise Refused("no kernel modules (.ko) in the unit's /system")
-    # A file the transfer could not read is only missing from the image when
-    # it would have been taken: the build's own copy (or none, for a skipped
-    # file) stands in for the rest.
-    missing, not_needed = [], []
+    # A file the transfer could not read is only absent from the image when
+    # the build has no file there. Where the build has its own copy of board
+    # configuration, the image carries the build's instead of the unit's.
+    # Skipped files and files the build makes are not needed.
+    missing, build_copy, not_needed = [], [], []
     for path, reason in unread:
         rel = path[len("/system/"):]
         if not path.startswith("/system/") or ".." in rel.split("/"):
@@ -176,11 +177,13 @@ def extract(tar, built_system, files_dir):
             continue
         built = os.path.join(built_system, *rel.split("/"))
         take, why = classify(rel, os.path.isfile(built) and not os.path.islink(built))
-        if take:
-            missing.append([path, reason])
-        else:
+        if not take:
             not_needed.append([path, why])
-    unread = {"missing": missing, "notNeeded": not_needed}
+        elif why == "config":
+            build_copy.append([path, reason])
+        else:
+            missing.append([path, reason])
+    unread = {"missing": missing, "buildCopy": build_copy, "notNeeded": not_needed}
     # Every folder that holds a unit file or link keeps the unit's owner and
     # mode, so a file never sits in a folder more open than on the unit.
     folder_meta = {}
@@ -211,7 +214,10 @@ def main(argv=None):
     ap.add_argument("built_system")
     ap.add_argument("out_dir")
     ap.add_argument("--allow-unread", action="store_true",
-                    help="build although the transfer could not read some files")
+                    help="build although the transfer could not read some files (test images)")
+    ap.add_argument("--expect-unread", metavar="LIST",
+                    help="build only if the unread files the image lacks, or carries the "
+                         "build's copy of, are exactly the paths in LIST (one per line)")
     args = ap.parse_args(argv)
 
     def refuse(message):
@@ -231,12 +237,21 @@ def main(argv=None):
         with tarfile.open(args.system_tar) as tar:
             taken, symlinks, counts, unread, folder_meta, config_meta = extract(
                 tar, args.built_system, work)
-        missing = unread["missing"]
-        if missing and not args.allow_unread:
-            raise Refused(f"the transfer could not read {len(missing)} files that the build "
-                          f"does not make, for example {missing[0][0]} ({missing[0][1]}); "
-                          "they will be missing from the image. Pass --allow-unread to "
-                          "build without them.")
+        lacking = sorted(p for p, _ in unread["missing"] + unread["buildCopy"])
+        if args.expect_unread:
+            with open(args.expect_unread) as f:
+                expected = sorted(set(line.strip() for line in f
+                                      if line.strip() and not line.startswith("#")))
+            if lacking != expected:
+                new, gone = sorted(set(lacking) - set(expected)), sorted(set(expected) - set(lacking))
+                raise Refused(f"the unread files differ from {args.expect_unread}: not listed "
+                              f"{new[:5]}{' ...' if len(new) > 5 else ''}, listed but read "
+                              f"or not needed {gone[:5]}{' ...' if len(gone) > 5 else ''}")
+        elif lacking and not args.allow_unread:
+            raise Refused(f"the transfer could not read {len(lacking)} files that the image "
+                          f"needs from the unit, for example {lacking[0]}; the image will "
+                          "lack them or carry the build's copy. Pass --expect-unread with "
+                          "the approved list, or --allow-unread for a test image.")
     except (Refused, OSError, tarfile.TarError, ValueError) as e:
         shutil.rmtree(work, ignore_errors=True)
         return refuse(str(e))
@@ -250,9 +265,11 @@ def main(argv=None):
     summary = {"schema": "silvering-unit/2",
                "baseline": {"buildProp": build_prop},
                "taken": len(taken), "counts": counts,
-               # unread: missing from the image; unreadNotNeeded: the build
+               # unread: absent from the image; unreadBuildCopy: the image has
+               # the build's copy, not the unit's; unreadNotNeeded: the build
                # makes them ("built") or leaves them out anyway ("skipped").
-               "unread": unread["missing"], "unreadNotNeeded": unread["notNeeded"],
+               "unread": unread["missing"], "unreadBuildCopy": unread["buildCopy"],
+               "unreadNotNeeded": unread["notNeeded"],
                "modules": "replace",
                "meta": {rel: meta for rel, _, meta in taken},
                "folderMeta": folder_meta,
@@ -264,6 +281,7 @@ def main(argv=None):
         json.dump(summary, f, indent=2)
     print(json.dumps({"taken": len(taken), "counts": counts,
                       "links": len(symlinks), "unread": len(unread["missing"]),
+                      "unreadBuildCopy": len(unread["buildCopy"]),
                       "unreadNotNeeded": len(unread["notNeeded"])}))
     return 0
 

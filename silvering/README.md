@@ -81,8 +81,11 @@ completely), and board configuration where the unit's differs; never apps,
 framework jars or security policy, and never a file the transfer could not
 read completely. Files the transfer could not read at all are listed in
 `unit.json`: under `unread` those the image lacks because the build does not
-make them (the build stops on them unless `ALLOW_UNREAD=1`), under
-`unreadNotNeeded` those the build makes itself or leaves out. `stage-image.sh`
+make them, under `unreadBuildCopy` board configuration the image carries in
+the build's version instead of the unit's, and under `unreadNotNeeded` those
+the build makes itself or leaves out. The build stops on the first two unless
+`ALLOW_UNREAD` names a file listing exactly those paths (the list the owner
+approved), or is `1` for a test image. `stage-image.sh`
 then lays the unit's files over a copy of the build's `/system`, gives them
 the owners and modes they have on the unit, makes `system.img` in
 `~/silvering/images/`, and checks that the image holds exactly that tree with
