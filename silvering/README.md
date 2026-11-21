@@ -55,6 +55,14 @@ as Android 6 requires), capped by default at 6 CPUs and 24 GB of memory with a
 low CPU weight, so other services on the host keep running. `CPUS`, `MEMORY`
 and `JOBS` change the caps. Logs go to `~/silvering/logs/`.
 
+CAF keeps some board settings in its proprietary `BoardConfigVendor.mk`, which
+an open build does not have. [`device/BoardConfigSilvering.mk`](device/BoardConfigSilvering.mk)
+sets the ones Silvering needs, as the factory image has them (so far Wi-Fi:
+`wpa_supplicant`, `hostapd`, the `qcwcn` HAL and loading `wlan.ko`), and
+`build.sh` passes it to `silvering-*` targets as `ANDROID_BUILDSPEC`. When it
+changes, `build.sh` builds the whole product again, because make does not
+notice changed compiler flags.
+
 ## The board's own files
 
 The image needs the board's own files: Qualcomm's libraries, daemons and
@@ -72,7 +80,9 @@ the unit's kernel modules (the whole set, which must have been read
 completely), and board configuration where the unit's differs; never apps,
 framework jars or security policy, and never a file the transfer could not
 read completely. Files the transfer could not read at all are listed in
-`unit.json`; the build stops on them unless `ALLOW_UNREAD=1`. `stage-image.sh`
+`unit.json`: under `unread` those the image lacks because the build does not
+make them (the build stops on them unless `ALLOW_UNREAD=1`), under
+`unreadNotNeeded` those the build makes itself or leaves out. `stage-image.sh`
 then lays the unit's files over a copy of the build's `/system`, gives them
 the owners and modes they have on the unit, makes `system.img` in
 `~/silvering/images/`, and checks that the image holds exactly that tree with

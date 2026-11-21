@@ -36,10 +36,27 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
 ## Not ready yet (each one is a Stop until done)
 
-1. **The files apps cannot read** (listed under `unread` in the image's
-   `unit.json`): there is no step yet that adds files pulled over ADB, with
-   their owners, modes and labels, to the unit's copy. Without them the image
-   lacks Qualcomm daemons (Wi-Fi, modem, thermal and others).
+1. **The files apps cannot read.** Mirror Home's transfer could not read 107
+   files of the project's unit (`lstat` fails with `EACCES`). They cannot be
+   read over USB either: in the unit's own SELinux policy (its ramdisk's
+   `sepolicy`, a `user` build) the `shell` domain that `adb shell` and
+   `adb pull` run in has no `getattr` on any of their labels (checked with
+   the CAF tree's `sepolicy-check`, which does find those rules for
+   `qmuxd_exec`, `netmgrd_exec` and `diag_exec` in Silvering's userdebug
+   policy). `aboot` is locked under secure boot, so no unsigned image can be
+   RAM-booted to read them as root, and no signed Firehose programmer is known
+   for EDL ([OS replacement](../docs/os-replacement.md)). Of the 107, the build
+   makes 41 itself (AOSP daemons, and `wpa_supplicant`, `hostapd` and
+   `hostapd_cli` from Silvering's Wi-Fi board settings) and leaves one out
+   (`install-recovery.sh`); `unit-files.py` lists them under
+   `unreadNotNeeded`. The other **65 are not in the image** (`unread` in
+   `unit.json`): Qualcomm and board daemons such as `thermal-engine`,
+   `perfd`, `qseecomd`, `time_daemon`, `audiod`, `mm-pp-daemon`,
+   `mm-qcamera-daemon`, `pm-service`, the modem and location services, and
+   factory test tools. init skips a service whose program is missing. The
+   unit loses them for good once `system` is written, so the owner decides,
+   before the write, whether to go on without them; what each one does on
+   the factory image is still to be read (which of them run).
 2. **Restore path.** Before the first write, show that fastboot is reachable by
    hand (hold VOL- while powering on) and that `fastboot reboot` returns to
    Android. If the bootloader refuses a write before writing anything (a locked
@@ -47,8 +64,9 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
 ## Before the cable
 
-1. On lazrik, the image without unread files: `SYSTEM_TAR=... ./build.sh`
-   (no `ALLOW_UNREAD`), with `~/silvering/apps/MirrorUpdater.apk` at OTA
+1. On lazrik, the image: `SYSTEM_TAR=... ALLOW_UNREAD=1 ./build.sh` (the
+   65 files above are reported, not fatal), with
+   `~/silvering/apps/MirrorUpdater.apk` at OTA
    supervisor **1.4.0** or later, built with the bootstrap secret this
    computer keeps (`otactl.py build-supervisor`). Older supervisors accept
    updates only on the factory fingerprint, so OTA and rollback would fail on
