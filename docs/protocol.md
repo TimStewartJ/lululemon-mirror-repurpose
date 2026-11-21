@@ -156,9 +156,10 @@ properties, and those that say how the boot image guards the system it starts:
 `ro.secure`, `ro.debuggable`, `ro.adb.secure`, `ro.crypto.state` and `type`,
 `ro.vold.forceencryption`, `partition.<name>.verified` (set where verity
 checks a partition), `ro.boot.veritymode` and the USB
-configuration, and `init.svc.<service>` (the state of each service init has
-started at least once: `running`, `stopping`, `stopped` or `restarting`; a
-service never started has none); never anything that tells one unit from another, such as
+configuration, and `init.svc.<service>` (init's last reported state of each
+service it has acted on: `running`, `stopping`, `stopped` or `restarting`;
+`stopped` does not mean the service ever ran, and a service init never acted
+on has none); never anything that tells one unit from another, such as
 serial numbers or MAC addresses), `kernel` (`release`, `version`), `selinux`
 (`enforcing`, `permissive` or `null`), `partitions` (name and size, where
 the app may read the by-name links; often empty under SELinux), `mounts`,
