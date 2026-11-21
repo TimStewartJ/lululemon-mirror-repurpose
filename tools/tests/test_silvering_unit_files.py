@@ -174,16 +174,25 @@ class UnitFilesTest(unittest.TestCase):
     def test_an_unread_path_with_a_working_built_link_is_not_missing(self):
         tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},
                             skipped=[("/system/bin/getevent", "lstat failed: EACCES"),
-                                     ("/system/bin/dangling", "lstat failed: EACCES")])
-        built = self.make_built({"bin/toolbox": b"tool"})
+                                     ("/system/xbin/getevent", "lstat failed: EACCES"),
+                                     ("/system/bin/dangling", "lstat failed: EACCES"),
+                                     ("/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES")])
+        built = self.make_built({"bin/toolbox": b"tool", "etc/caf/WCNSS_qcom_cfg.ini": b"caf"})
         os.symlink("toolbox", built / "bin" / "getevent")
+        os.symlink("/system/bin", built / "xbin")
         os.symlink("/system/bin/nothing", built / "bin" / "dangling")
+        os.symlink("caf", built / "etc" / "wifi")
         code, out, err = self.run_tool(tar, built, "--allow-unread")
         self.assertEqual(code, 0, err)
         summary = json.loads((out / "unit.json").read_text())
-        # A built link to a built program works; one that leads nowhere does not.
+        # A built link to a built program works, also through a linked folder;
+        # one that leads nowhere does not; linked configuration is still the
+        # build's copy, which the owner approves.
         self.assertEqual(summary["unread"], [["/system/bin/dangling", "lstat failed: EACCES"]])
-        self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/getevent", "built-link"]])
+        self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/getevent", "built-link"],
+                                                      ["/system/xbin/getevent", "built-link"]])
+        self.assertEqual(summary["unreadBuildCopy"],
+                         [["/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES"]])
 
     def test_unread_files_must_match_the_approved_list(self):
         tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},

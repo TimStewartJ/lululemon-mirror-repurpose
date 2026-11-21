@@ -124,21 +124,37 @@ def read_transfer_report(tar):
     return damaged, unread
 
 
-def built_link_works(built_system, path):
-    """Whether PATH in the built /system is a link that ends at a regular file
-    of that /system (CAF installs toolbox commands such as bin/getevent so)."""
-    root = os.path.realpath(built_system)
-    for _ in range(10):
-        if not os.path.islink(path):
-            return os.path.isfile(path) and os.path.realpath(path).startswith(root + os.sep)
-        target = os.readlink(path)
-        if target.startswith("/system/"):
-            path = os.path.join(built_system, *target[len("/system/"):].split("/"))
-        elif target.startswith("/"):
-            return False
-        else:
-            path = os.path.join(os.path.dirname(path), target)
-    return False
+def resolve_in_build(built_system, rel, hops=40):
+    """The regular file of the built /system that REL leads to through its
+    links (CAF installs toolbox commands such as bin/getevent as links), with
+    /system/... targets taken inside the build; None if it leads nowhere or
+    out of it."""
+    parts, current = rel.split("/"), []
+    while parts:
+        name = parts.pop(0)
+        if name in ("", "."):
+            continue
+        if name == "..":
+            if not current:
+                return None
+            current.pop()
+            continue
+        path = os.path.join(built_system, *current, name)
+        if os.path.islink(path):
+            hops -= 1
+            if hops < 0:
+                return None
+            target = os.readlink(path)
+            if target == "/system" or target.startswith("/system/"):
+                parts, current = target[len("/system"):].split("/") + parts, []
+            elif target.startswith("/"):
+                return None
+            else:
+                parts = target.split("/") + parts
+            continue
+        current.append(name)
+    path = os.path.join(built_system, *current)
+    return path if current and os.path.isfile(path) and not os.path.islink(path) else None
 
 
 def extract(tar, built_system, files_dir):
@@ -193,11 +209,11 @@ def extract(tar, built_system, files_dir):
             missing.append([path, reason])
             continue
         built = os.path.join(built_system, *rel.split("/"))
-        take, why = classify(rel, os.path.isfile(built) and not os.path.islink(built))
-        if take and why == "missing" and built_link_works(built_system, built):
-            take, why = False, "built-link"
+        plain = os.path.isfile(built) and not os.path.islink(built)
+        through_links = not plain and resolve_in_build(built_system, rel) is not None
+        take, why = classify(rel, plain or through_links)
         if not take:
-            not_needed.append([path, why])
+            not_needed.append([path, "built-link" if through_links and why == "built" else why])
         elif why == "config":
             build_copy.append([path, reason])
         else:
