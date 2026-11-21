@@ -111,4 +111,15 @@ public final class DeviceInventoryTest {
         assertFalse(properties.has("ro.crypto.fs_crypto_blkdev"));
         assertFalse(properties.has("ro.boot.serialno"));
     }
+
+    @Test
+    public void serviceStatesAreReported() throws Exception {
+        JSONObject properties = DeviceInventory.properties(
+                "[init.svc.thermal-engine]: [running]\n[init.svc.qseecomd]: [stopped]\n"
+                        + "[init.svc.wcnss-service]: [restarting]\n[init.svcs]: [x]\n");
+        assertEquals("running", properties.getString("init.svc.thermal-engine"));
+        assertEquals("stopped", properties.getString("init.svc.qseecomd"));
+        assertEquals("restarting", properties.getString("init.svc.wcnss-service"));
+        assertFalse(properties.has("init.svcs"));
+    }
 }
