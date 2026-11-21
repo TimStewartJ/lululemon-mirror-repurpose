@@ -217,6 +217,8 @@ final class DeviceInventory {
             "ro.build.", "ro.product.", "ro.board.", "ro.bootimage.build.", "ro.hardware",
             "ro.boot.hardware", "ro.boot.baseband", "ro.boot.bootdevice", "ro.boot.emmc",
             "ro.boot.selinux", "ro.boot.authorized_kernel", "ro.baseband", "ro.revision",
+            // Which of init's services run: what a rebuilt system must start.
+            "init.svc.",
     };
     /** Single properties that say how the boot image guards the system it starts. */
     private static final List<String> BOOT_GUARD_PROPERTIES = Arrays.asList(
