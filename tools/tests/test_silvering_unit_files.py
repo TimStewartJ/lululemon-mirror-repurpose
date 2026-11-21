@@ -177,6 +177,8 @@ class UnitFilesTest(unittest.TestCase):
                                      ("/system/xbin/getevent", "lstat failed: EACCES"),
                                      ("/system/bin/dangling", "lstat failed: EACCES"),
                                      ("/system/bin/through-nothing", "lstat failed: EACCES"),
+                                     ("/system/bin/slash", "lstat failed: EACCES"),
+                                     ("/system/bin/slash-dot", "lstat failed: EACCES"),
                                      ("/system/outside/thermal-engine", "lstat failed: EACCES"),
                                      ("/system/etc/wifi/WCNSS_qcom_cfg.ini", "lstat failed: EACCES")])
         built = self.make_built({"bin/toolbox": b"tool", "etc/caf/WCNSS_qcom_cfg.ini": b"caf"})
@@ -185,6 +187,9 @@ class UnitFilesTest(unittest.TestCase):
         os.symlink("/system/bin/nothing", built / "bin" / "dangling")
         # Linux needs old-dir to exist to go back up from it.
         os.symlink("old-dir/../toolbox", built / "bin" / "through-nothing")
+        # A file is no folder: toolbox/ and toolbox/. fail with ENOTDIR.
+        os.symlink("toolbox/", built / "bin" / "slash")
+        os.symlink("toolbox/.", built / "bin" / "slash-dot")
         host = self.tmp / "host"
         host.mkdir()
         (host / "thermal-engine").write_bytes(b"not the build's")
@@ -198,6 +203,8 @@ class UnitFilesTest(unittest.TestCase):
         # configuration is still the build's copy, which the owner approves.
         self.assertEqual(summary["unread"], [["/system/bin/dangling", "lstat failed: EACCES"],
                                              ["/system/bin/through-nothing", "lstat failed: EACCES"],
+                                             ["/system/bin/slash", "lstat failed: EACCES"],
+                                             ["/system/bin/slash-dot", "lstat failed: EACCES"],
                                              ["/system/outside/thermal-engine", "lstat failed: EACCES"]])
         self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/getevent", "built-link"],
                                                       ["/system/xbin/getevent", "built-link"]])
