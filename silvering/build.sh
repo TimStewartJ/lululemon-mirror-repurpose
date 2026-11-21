@@ -75,6 +75,23 @@ clean=
 if [ "$(cat "$stamp" 2>/dev/null)" != "$inputs" ]; then
     clean="make installclean"
 fi
+# Silvering's board settings (BoardConfigSilvering.mk) reach the build as
+# ANDROID_BUILDSPEC. make does not track compiler flags, so objects compiled
+# under other board settings would be linked again as they are: when the
+# settings change, build the whole product again (ccache keeps that short).
+buildspec=
+board=none
+case "$target" in
+    silvering-*)
+        buildspec=/src/device/mirror/silvering/BoardConfigSilvering.mk
+        board=$(sha256sum "$product/BoardConfigSilvering.mk" | cut -d' ' -f1) ;;
+esac
+# One stamp for the whole out/: silvering and msm8916_64 share a product
+# folder, so it records the settings that folder was last compiled under.
+board_stamp=$root/src/out/.silvering-board
+if [ -d "$root/src/out/target" ] && [ "$(cat "$board_stamp" 2>/dev/null)" != "$board" ]; then
+    clean='rm -rf "$OUT"'
+fi
 # Until this build succeeds, out/ may hold files of other inputs.
 rm -f "$stamp"
 
@@ -114,6 +131,7 @@ in_container() {
             set -e
             ccache -M 50G >/dev/null
             export BUILD_NUMBER=$build_number
+            ${buildspec:+export ANDROID_BUILDSPEC=$buildspec}
             source build/envsetup.sh >/dev/null
             lunch $target
             $1"
@@ -124,6 +142,8 @@ exec > >(tee -a "$log") 2>&1
 echo "building $target ($goals, build number $build_number) with $cpus CPUs / $memory; log: $log"
 in_container "
             $clean
+            # Objects compiled from here on follow these board settings.
+            mkdir -p /src/out && echo $board > /src/out/.silvering-board
             # build.prop depends on the build's makefiles only, not on the
             # build number: make it again so that it carries this one.
             rm -f \$OUT/obj/ETC/system_build_prop_intermediates/build.prop

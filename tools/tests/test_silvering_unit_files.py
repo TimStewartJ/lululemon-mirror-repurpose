@@ -115,6 +115,8 @@ class UnitFilesTest(unittest.TestCase):
                    ("lib/modules/wlan.ko", "/system/lib/modules/pronto/pronto_wlan.ko")],
             skipped=[("/system/bin/thermal-engine", "read ended early; padded with zeros"),
                      ("/system/bin/cnd", "lstat failed: EACCES (Permission denied)"),
+                     ("/system/bin/vold", "lstat failed: EACCES (Permission denied)"),
+                     ("/system/bin/install-recovery.sh", "lstat failed: EACCES (Permission denied)"),
                      ("/system/lost+found", "folder cannot be listed")],
             folders={"vendor/secret": (0o750, 0, 1000), "etc/wifi": (0o750, 0, 1010)},
         )
@@ -127,10 +129,11 @@ class UnitFilesTest(unittest.TestCase):
             "etc/security/mac_permissions.xml": b"silvering keys",
             "lib/libc.so": b"rebuilt",
             "bin/sh": b"real file",
+            "bin/vold": b"built daemon",
         })
         code, _, err = self.run_tool(tar, built)
         self.assertEqual(code, 1)
-        self.assertIn("could not read 2 files", err)
+        self.assertIn("could not read 2 files that the build does not make", err)
 
         code, out, _ = self.run_tool(tar, built, "--allow-unread")
         self.assertEqual(code, 0)
@@ -143,6 +146,9 @@ class UnitFilesTest(unittest.TestCase):
         self.assertEqual(summary["links"], [
             ["lib/modules/wlan.ko", "/system/lib/modules/pronto/pronto_wlan.ko"]])
         self.assertEqual([p for p, _ in summary["unread"]], ["/system/bin/thermal-engine", "/system/bin/cnd"])
+        # Unread files the build makes, or leaves out anyway, are not missing.
+        self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/vold", "built"],
+                                                      ["/system/bin/install-recovery.sh", "skipped"]])
         self.assertEqual(summary["meta"]["bin/qmuxd"], [0o755, 0, 2000])
         # Every folder holding a unit file or link keeps the unit's owner and
         # mode, also where the build has that folder.
@@ -154,6 +160,15 @@ class UnitFilesTest(unittest.TestCase):
         # A config with the build's bytes is not copied but keeps its owner and mode.
         self.assertEqual(summary["configMeta"], {"etc/wifi/WCNSS_qcom_cfg.ini": [0o640, 0, 1010]})
         self.assertEqual(summary["baseline"]["buildProp"], hashlib.sha256(BUILD_PROP).hexdigest())
+
+    def test_unread_files_the_build_makes_do_not_stop_it(self):
+        tar = self.make_tar(MODULES | {"bin/qmuxd": b"daemon"},
+                            skipped=[("/system/bin/wpa_supplicant", "lstat failed: EACCES")])
+        code, out, err = self.run_tool(tar, self.make_built({"bin/wpa_supplicant": b"built"}))
+        self.assertEqual(code, 0, err)
+        summary = json.loads((out / "unit.json").read_text())
+        self.assertEqual(summary["unread"], [])
+        self.assertEqual(summary["unreadNotNeeded"], [["/system/bin/wpa_supplicant", "built"]])
 
     def test_refuses_unsafe_paths_and_keeps_the_previous_output(self):
         built = self.make_built({})
