@@ -156,7 +156,7 @@ def resolve_in_build(built_system, rel, hops=40):
             continue
         if not os.path.lexists(path):
             return None, linked
-        if any(part not in ("", ".") for part in parts) and not os.path.isdir(path):
+        if parts and not os.path.isdir(path):
             return None, linked
         current.append(name)
     path = os.path.join(built_system, *current)
