@@ -19,6 +19,9 @@
   stage.py check-signers STAGE_SYSTEM PUBLIC_KEY_DIR PLATFORM_CERT
       Refuse an app signed with one of AOSP's public keys, and check that the
       framework and the security policy carry the host's platform key.
+  stage.py verify-apks STAGE_SYSTEM
+      Verify every app's signature with jarsigner; every entry outside
+      META-INF/ must be signed, as Android 6 requires.
 
 Runs in the build container, so it keeps to Python 2.7.
 """
@@ -319,18 +322,77 @@ def check_signers(system, public_dir, platform_pem):
         root = ElementTree.parse(policy).getroot()
     except ElementTree.ParseError as error:
         fail("mac_permissions.xml: %s" % error)
-    mapped = {}
-    for signer in root.iter("signer"):
-        signature = (signer.get("signature") or "").lower()
-        mapped.setdefault(signature, set()).update(
-            s.get("value") for s in signer.iter("seinfo"))
-    if "platform" not in mapped.get(binascii.hexlify(platform).decode("ascii"), ()):
+    # A signer's certificates are its signature attribute and its <cert>
+    # children; its own <seinfo> applies to every app signed by exactly those
+    # (a <package>'s applies to that package only).
+    rules, named = [], set()
+    for signer in root.findall("signer"):
+        certs = set(c.get("signature").lower() for c in [signer] + signer.findall("cert")
+                    if c.get("signature"))
+        rules.append((certs, set(s.get("value") for s in signer.findall("seinfo"))))
+    for element in root.iter():
+        if element.get("signature"):
+            named.add(element.get("signature").lower())
+    platform_hex = binascii.hexlify(platform).decode("ascii")
+    if not any(certs == set([platform_hex]) and "platform" in seinfo for certs, seinfo in rules):
         fail("mac_permissions.xml does not map the host's platform key to seinfo platform")
-    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in mapped)
+    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in named)
     if stale:
         fail("mac_permissions.xml names AOSP's public keys: %s" % ", ".join(stale))
     print("signers of %d apps checked: none is an AOSP public key; framework and policy "
           "carry the platform key %s" % (apks, hashlib.sha256(platform).hexdigest()[:16]))
+
+
+JARSIGNER_ENTRY = re.compile(r"^([A-Za-z]*)\s+\d+ \w{3} \w{3} \d{2} \d\d:\d\d:\d\d \S+ \d{4} (.+)$")
+
+
+def unverified_entries(output):
+    """Entries of `jarsigner -verify -verbose` output that Android 6's
+    PackageParser would refuse: every entry outside META-INF/ must carry a
+    verified signature (flag s), AndroidManifest.xml included. None when
+    jarsigner did not verify the jar at all."""
+    lines = output.splitlines()
+    if "jar verified." not in [line.strip() for line in lines]:
+        return None
+    entries, bad = set(), []
+    for line in lines:
+        match = JARSIGNER_ENTRY.match(line)
+        if not match:
+            continue
+        flags, name = match.groups()
+        if name.startswith("META-INF/") or name.endswith("/"):
+            continue
+        entries.add(name)
+        if "s" not in flags:
+            bad.append(name)
+    if "AndroidManifest.xml" not in entries:
+        bad.append("AndroidManifest.xml (not listed)")
+    return bad
+
+
+def verify_apks(system):
+    """Verify every app's v1 signature with jarsigner, as Android 6 does."""
+    import subprocess
+    refused, apks = [], 0
+    for folder, dirs, files in os.walk(system):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(folder, name)
+            if not name.endswith(".apk") or os.path.islink(path):
+                continue
+            apks += 1
+            rel = os.path.relpath(path, system).replace(os.sep, "/")
+            process = subprocess.Popen(["jarsigner", "-verify", "-verbose", path],
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            output = process.communicate()[0].decode("utf-8", "replace")
+            bad = unverified_entries(output)
+            if bad is None:
+                refused.append("%s: signature does not verify" % rel)
+            elif bad:
+                refused.append("%s: unsigned entries %s" % (rel, ", ".join(bad[:3])))
+    if refused:
+        fail("apps Android would refuse:\n  " + "\n  ".join(refused))
+    print("signatures of %d apps verified, every entry signed" % apks)
 
 
 def main():
@@ -347,6 +409,8 @@ def main():
         check_meta(args[1])
     elif len(args) == 4 and args[0] == "check-signers":
         check_signers(*args[1:])
+    elif len(args) == 2 and args[0] == "verify-apks":
+        verify_apks(args[1])
     else:
         fail(__doc__.split("\n\n")[1])
 

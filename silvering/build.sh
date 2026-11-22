@@ -69,6 +69,14 @@ docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)
 # key as testkey in the same folder, so that name leads to releasekey.
 key_names="releasekey platform shared media"
 if [ -n "$keys" ]; then
+    for ext in x509.pem pk8; do
+        alias=$keys/testkey.$ext
+        if [ -L "$alias" ] && [ "$(readlink "$alias")" = "releasekey.$ext" ]; then continue; fi
+        if [ -e "$alias" ] || [ -L "$alias" ]; then
+            echo "$alias is not a link to releasekey.$ext: move it away" >&2
+            exit 1
+        fi
+    done
     have=0
     for name in $key_names; do
         if [ -e "$keys/$name.pk8" ] || [ -e "$keys/$name.x509.pem" ]; then have=$((have + 1)); fi
@@ -102,13 +110,7 @@ if [ -n "$keys" ]; then
             [ \"\$key\" = \"\$cert\" ] || { echo \"\$name.pk8 does not belong to \$name.x509.pem\" >&2; exit 1; }
         done"
     for ext in x509.pem pk8; do
-        alias=$keys/testkey.$ext
-        if [ -L "$alias" ] && [ "$(readlink "$alias")" = "releasekey.$ext" ]; then continue; fi
-        if [ -e "$alias" ] || [ -L "$alias" ]; then
-            echo "$alias is not a link to releasekey.$ext: move it away" >&2
-            exit 1
-        fi
-        ln -s "releasekey.$ext" "$alias"
+        [ -L "$keys/testkey.$ext" ] || ln -s "releasekey.$ext" "$keys/testkey.$ext"
     done
 fi
 
