@@ -403,6 +403,19 @@ class CheckSignersTest(unittest.TestCase):
         self.assertIn("app/Half/Half.apk: java.lang.Exception: unsigned entry", err)
         self.assertIn("app/Missed.apk: not checked", err)
 
+    def test_refuses_a_report_with_rows_twice_or_for_other_files(self):
+        self.signers["app/Gone.apk"] = self.signers["framework/framework-res.apk"]
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("lists app/Gone.apk which is not an app of the image", err)
+
+        del self.signers["app/Gone.apk"]
+        listing = "".join(f"./{rel}\t{result}\n" for rel, result in self.signers.items())
+        code, _, err = run_stage("check-signers", self.system, self.public, self.platform,
+                                 stdin=listing + listing.splitlines(True)[0])
+        self.assertEqual(code, 1)
+        self.assertIn("lists framework/framework-res.apk twice", err)
+
     def test_refuses_public_keys_anywhere(self):
         self.apk("priv-app/Shell/Shell.apk", self.HOST_PLATFORM, self.PUBLIC_PLATFORM)
         code, _, err = self.check()
