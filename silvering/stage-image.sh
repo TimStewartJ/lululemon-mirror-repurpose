@@ -34,6 +34,7 @@ rm -f "$stage/system/bin/install-recovery.sh" "$stage/system/recovery-from-boot.
 # Every app must verify as Android 6 verifies it (ApkSigners.java), none may
 # carry one of AOSP's public keys, and the platform key must be the host's own
 # (build.sh passes its folder as SILVERING_KEYS).
+mkdir -p "$stage/tools"
 javac -nowarn -d "$stage/tools" "$here/ApkSigners.java"
 ( cd "$stage/system" && find . -name '*.apk' -type f -print0 | sort -z \
     | xargs -0 -r java -cp "$stage/tools" ApkSigners ) > "$stage/signers.txt"
