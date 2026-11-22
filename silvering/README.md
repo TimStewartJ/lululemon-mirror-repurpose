@@ -70,8 +70,9 @@ folder that holds only some of them, or a private key that does not belong
 to its certificate. When the keys change, the next build builds the whole
 product again.
 
-`stage-image.sh` refuses an image in which any app is unsigned or signed with
-one of AOSP's public keys, any app's signature does not verify (`jarsigner`),
+`stage-image.sh` refuses an image in which any app does not verify as
+Android 6 verifies it (`ApkSigners.java`: every entry signed by the same
+signers, the manifest included) or is signed with one of AOSP's public keys,
 or the framework is not signed with the host's platform key and the security
 policy (`mac_permissions.xml`) does not map that key to `seinfo` `platform`.
 

@@ -90,9 +90,9 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    before 1.4.0, any but the factory's), so OTA and rollback would fail on
    Silvering. The image's `build.prop` fingerprint is
    `mirror/silvering/msm8916_64:6.0.1/MMB29M/<recipe commit>:userdebug/dev-keys`,
-   and the build log shows `stage-image.sh`'s signer check (no app with an
-   AOSP public key; the host's platform key in the framework and security
-   policy). The host's keys in `~/silvering/keys` are backed up before the
+   and the build log shows `stage-image.sh`'s signer check (`verified signers
+   of N apps`: every app verified, none with an AOSP public key, the host's
+   platform key in the framework and security policy). The host's keys in `~/silvering/keys` are backed up before the
    write: every later system image for this unit needs the same platform key.
 2. The flashing computer's `fastboot` is platform-tools **35.0.1-11580240**
    (`fastboot --version`; **Stop** on any other version). Its `flash` sends the

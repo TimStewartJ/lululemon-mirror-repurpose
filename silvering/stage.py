@@ -248,13 +248,16 @@ def check_signers(system, public_dir, platform_pem, signers_in):
         rel, _, result = line.rstrip("\r\n").partition("\t")
         if rel.startswith("./"):
             rel = rel[2:]
+        if rel in signers or rel not in apks:
+            fail("the signer report lists %s %s" % (rel, "twice" if rel in signers else
+                                                      "which is not an app of the image"))
         if result.startswith("ERROR ") or not re.match(r"^[0-9a-f]{64}(,[0-9a-f]{64})*$", result):
             refused.append("%s: %s" % (rel, result[len("ERROR "):] if result.startswith("ERROR ") else result))
+            signers[rel] = None
             continue
         signers[rel] = set(result.split(","))
-    unchecked = sorted(apks - set(signers) - set(r.split(": ")[0] for r in refused))
-    if unchecked:
-        refused.extend("%s: not checked" % rel for rel in unchecked)
+    refused.extend("%s: not checked" % rel for rel in sorted(apks - set(signers)))
+    signers = dict((rel, certs) for rel, certs in signers.items() if certs is not None)
     for rel in sorted(signers):
         for sha in sorted(signers[rel] & set(public)):
             refused.append("%s: signed with AOSP's public %s key" % (rel, public[sha][1]))
