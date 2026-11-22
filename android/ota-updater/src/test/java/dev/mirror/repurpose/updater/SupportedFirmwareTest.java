@@ -17,6 +17,9 @@ public final class SupportedFirmwareTest {
                 "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/test-keys"));
         assertTrue(SupportedFirmware.supports(
                 "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:user/release-keys"));
+        // Signed with the build host's own keys.
+        assertTrue(SupportedFirmware.supports(
+                "mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/dev-keys"));
     }
 
     @Test

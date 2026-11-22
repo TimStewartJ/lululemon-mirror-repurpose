@@ -43,12 +43,33 @@ Every project is fetched shallow at its pinned commit (about 25 GB).
 
 Signed `MirrorHome.apk` and `MirrorUpdater.apk` in `~/silvering/apps/` are
 built into the image; `msm8916_64-userdebug` builds Qualcomm's plain product
-for comparison. The OTA supervisor installs updates on Silvering from 1.4.0.
+for comparison. The OTA supervisor installs updates on Silvering from 1.4.0,
+and on Silvering signed with the host's keys (below) from 1.4.1.
 
 The build number is the recipe commit (12 hex digits, with `.modified` when
 `silvering/` has uncommitted changes), so a unit's fingerprint, such as
-`mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/test-keys`,
+`mirror/silvering/msm8916_64:6.0.1/MMB29M/54b14ca1d2e3:userdebug/dev-keys`,
 names the recipe that built its system.
+
+## Signing keys
+
+AOSP's own test keys are public: a system signed with them would let anyone
+sign an app with system rights. Silvering's platform, shared, media and
+default apps are signed with keys of the build host instead. The first
+`silvering-*` build makes them in `~/silvering/keys` (`SILVERING_KEYS`
+changes it; RSA 2048 without a password, as AOSP's `make_key` makes them),
+and the build is tagged `dev-keys`. They never leave the host and must stay
+outside this checkout.
+
+**Back the keys up.** A unit's next system image must carry the same platform
+key: Android refuses system apps whose signature no longer matches what is
+recorded in `userdata`, so new keys mean erasing `userdata` again. A build
+refuses a keys folder that holds only some of them. When the keys change, the
+next build builds the whole product again.
+
+`stage-image.sh` refuses an image in which any app is signed with one of
+AOSP's public keys, or whose framework and security policy
+(`mac_permissions.xml`) do not carry the host's platform key.
 
 The build runs in an Ubuntu 14.04 container (OpenJDK 7, make 3.81, Python 2.7,
 as Android 6 requires), capped by default at 6 CPUs and 24 GB of memory with a

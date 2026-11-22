@@ -31,6 +31,10 @@ python "$here/stage.py" stage "$unit" "$OUT/system" "$stage/system"
 # and its patch out. The read-back below proves the image holds the stage.
 rm -f "$stage/system/bin/install-recovery.sh" "$stage/system/recovery-from-boot.p" \
     "$stage/system/etc/recovery-resource.dat"
+# No app may carry one of AOSP's public keys, and the platform key must be the
+# host's own (build.sh passes its folder as SILVERING_KEYS).
+python "$here/stage.py" check-signers "$stage/system" build/target/product/security \
+    "${SILVERING_KEYS:?build Silvering with build.sh}/platform.x509.pem"
 
 # Owners and modes: fs_config's defaults for the whole tree, with the unit's
 # own for its files.

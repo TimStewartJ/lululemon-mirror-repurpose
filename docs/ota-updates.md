@@ -28,7 +28,7 @@ release certificate as the supervisor. It also installs only on firmware it
 knows: the factory image's exact fingerprint, or, from supervisor 1.4.0,
 [Silvering](../silvering/README.md) for the same board
 (`mirror/silvering/msm8916_64:6.0.1/MMB29M/<build number>`, user or
-userdebug). `status` says which with `firmwareSupported`. The Android release
+userdebug; signed with its build host's keys, `dev-keys`, from 1.4.1). `status` says which with `firmwareSupported`. The Android release
 private key never resides on the Mirror.
 
 ## One-time provisioning

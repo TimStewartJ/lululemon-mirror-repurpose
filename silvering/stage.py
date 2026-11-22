@@ -16,11 +16,16 @@
   stage.py check-meta UNIT_DIR < DEBUGFS_OUTPUT
       Check that the image gives the unit's files and folders those owners
       and modes.
+  stage.py check-signers STAGE_SYSTEM PUBLIC_KEY_DIR PLATFORM_CERT
+      Refuse an app signed with one of AOSP's public keys, and check that the
+      framework and the security policy carry the host's platform key.
 
 Runs in the build container, so it keeps to Python 2.7.
 """
 from __future__ import print_function
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -206,6 +211,110 @@ def check_meta(unit):
         fail("owners or modes differ in the image:\n  " + "\n  ".join(wrong[:20]))
     print("owners and modes of %d unit entries match" % len(want))
 
+
+def der_items(data, start, end):
+    """(item start, content start, content end, tag) of each DER item in
+    data[start:end]."""
+    pos = start
+    while pos < end:
+        if end - pos < 2:
+            fail("truncated DER item")
+        item, tag, length = pos, bytearray(data[pos:pos + 1])[0], bytearray(data[pos + 1:pos + 2])[0]
+        pos += 2
+        if length & 0x80:
+            count = length & 0x7f
+            if count < 1 or count > 4 or pos + count > end:
+                fail("unsupported DER length")
+            length = 0
+            for byte in bytearray(data[pos:pos + count]):
+                length = length * 256 + byte
+            pos += count
+        if pos + length > end:
+            fail("truncated DER item")
+        yield item, pos, pos + length, tag
+        pos += length
+
+
+def pkcs7_certificates(data):
+    """The certificates of a PKCS#7 SignedData block (an APK's v1 signature
+    file): ContentInfo { OID, [0] SignedData { ..., [0] certificates } }."""
+    for _, start, end, tag in der_items(data, 0, len(data)):
+        if tag != 0x30:
+            break
+        inner = list(der_items(data, start, end))
+        if len(inner) < 2 or inner[1][3] != 0xa0:
+            break
+        signed = list(der_items(data, inner[1][1], inner[1][2]))
+        if not signed or signed[0][3] != 0x30:
+            break
+        for _, cstart, cend, ctag in der_items(data, signed[0][1], signed[0][2]):
+            if ctag == 0xa0:
+                return [bytes(data[i:e]) for i, _, e, _ in der_items(data, cstart, cend)]
+        return []
+    fail("not a PKCS#7 signature block")
+
+
+def pem_certificate(path):
+    with open(path) as f:
+        text = f.read()
+    match = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", text, re.S)
+    if not match:
+        fail("%s holds no certificate" % path)
+    return base64.b64decode("".join(match.group(1).split()))
+
+
+def apk_signers(path):
+    import zipfile
+    signers = []
+    with zipfile.ZipFile(path) as apk:
+        for name in apk.namelist():
+            if re.match(r"META-INF/[^/]+\.(RSA|DSA|EC)$", name):
+                signers.extend(pkcs7_certificates(apk.read(name)))
+    return signers
+
+
+def check_signers(system, public_dir, platform_pem):
+    """Refuse an image with an app signed by one of AOSP's public keys
+    (PUBLIC_DIR, build/target/product/security), and check that the
+    framework and the security policy carry the host's platform key."""
+    public = {}
+    for name in sorted(os.listdir(public_dir)):
+        if name.endswith(".x509.pem"):
+            public[pem_certificate(os.path.join(public_dir, name))] = name[:-len(".x509.pem")]
+    platform = pem_certificate(platform_pem)
+    if platform in public:
+        fail("the platform key is AOSP's public %s key" % public[platform])
+    public_signed, apks = [], 0
+    for folder, dirs, files in os.walk(system):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(folder, name)
+            if not name.endswith(".apk") or os.path.islink(path):
+                continue
+            apks += 1
+            for cert in apk_signers(path):
+                if cert in public:
+                    public_signed.append("%s (%s)" % (
+                        os.path.relpath(path, system).replace(os.sep, "/"), public[cert]))
+    if public_signed:
+        fail("apps signed with AOSP's public keys:\n  " + "\n  ".join(public_signed))
+    framework = os.path.join(system, "framework", "framework-res.apk")
+    if not os.path.isfile(framework) or apk_signers(framework) != [platform]:
+        fail("framework/framework-res.apk is not signed with the host's platform key")
+    policy = os.path.join(system, "etc", "security", "mac_permissions.xml")
+    if not os.path.isfile(policy):
+        fail("no etc/security/mac_permissions.xml")
+    with open(policy) as f:
+        text = f.read().lower()
+    if binascii.hexlify(platform).decode("ascii") not in text:
+        fail("mac_permissions.xml does not name the host's platform key")
+    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in text)
+    if stale:
+        fail("mac_permissions.xml names AOSP's public keys: %s" % ", ".join(stale))
+    print("signers of %d apps checked: none is an AOSP public key; framework and policy "
+          "carry the platform key %s" % (apks, hashlib.sha256(platform).hexdigest()[:16]))
+
+
 def main():
     args = sys.argv[1:]
     if len(args) == 4 and args[0] == "stage":
@@ -218,6 +327,8 @@ def main():
         check_commands(args[1])
     elif len(args) == 2 and args[0] == "check-meta":
         check_meta(args[1])
+    elif len(args) == 4 and args[0] == "check-signers":
+        check_signers(*args[1:])
     else:
         fail(__doc__.split("\n\n")[1])
 
