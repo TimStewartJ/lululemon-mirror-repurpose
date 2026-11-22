@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Silvering signs its system with the build host's own keys (made once in
+  `~/silvering/keys`, kept private) instead of AOSP's public test keys, whose
+  platform key would let anyone sign an app with system rights. Builds are
+  tagged `dev-keys`; the image is refused if any app carries a public AOSP
+  key or the framework and security policy lack the host's platform key.
+  OTA supervisor 1.4.1 accepts `dev-keys` Silvering builds.
+
 - OTA supervisor 1.4.0 installs updates on Silvering as well as on the
   factory image: any Silvering build for the same board
   (`mirror/silvering/msm8916_64:6.0.1/MMB29M/...`, user or userdebug).

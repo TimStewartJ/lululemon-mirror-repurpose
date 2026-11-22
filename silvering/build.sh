@@ -13,6 +13,10 @@
 #   ALLOW_UNREAD    files the transfer could not read and the image needs:
 #                   a file listing the approved paths (the image is made only
 #                   if they are exactly those), or 1 for a test image
+#   SILVERING_KEYS  the host's signing keys for silvering-* targets (default
+#                   $SILVERING_ROOT/keys; made on the first build). Keep a
+#                   backup: a unit's next system image must carry the same
+#                   platform key, or its system apps no longer start
 #   CPUS            CPU cap for the container (default 6)
 #   MEMORY          memory cap (default 24g)
 #   JOBS            make -j (default CPUS)
@@ -27,6 +31,10 @@ target=${1:-silvering-userdebug}
 if [ $# -gt 0 ]; then shift; fi
 goals=${*:-systemimage}
 image=silvering-build:trusty
+keys=
+case "$target" in
+    silvering-*) keys=${SILVERING_KEYS:-$root/keys} ;;
+esac
 
 [ -d "$root/src/.repo" ] || { echo "no sources in $root/src: run sync.sh first" >&2; exit 1; }
 # One build at a time per root: a second one would rewrite the product tree
@@ -34,9 +42,13 @@ image=silvering-build:trusty
 exec 9>"$root/build.lock"
 flock -n 9 || { echo "another build is running in $root" >&2; exit 1; }
 # The sources, images and a unit's files hold Qualcomm's and the board maker's
-# files: keep them out of this checkout.
+# files, and the keys sign the system: keep them out of this checkout.
+if [ -n "$keys" ]; then
+    mkdir -p "$keys"
+    chmod 700 "$keys"
+fi
 checkout=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || true)
-for private in "$root"; do
+for private in "$root" "$keys"; do
     if [ -n "$checkout" ] && [ -n "$private" ]; then
         case "$(cd "$private" && pwd -P)/" in
             "$(cd "$checkout" && pwd -P)/"*) echo "$private is inside the checkout $checkout" >&2; exit 1 ;;
@@ -44,6 +56,39 @@ for private in "$root"; do
     fi
 done
 mkdir -p "$root/ccache" "$root/logs" "$root/images"
+docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
+
+# The host's keys, made once with openssl as AOSP's make_key does (RSA 2048,
+# exponent 65537, no password). Android's security policy finds the default
+# key as testkey in the same folder, so that name leads to releasekey.
+key_names="releasekey platform shared media"
+if [ -n "$keys" ]; then
+    have=0
+    for name in $key_names; do
+        if [ -e "$keys/$name.pk8" ] || [ -e "$keys/$name.x509.pem" ]; then have=$((have + 1)); fi
+    done
+    if [ "$have" -eq 0 ]; then
+        echo "making this host's Silvering keys in $keys (back them up)"
+        docker run --rm -v "$keys:/keys" "$image" bash -c "
+            set -e
+            umask 077
+            for name in $key_names; do
+                openssl genrsa -f4 2048 2>/dev/null > /tmp/key.pem
+                openssl req -new -x509 -sha256 -days 10000 -key /tmp/key.pem \
+                    -subj \"/O=Silvering/OU=$(hostname)/CN=\$name\" -out /keys/\$name.x509.pem
+                openssl pkcs8 -in /tmp/key.pem -topk8 -outform DER -nocrypt -out /keys/\$name.pk8
+                rm /tmp/key.pem
+            done"
+    fi
+    for name in $key_names; do
+        [ -f "$keys/$name.pk8" ] && [ -f "$keys/$name.x509.pem" ] || {
+            echo "$keys lacks $name.pk8 or $name.x509.pem: restore the keys from their backup" >&2
+            exit 1
+        }
+    done
+    ln -sfn releasekey.x509.pem "$keys/testkey.x509.pem"
+    ln -sfn releasekey.pk8 "$keys/testkey.pk8"
+fi
 
 product=$root/src/device/mirror/silvering
 mkdir -p "$product"
@@ -81,12 +126,15 @@ fi
 # ANDROID_BUILDSPEC. make does not track compiler flags, so objects compiled
 # under other board settings would be linked again as they are: when the
 # settings change, build the whole product again (ccache keeps that short).
+# The same holds for the keys: not every output that carries a certificate
+# (the security policy's mac_permissions.xml) depends on the key files.
 buildspec=
 board=none
 case "$target" in
     silvering-*)
         buildspec=/src/device/mirror/silvering/BoardConfigSilvering.mk
-        board=$(sha256sum "$product/BoardConfigSilvering.mk" | cut -d' ' -f1) ;;
+        board=$(cat "$product/BoardConfigSilvering.mk" "$keys"/{releasekey,platform,shared,media}.x509.pem \
+            | sha256sum | cut -d' ' -f1) ;;
 esac
 # The stamp belongs to the product folder lunch picks ($OUT), which other
 # targets may share (msm8916_64 records "none"); it is checked and written
@@ -110,14 +158,12 @@ if [ -n "$system_tar" ]; then
     done
 fi
 
-docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" "$here/docker" >/dev/null
-
 # The build number (in the fingerprint and ro.build.version.incremental) is
 # the recipe commit instead of the build's date, so a unit says which recipe
 # built its system. The OTA supervisor accepts any build number here
 # (android/ota-updater SupportedFirmware): [0-9A-Za-z._-] only. Android keeps
 # at most 91 bytes of a property, and the rest of the fingerprint
-# (mirror/silvering/msm8916_64:6.0.1/MMB29M/:userdebug/test-keys) takes 61.
+# (mirror/silvering/msm8916_64:6.0.1/MMB29M/:userdebug/dev-keys) takes 60.
 build_number=$(git -C "$here" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 if [ "$build_number" != unknown ] &&
         [ -n "$(git -C "$here" status --porcelain --untracked-files=normal -- . 2>/dev/null)" ]; then
@@ -129,15 +175,19 @@ if [ ${#build_number} -gt 30 ] || ! [[ $build_number =~ ^[0-9A-Za-z._-]+$ ]]; th
 fi
 
 extra=()
+key_mount=()
+if [ -n "$keys" ]; then key_mount=(-v "$keys:/keys:ro"); fi
 in_container() {
     docker run --rm --name silvering-build \
         --cpus "$cpus" --cpu-shares 256 --memory "$memory" --memory-swap "$memory" \
-        -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" ${extra[@]+"${extra[@]}"} \
+        -v "$root/src:/src" -v "$root/ccache:/ccache" -v "$here:/recipe:ro" \
+        ${key_mount[@]+"${key_mount[@]}"} ${extra[@]+"${extra[@]}"} \
         "$image" bash -c "
             set -e
             ccache -M 50G >/dev/null
             export BUILD_NUMBER=$build_number
             ${buildspec:+export ANDROID_BUILDSPEC=$buildspec}
+            ${keys:+export SILVERING_KEYS=/keys}
             source build/envsetup.sh >/dev/null
             lunch $target
             $1"

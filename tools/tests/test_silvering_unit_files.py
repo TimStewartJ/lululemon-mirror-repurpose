@@ -1,4 +1,5 @@
 import contextlib
+import base64
 import hashlib
 import importlib.util
 import io
@@ -9,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -338,6 +340,97 @@ class UnitFilesTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("leads through a link", err)
         self.assertTrue((outside / "keep.ko").exists())
+
+
+def der(tag, content):
+    if len(content) < 0x80:
+        return bytes([tag, len(content)]) + content
+    size = len(content).to_bytes((len(content).bit_length() + 7) // 8, "big")
+    return bytes([tag, 0x80 | len(size)]) + size + content
+
+
+def signature_block(*certs):
+    """A PKCS#7 SignedData block as signapk writes it, with these certificates."""
+    signed = (der(0x02, b"\x01") + der(0x31, der(0x30, der(0x06, b"\x60\x86\x48"))) +
+              der(0x30, der(0x06, b"\x2a\x86\x48\x86\xf7\x0d\x01\x07\x01")) +
+              der(0xa0, b"".join(certs)) + der(0x31, b"signer info"))
+    return der(0x30, der(0x06, b"\x2a\x86\x48\x86\xf7\x0d\x01\x07\x02") + der(0xa0, der(0x30, signed)))
+
+
+class CheckSignersTest(unittest.TestCase):
+    # Certificates long enough for DER's long length form.
+    PUBLIC_PLATFORM = der(0x30, b"aosp platform" * 20)
+    PUBLIC_TESTKEY = der(0x30, b"aosp testkey" * 20)
+    HOST_PLATFORM = der(0x30, b"host platform" * 20)
+    HOST_RELEASE = der(0x30, b"host releasekey" * 20)
+
+    def setUp(self):
+        self.tmp = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.public = self.tmp / "security"
+        self.public.mkdir()
+        self.pem(self.public / "platform.x509.pem", self.PUBLIC_PLATFORM)
+        self.pem(self.public / "testkey.x509.pem", self.PUBLIC_TESTKEY)
+        self.platform = self.pem(self.tmp / "platform.x509.pem", self.HOST_PLATFORM)
+        self.system = self.tmp / "system"
+        self.apk("framework/framework-res.apk", self.HOST_PLATFORM)
+        self.apk("app/Settings/Settings.apk", self.HOST_PLATFORM)
+        self.apk("app/Gallery/Gallery.apk", self.HOST_RELEASE)
+        self.policy(self.HOST_PLATFORM, self.HOST_RELEASE)
+
+    def pem(self, path, cert):
+        body = base64.encodebytes(cert).decode()
+        path.write_text(f"-----BEGIN CERTIFICATE-----\n{body}-----END CERTIFICATE-----\n")
+        return path
+
+    def apk(self, rel, cert):
+        path = self.system / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path, "w") as apk:
+            apk.writestr("classes.dex", b"dex")
+            apk.writestr("META-INF/CERT.RSA", signature_block(cert))
+
+    def policy(self, *certs):
+        path = self.system / "etc/security/mac_permissions.xml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<policy>" + "".join(
+            f'<signer signature="{c.hex().upper()}"/>' for c in certs) + "</policy>")
+
+    def check(self):
+        return run_stage("check-signers", self.system, self.public, self.platform)
+
+    def test_accepts_a_system_signed_with_the_hosts_keys(self):
+        code, out, err = self.check()
+        self.assertEqual(code, 0, err)
+        self.assertIn("signers of 3 apps checked", out)
+
+    def test_refuses_public_keys_anywhere(self):
+        self.apk("priv-app/Shell/Shell.apk", self.PUBLIC_PLATFORM)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("priv-app/Shell/Shell.apk (platform)", err)
+
+        self.apk("priv-app/Shell/Shell.apk", self.HOST_PLATFORM)
+        self.policy(self.HOST_PLATFORM, self.PUBLIC_TESTKEY)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("mac_permissions.xml names AOSP's public keys: testkey", err)
+
+        self.pem(self.platform, self.PUBLIC_PLATFORM)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("the platform key is AOSP's public platform key", err)
+
+    def test_requires_the_hosts_platform_key_in_framework_and_policy(self):
+        self.apk("framework/framework-res.apk", self.HOST_RELEASE)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("framework-res.apk is not signed with the host's platform key", err)
+
+        self.apk("framework/framework-res.apk", self.HOST_PLATFORM)
+        self.policy(self.HOST_RELEASE)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("does not name the host's platform key", err)
 
 
 if __name__ == "__main__":
