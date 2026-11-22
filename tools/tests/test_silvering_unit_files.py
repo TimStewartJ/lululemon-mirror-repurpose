@@ -443,6 +443,48 @@ class CheckSignersTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("does not map the host's platform key to seinfo platform", err)
 
+    def write_policy(self, body):
+        path = self.system / "etc/security/mac_permissions.xml"
+        path.write_text(f"<?xml version='1.0'?>\n<policy>{body}</policy>")
+
+    def test_policy_certificates_in_cert_children_and_package_labels(self):
+        host, public = self.HOST_PLATFORM.hex(), self.PUBLIC_TESTKEY.hex()
+        # A label for one package does not map the key for every app.
+        self.write_policy(f'<signer signature="{host}"><package name="com.x">'
+                          '<seinfo value="platform" /></package></signer>')
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("does not map the host's platform key", err)
+
+        self.write_policy(f'<signer><cert signature="{host}" /><seinfo value="platform" /></signer>')
+        code, _, err = self.check()
+        self.assertEqual(code, 0, err)
+
+        self.write_policy(f'<signer signature="{host}"><seinfo value="platform" /></signer>'
+                          f'<signer><cert signature="{public}" /><seinfo value="release" /></signer>')
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("names AOSP's public keys: testkey", err)
+
+    def test_jarsigner_output_needs_every_entry_signed(self):
+        date = "Thu Jan 01 01:01:02 UTC 1981"
+        signed = "\n".join([
+            f"sm      4256 {date} AndroidManifest.xml",
+            f"sm    103832 {date} classes.dex",
+            f"         301 {date} META-INF/MANIFEST.MF",
+            f"         412 {date} META-INF/CERT.SF",
+            "", "  s = signature was verified ", "", "jar verified.", "",
+            "Warning: ", "This jar contains entries whose signer certificate is self-signed."])
+        self.assertEqual(stage.unverified_entries(signed), [])
+        # jarsigner says "jar verified." with some entries unsigned.
+        self.assertEqual(stage.unverified_entries(
+            signed.replace("sm      4256", "        4256")), ["AndroidManifest.xml"])
+        self.assertEqual(stage.unverified_entries(
+            signed.replace(f"sm      4256 {date} AndroidManifest.xml\n", "")),
+            ["AndroidManifest.xml (not listed)"])
+        self.assertIsNone(stage.unverified_entries(
+            "jarsigner: java.lang.SecurityException: invalid SHA1 signature file digest"))
+
 
 if __name__ == "__main__":
     unittest.main()
