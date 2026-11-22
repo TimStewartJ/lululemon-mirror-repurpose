@@ -375,7 +375,7 @@ class CheckSignersTest(unittest.TestCase):
         self.apk("framework/framework-res.apk", self.HOST_PLATFORM)
         self.apk("app/Settings/Settings.apk", self.HOST_PLATFORM)
         self.apk("app/Gallery/Gallery.apk", self.HOST_RELEASE)
-        self.policy(self.HOST_PLATFORM, self.HOST_RELEASE)
+        self.policy((self.HOST_PLATFORM, "platform"), (self.HOST_RELEASE, "release"))
 
     def pem(self, path, cert):
         body = base64.encodebytes(cert).decode()
@@ -389,11 +389,13 @@ class CheckSignersTest(unittest.TestCase):
             apk.writestr("classes.dex", b"dex")
             apk.writestr("META-INF/CERT.RSA", signature_block(cert))
 
-    def policy(self, *certs):
+    def policy(self, *signers):
+        """signers: (certificate, seinfo) pairs, as mac_permissions.xml has them."""
         path = self.system / "etc/security/mac_permissions.xml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("<policy>" + "".join(
-            f'<signer signature="{c.hex().upper()}"/>' for c in certs) + "</policy>")
+        path.write_text("<?xml version='1.0'?>\n<policy>" + "".join(
+            f'<signer signature="{c.hex()}"><seinfo value="{s}" /></signer>' for c, s in signers)
+            + '<default><seinfo value="default" /></default></policy>')
 
     def check(self):
         return run_stage("check-signers", self.system, self.public, self.platform)
@@ -410,7 +412,7 @@ class CheckSignersTest(unittest.TestCase):
         self.assertIn("priv-app/Shell/Shell.apk (platform)", err)
 
         self.apk("priv-app/Shell/Shell.apk", self.HOST_PLATFORM)
-        self.policy(self.HOST_PLATFORM, self.PUBLIC_TESTKEY)
+        self.policy((self.HOST_PLATFORM, "platform"), (self.PUBLIC_TESTKEY, "release"))
         code, _, err = self.check()
         self.assertEqual(code, 1)
         self.assertIn("mac_permissions.xml names AOSP's public keys: testkey", err)
@@ -420,6 +422,15 @@ class CheckSignersTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("the platform key is AOSP's public platform key", err)
 
+    def test_refuses_an_unsigned_app(self):
+        path = self.system / "app/Plain/Plain.apk"
+        path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(path, "w") as apk:
+            apk.writestr("classes.dex", b"dex")
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("without a v1 signature, which Android 6 does not install:\n  app/Plain/Plain.apk", err)
+
     def test_requires_the_hosts_platform_key_in_framework_and_policy(self):
         self.apk("framework/framework-res.apk", self.HOST_RELEASE)
         code, _, err = self.check()
@@ -427,10 +438,10 @@ class CheckSignersTest(unittest.TestCase):
         self.assertIn("framework-res.apk is not signed with the host's platform key", err)
 
         self.apk("framework/framework-res.apk", self.HOST_PLATFORM)
-        self.policy(self.HOST_RELEASE)
+        self.policy((self.HOST_PLATFORM, "release"))
         code, _, err = self.check()
         self.assertEqual(code, 1)
-        self.assertIn("does not name the host's platform key", err)
+        self.assertIn("does not map the host's platform key to seinfo platform", err)
 
 
 if __name__ == "__main__":

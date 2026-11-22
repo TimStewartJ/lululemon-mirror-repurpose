@@ -61,15 +61,19 @@ changes it; RSA 2048 without a password, as AOSP's `make_key` makes them),
 and the build is tagged `dev-keys`. They never leave the host and must stay
 outside this checkout.
 
-**Back the keys up.** A unit's next system image must carry the same platform
-key: Android refuses system apps whose signature no longer matches what is
-recorded in `userdata`, so new keys mean erasing `userdata` again. A build
-refuses a keys folder that holds only some of them. When the keys change, the
-next build builds the whole product again.
+**Back the keys up**, private keys and certificates together. A unit's next
+system image must carry the same platform key: the framework and its system
+apps share the user ID `android.uid.system`, and Android refuses a package
+whose certificate differs from the one recorded for that shared user in
+`userdata`, so new keys mean erasing `userdata` again. A build refuses a keys
+folder that holds only some of them, or a private key that does not belong
+to its certificate. When the keys change, the next build builds the whole
+product again.
 
-`stage-image.sh` refuses an image in which any app is signed with one of
-AOSP's public keys, or whose framework and security policy
-(`mac_permissions.xml`) do not carry the host's platform key.
+`stage-image.sh` refuses an image in which any app is unsigned or signed with
+one of AOSP's public keys, any app's signature does not verify (`jarsigner`),
+or the framework is not signed with the host's platform key and the security
+policy (`mac_permissions.xml`) does not map that key to `seinfo` `platform`.
 
 The build runs in an Ubuntu 14.04 container (OpenJDK 7, make 3.81, Python 2.7,
 as Android 6 requires), capped by default at 6 CPUs and 24 GB of memory with a

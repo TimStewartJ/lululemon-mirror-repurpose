@@ -35,6 +35,17 @@ rm -f "$stage/system/bin/install-recovery.sh" "$stage/system/recovery-from-boot.
 # host's own (build.sh passes its folder as SILVERING_KEYS).
 python "$here/stage.py" check-signers "$stage/system" build/target/product/security \
     "${SILVERING_KEYS:?build Silvering with build.sh}/platform.x509.pem"
+# ... and every app's signature must verify, so that a private key that does
+# not belong to its certificate is caught here rather than at boot.
+find "$stage/system" -name '*.apk' -type f | sort | while IFS= read -r apk; do
+    jarsigner -verify "$apk" 2>&1 | grep -qx 'jar verified\.' || echo "${apk#$stage/}"
+done > "$stage/unverified.txt"
+if [ -s "$stage/unverified.txt" ]; then
+    echo "apps whose signature does not verify:" >&2
+    cat "$stage/unverified.txt" >&2
+    exit 1
+fi
+echo "signatures of $(find "$stage/system" -name '*.apk' -type f | wc -l) apps verified"
 
 # Owners and modes: fs_config's defaults for the whole tree, with the unit's
 # own for its files.

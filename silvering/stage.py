@@ -275,8 +275,10 @@ def apk_signers(path):
 
 def check_signers(system, public_dir, platform_pem):
     """Refuse an image with an app signed by one of AOSP's public keys
-    (PUBLIC_DIR, build/target/product/security), and check that the
-    framework and the security policy carry the host's platform key."""
+    (PUBLIC_DIR, build/target/product/security) or not signed at all, and
+    check that the framework and the security policy carry the host's
+    platform key. This reads certificates only: stage-image.sh verifies the
+    signatures themselves with jarsigner."""
     public = {}
     for name in sorted(os.listdir(public_dir)):
         if name.endswith(".x509.pem"):
@@ -284,7 +286,7 @@ def check_signers(system, public_dir, platform_pem):
     platform = pem_certificate(platform_pem)
     if platform in public:
         fail("the platform key is AOSP's public %s key" % public[platform])
-    public_signed, apks = [], 0
+    public_signed, unsigned, apks = [], [], 0
     for folder, dirs, files in os.walk(system):
         dirs.sort()
         for name in sorted(files):
@@ -292,23 +294,39 @@ def check_signers(system, public_dir, platform_pem):
             if not name.endswith(".apk") or os.path.islink(path):
                 continue
             apks += 1
-            for cert in apk_signers(path):
+            rel = os.path.relpath(path, system).replace(os.sep, "/")
+            signers = apk_signers(path)
+            if not signers:
+                unsigned.append(rel)
+            for cert in signers:
                 if cert in public:
-                    public_signed.append("%s (%s)" % (
-                        os.path.relpath(path, system).replace(os.sep, "/"), public[cert]))
+                    public_signed.append("%s (%s)" % (rel, public[cert]))
     if public_signed:
         fail("apps signed with AOSP's public keys:\n  " + "\n  ".join(public_signed))
+    if unsigned:
+        fail("apps without a v1 signature, which Android 6 does not install:\n  "
+             + "\n  ".join(unsigned))
     framework = os.path.join(system, "framework", "framework-res.apk")
     if not os.path.isfile(framework) or apk_signers(framework) != [platform]:
         fail("framework/framework-res.apk is not signed with the host's platform key")
+    # PackageManager gives an app the SELinux domain of the seinfo its
+    # signer maps to: the platform key must map to "platform".
+    import xml.etree.ElementTree as ElementTree
     policy = os.path.join(system, "etc", "security", "mac_permissions.xml")
     if not os.path.isfile(policy):
         fail("no etc/security/mac_permissions.xml")
-    with open(policy) as f:
-        text = f.read().lower()
-    if binascii.hexlify(platform).decode("ascii") not in text:
-        fail("mac_permissions.xml does not name the host's platform key")
-    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in text)
+    try:
+        root = ElementTree.parse(policy).getroot()
+    except ElementTree.ParseError as error:
+        fail("mac_permissions.xml: %s" % error)
+    mapped = {}
+    for signer in root.iter("signer"):
+        signature = (signer.get("signature") or "").lower()
+        mapped.setdefault(signature, set()).update(
+            s.get("value") for s in signer.iter("seinfo"))
+    if "platform" not in mapped.get(binascii.hexlify(platform).decode("ascii"), ()):
+        fail("mac_permissions.xml does not map the host's platform key to seinfo platform")
+    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in mapped)
     if stale:
         fail("mac_permissions.xml names AOSP's public keys: %s" % ", ".join(stale))
     print("signers of %d apps checked: none is an AOSP public key; framework and policy "

@@ -34,6 +34,10 @@ image=silvering-build:trusty
 keys=
 case "$target" in
     silvering-*) keys=${SILVERING_KEYS:-$root/keys} ;;
+    *) if [ -n "${SYSTEM_TAR:-}" ]; then
+           echo "SYSTEM_TAR makes a Silvering image: use a silvering-* target" >&2
+           exit 1
+       fi ;;
 esac
 
 [ -d "$root/src/.repo" ] || { echo "no sources in $root/src: run sync.sh first" >&2; exit 1; }
@@ -46,6 +50,8 @@ flock -n 9 || { echo "another build is running in $root" >&2; exit 1; }
 if [ -n "$keys" ]; then
     mkdir -p "$keys"
     chmod 700 "$keys"
+    # Docker takes a relative path for a named volume.
+    keys=$(cd "$keys" && pwd -P)
 fi
 checkout=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null || true)
 for private in "$root" "$keys"; do
@@ -86,8 +92,24 @@ if [ -n "$keys" ]; then
             exit 1
         }
     done
-    ln -sfn releasekey.x509.pem "$keys/testkey.x509.pem"
-    ln -sfn releasekey.pk8 "$keys/testkey.pk8"
+    # A private key that does not belong to its certificate signs apps that
+    # Android refuses: check each pair before building.
+    docker run --rm -v "$keys:/keys:ro" "$image" bash -c "
+        set -e
+        for name in $key_names; do
+            key=\$(openssl pkcs8 -inform DER -nocrypt -in /keys/\$name.pk8 | openssl rsa -noout -modulus)
+            cert=\$(openssl x509 -noout -modulus -in /keys/\$name.x509.pem)
+            [ \"\$key\" = \"\$cert\" ] || { echo \"\$name.pk8 does not belong to \$name.x509.pem\" >&2; exit 1; }
+        done"
+    for ext in x509.pem pk8; do
+        alias=$keys/testkey.$ext
+        if [ -L "$alias" ] && [ "$(readlink "$alias")" = "releasekey.$ext" ]; then continue; fi
+        if [ -e "$alias" ] || [ -L "$alias" ]; then
+            echo "$alias is not a link to releasekey.$ext: move it away" >&2
+            exit 1
+        fi
+        ln -s "releasekey.$ext" "$alias"
+    done
 fi
 
 product=$root/src/device/mirror/silvering
