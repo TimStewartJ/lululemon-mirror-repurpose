@@ -16,12 +16,11 @@
   stage.py check-meta UNIT_DIR < DEBUGFS_OUTPUT
       Check that the image gives the unit's files and folders those owners
       and modes.
-  stage.py check-signers STAGE_SYSTEM PUBLIC_KEY_DIR PLATFORM_CERT
-      Refuse an app signed with one of AOSP's public keys, and check that the
-      framework and the security policy carry the host's platform key.
-  stage.py verify-apks STAGE_SYSTEM
-      Verify every app's signature with jarsigner; every entry outside
-      META-INF/ must be signed, as Android 6 requires.
+  stage.py check-signers STAGE_SYSTEM PUBLIC_KEY_DIR PLATFORM_CERT < SIGNERS
+      With ApkSigners.java's verified signers of every app in STAGE_SYSTEM,
+      refuse an app that does not verify or is signed with one of AOSP's
+      public keys, and check that the framework and the security policy
+      carry the host's platform key.
 
 Runs in the build container, so it keeps to Python 2.7.
 """
@@ -215,48 +214,6 @@ def check_meta(unit):
     print("owners and modes of %d unit entries match" % len(want))
 
 
-def der_items(data, start, end):
-    """(item start, content start, content end, tag) of each DER item in
-    data[start:end]."""
-    pos = start
-    while pos < end:
-        if end - pos < 2:
-            fail("truncated DER item")
-        item, tag, length = pos, bytearray(data[pos:pos + 1])[0], bytearray(data[pos + 1:pos + 2])[0]
-        pos += 2
-        if length & 0x80:
-            count = length & 0x7f
-            if count < 1 or count > 4 or pos + count > end:
-                fail("unsupported DER length")
-            length = 0
-            for byte in bytearray(data[pos:pos + count]):
-                length = length * 256 + byte
-            pos += count
-        if pos + length > end:
-            fail("truncated DER item")
-        yield item, pos, pos + length, tag
-        pos += length
-
-
-def pkcs7_certificates(data):
-    """The certificates of a PKCS#7 SignedData block (an APK's v1 signature
-    file): ContentInfo { OID, [0] SignedData { ..., [0] certificates } }."""
-    for _, start, end, tag in der_items(data, 0, len(data)):
-        if tag != 0x30:
-            break
-        inner = list(der_items(data, start, end))
-        if len(inner) < 2 or inner[1][3] != 0xa0:
-            break
-        signed = list(der_items(data, inner[1][1], inner[1][2]))
-        if not signed or signed[0][3] != 0x30:
-            break
-        for _, cstart, cend, ctag in der_items(data, signed[0][1], signed[0][2]):
-            if ctag == 0xa0:
-                return [bytes(data[i:e]) for i, _, e, _ in der_items(data, cstart, cend)]
-        return []
-    fail("not a PKCS#7 signature block")
-
-
 def pem_certificate(path):
     with open(path) as f:
         text = f.read()
@@ -266,51 +223,44 @@ def pem_certificate(path):
     return base64.b64decode("".join(match.group(1).split()))
 
 
-def apk_signers(path):
-    import zipfile
-    signers = []
-    with zipfile.ZipFile(path) as apk:
-        for name in apk.namelist():
-            if re.match(r"META-INF/[^/]+\.(RSA|DSA|EC)$", name):
-                signers.extend(pkcs7_certificates(apk.read(name)))
-    return signers
-
-
-def check_signers(system, public_dir, platform_pem):
-    """Refuse an image with an app signed by one of AOSP's public keys
-    (PUBLIC_DIR, build/target/product/security) or not signed at all, and
-    check that the framework and the security policy carry the host's
-    platform key. This reads certificates only: stage-image.sh verifies the
-    signatures themselves with jarsigner."""
+def check_signers(system, public_dir, platform_pem, signers_in):
+    """Refuse an image with an app that does not verify or is signed by one of
+    AOSP's public keys (PUBLIC_DIR, build/target/product/security), and check
+    that the framework and the security policy carry the host's platform key.
+    SIGNERS_IN holds ApkSigners.java's verified signers of every app."""
     public = {}
     for name in sorted(os.listdir(public_dir)):
         if name.endswith(".x509.pem"):
-            public[pem_certificate(os.path.join(public_dir, name))] = name[:-len(".x509.pem")]
+            cert = pem_certificate(os.path.join(public_dir, name))
+            public[hashlib.sha256(cert).hexdigest()] = (cert, name[:-len(".x509.pem")])
     platform = pem_certificate(platform_pem)
-    if platform in public:
-        fail("the platform key is AOSP's public %s key" % public[platform])
-    public_signed, unsigned, apks = [], [], 0
+    platform_sha = hashlib.sha256(platform).hexdigest()
+    if platform_sha in public:
+        fail("the platform key is AOSP's public %s key" % public[platform_sha][1])
+    apks = set()
     for folder, dirs, files in os.walk(system):
-        dirs.sort()
-        for name in sorted(files):
+        for name in files:
             path = os.path.join(folder, name)
-            if not name.endswith(".apk") or os.path.islink(path):
-                continue
-            apks += 1
-            rel = os.path.relpath(path, system).replace(os.sep, "/")
-            signers = apk_signers(path)
-            if not signers:
-                unsigned.append(rel)
-            for cert in signers:
-                if cert in public:
-                    public_signed.append("%s (%s)" % (rel, public[cert]))
-    if public_signed:
-        fail("apps signed with AOSP's public keys:\n  " + "\n  ".join(public_signed))
-    if unsigned:
-        fail("apps without a v1 signature, which Android 6 does not install:\n  "
-             + "\n  ".join(unsigned))
-    framework = os.path.join(system, "framework", "framework-res.apk")
-    if not os.path.isfile(framework) or apk_signers(framework) != [platform]:
+            if name.endswith(".apk") and not os.path.islink(path):
+                apks.add(os.path.relpath(path, system).replace(os.sep, "/"))
+    signers, refused = {}, []
+    for line in signers_in:
+        rel, _, result = line.rstrip("\r\n").partition("\t")
+        if rel.startswith("./"):
+            rel = rel[2:]
+        if result.startswith("ERROR ") or not re.match(r"^[0-9a-f]{64}(,[0-9a-f]{64})*$", result):
+            refused.append("%s: %s" % (rel, result[len("ERROR "):] if result.startswith("ERROR ") else result))
+            continue
+        signers[rel] = set(result.split(","))
+    unchecked = sorted(apks - set(signers) - set(r.split(": ")[0] for r in refused))
+    if unchecked:
+        refused.extend("%s: not checked" % rel for rel in unchecked)
+    for rel in sorted(signers):
+        for sha in sorted(signers[rel] & set(public)):
+            refused.append("%s: signed with AOSP's public %s key" % (rel, public[sha][1]))
+    if refused:
+        fail("apps refused:\n  " + "\n  ".join(sorted(refused)))
+    if signers.get("framework/framework-res.apk") != set([platform_sha]):
         fail("framework/framework-res.apk is not signed with the host's platform key")
     # PackageManager gives an app the SELinux domain of the seinfo its
     # signer maps to: the platform key must map to "platform".
@@ -336,63 +286,12 @@ def check_signers(system, public_dir, platform_pem):
     platform_hex = binascii.hexlify(platform).decode("ascii")
     if not any(certs == set([platform_hex]) and "platform" in seinfo for certs, seinfo in rules):
         fail("mac_permissions.xml does not map the host's platform key to seinfo platform")
-    stale = sorted(n for c, n in public.items() if binascii.hexlify(c).decode("ascii") in named)
+    stale = sorted(name for cert, name in public.values()
+                   if binascii.hexlify(cert).decode("ascii") in named)
     if stale:
         fail("mac_permissions.xml names AOSP's public keys: %s" % ", ".join(stale))
-    print("signers of %d apps checked: none is an AOSP public key; framework and policy "
-          "carry the platform key %s" % (apks, hashlib.sha256(platform).hexdigest()[:16]))
-
-
-JARSIGNER_ENTRY = re.compile(r"^([A-Za-z]*)\s+\d+ \w{3} \w{3} \d{2} \d\d:\d\d:\d\d \S+ \d{4} (.+)$")
-
-
-def unverified_entries(output):
-    """Entries of `jarsigner -verify -verbose` output that Android 6's
-    PackageParser would refuse: every entry outside META-INF/ must carry a
-    verified signature (flag s), AndroidManifest.xml included. None when
-    jarsigner did not verify the jar at all."""
-    lines = output.splitlines()
-    if "jar verified." not in [line.strip() for line in lines]:
-        return None
-    entries, bad = set(), []
-    for line in lines:
-        match = JARSIGNER_ENTRY.match(line)
-        if not match:
-            continue
-        flags, name = match.groups()
-        if name.startswith("META-INF/") or name.endswith("/"):
-            continue
-        entries.add(name)
-        if "s" not in flags:
-            bad.append(name)
-    if "AndroidManifest.xml" not in entries:
-        bad.append("AndroidManifest.xml (not listed)")
-    return bad
-
-
-def verify_apks(system):
-    """Verify every app's v1 signature with jarsigner, as Android 6 does."""
-    import subprocess
-    refused, apks = [], 0
-    for folder, dirs, files in os.walk(system):
-        dirs.sort()
-        for name in sorted(files):
-            path = os.path.join(folder, name)
-            if not name.endswith(".apk") or os.path.islink(path):
-                continue
-            apks += 1
-            rel = os.path.relpath(path, system).replace(os.sep, "/")
-            process = subprocess.Popen(["jarsigner", "-verify", "-verbose", path],
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            output = process.communicate()[0].decode("utf-8", "replace")
-            bad = unverified_entries(output)
-            if bad is None:
-                refused.append("%s: signature does not verify" % rel)
-            elif bad:
-                refused.append("%s: unsigned entries %s" % (rel, ", ".join(bad[:3])))
-    if refused:
-        fail("apps Android would refuse:\n  " + "\n  ".join(refused))
-    print("signatures of %d apps verified, every entry signed" % apks)
+    print("verified signers of %d apps: none is an AOSP public key; framework and policy "
+          "carry the platform key %s" % (len(apks), platform_sha[:16]))
 
 
 def main():
@@ -408,9 +307,7 @@ def main():
     elif len(args) == 2 and args[0] == "check-meta":
         check_meta(args[1])
     elif len(args) == 4 and args[0] == "check-signers":
-        check_signers(*args[1:])
-    elif len(args) == 2 and args[0] == "verify-apks":
-        verify_apks(args[1])
+        check_signers(*(args[1:] + [sys.stdin]))
     else:
         fail(__doc__.split("\n\n")[1])
 

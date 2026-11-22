@@ -10,7 +10,6 @@ import sys
 import tarfile
 import tempfile
 import unittest
-import zipfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -342,27 +341,11 @@ class UnitFilesTest(unittest.TestCase):
         self.assertTrue((outside / "keep.ko").exists())
 
 
-def der(tag, content):
-    if len(content) < 0x80:
-        return bytes([tag, len(content)]) + content
-    size = len(content).to_bytes((len(content).bit_length() + 7) // 8, "big")
-    return bytes([tag, 0x80 | len(size)]) + size + content
-
-
-def signature_block(*certs):
-    """A PKCS#7 SignedData block as signapk writes it, with these certificates."""
-    signed = (der(0x02, b"\x01") + der(0x31, der(0x30, der(0x06, b"\x60\x86\x48"))) +
-              der(0x30, der(0x06, b"\x2a\x86\x48\x86\xf7\x0d\x01\x07\x01")) +
-              der(0xa0, b"".join(certs)) + der(0x31, b"signer info"))
-    return der(0x30, der(0x06, b"\x2a\x86\x48\x86\xf7\x0d\x01\x07\x02") + der(0xa0, der(0x30, signed)))
-
-
 class CheckSignersTest(unittest.TestCase):
-    # Certificates long enough for DER's long length form.
-    PUBLIC_PLATFORM = der(0x30, b"aosp platform" * 20)
-    PUBLIC_TESTKEY = der(0x30, b"aosp testkey" * 20)
-    HOST_PLATFORM = der(0x30, b"host platform" * 20)
-    HOST_RELEASE = der(0x30, b"host releasekey" * 20)
+    PUBLIC_PLATFORM = b"0\x82aosp platform certificate"
+    PUBLIC_TESTKEY = b"0\x82aosp testkey certificate"
+    HOST_PLATFORM = b"0\x82host platform certificate"
+    HOST_RELEASE = b"0\x82host releasekey certificate"
 
     def setUp(self):
         self.tmp = pathlib.Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -372,6 +355,8 @@ class CheckSignersTest(unittest.TestCase):
         self.pem(self.public / "testkey.x509.pem", self.PUBLIC_TESTKEY)
         self.platform = self.pem(self.tmp / "platform.x509.pem", self.HOST_PLATFORM)
         self.system = self.tmp / "system"
+        # ApkSigners.java's verified signers of each app.
+        self.signers = {}
         self.apk("framework/framework-res.apk", self.HOST_PLATFORM)
         self.apk("app/Settings/Settings.apk", self.HOST_PLATFORM)
         self.apk("app/Gallery/Gallery.apk", self.HOST_RELEASE)
@@ -382,34 +367,47 @@ class CheckSignersTest(unittest.TestCase):
         path.write_text(f"-----BEGIN CERTIFICATE-----\n{body}-----END CERTIFICATE-----\n")
         return path
 
-    def apk(self, rel, cert):
+    def apk(self, rel, *certs, result=None):
         path = self.system / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(path, "w") as apk:
-            apk.writestr("classes.dex", b"dex")
-            apk.writestr("META-INF/CERT.RSA", signature_block(cert))
+        path.write_bytes(b"apk")
+        self.signers[rel] = result or ",".join(sorted(hashlib.sha256(c).hexdigest() for c in certs))
 
     def policy(self, *signers):
         """signers: (certificate, seinfo) pairs, as mac_permissions.xml has them."""
+        self.write_policy("".join(
+            f'<signer signature="{c.hex()}"><seinfo value="{s}" /></signer>' for c, s in signers)
+            + '<default><seinfo value="default" /></default>')
+
+    def write_policy(self, body):
         path = self.system / "etc/security/mac_permissions.xml"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("<?xml version='1.0'?>\n<policy>" + "".join(
-            f'<signer signature="{c.hex()}"><seinfo value="{s}" /></signer>' for c, s in signers)
-            + '<default><seinfo value="default" /></default></policy>')
+        path.write_text(f"<?xml version='1.0'?>\n<policy>{body}</policy>")
 
     def check(self):
-        return run_stage("check-signers", self.system, self.public, self.platform)
+        listing = "".join(f"./{rel}\t{result}\n" for rel, result in self.signers.items())
+        return run_stage("check-signers", self.system, self.public, self.platform, stdin=listing)
 
     def test_accepts_a_system_signed_with_the_hosts_keys(self):
         code, out, err = self.check()
         self.assertEqual(code, 0, err)
-        self.assertIn("signers of 3 apps checked", out)
+        self.assertIn("verified signers of 3 apps", out)
 
-    def test_refuses_public_keys_anywhere(self):
-        self.apk("priv-app/Shell/Shell.apk", self.PUBLIC_PLATFORM)
+    def test_refuses_apps_that_do_not_verify_or_were_not_checked(self):
+        self.apk("app/Bad/Bad.apk", result="ERROR java.lang.SecurityException: invalid signature")
+        self.apk("app/Half/Half.apk", result="ERROR java.lang.Exception: unsigned entry classes.dex")
+        (self.system / "app/Missed.apk").write_bytes(b"apk")
         code, _, err = self.check()
         self.assertEqual(code, 1)
-        self.assertIn("priv-app/Shell/Shell.apk (platform)", err)
+        self.assertIn("app/Bad/Bad.apk: java.lang.SecurityException: invalid signature", err)
+        self.assertIn("app/Half/Half.apk: java.lang.Exception: unsigned entry", err)
+        self.assertIn("app/Missed.apk: not checked", err)
+
+    def test_refuses_public_keys_anywhere(self):
+        self.apk("priv-app/Shell/Shell.apk", self.HOST_PLATFORM, self.PUBLIC_PLATFORM)
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("priv-app/Shell/Shell.apk: signed with AOSP's public platform key", err)
 
         self.apk("priv-app/Shell/Shell.apk", self.HOST_PLATFORM)
         self.policy((self.HOST_PLATFORM, "platform"), (self.PUBLIC_TESTKEY, "release"))
@@ -422,17 +420,8 @@ class CheckSignersTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("the platform key is AOSP's public platform key", err)
 
-    def test_refuses_an_unsigned_app(self):
-        path = self.system / "app/Plain/Plain.apk"
-        path.parent.mkdir(parents=True)
-        with zipfile.ZipFile(path, "w") as apk:
-            apk.writestr("classes.dex", b"dex")
-        code, _, err = self.check()
-        self.assertEqual(code, 1)
-        self.assertIn("without a v1 signature, which Android 6 does not install:\n  app/Plain/Plain.apk", err)
-
     def test_requires_the_hosts_platform_key_in_framework_and_policy(self):
-        self.apk("framework/framework-res.apk", self.HOST_RELEASE)
+        self.apk("framework/framework-res.apk", self.HOST_PLATFORM, self.HOST_RELEASE)
         code, _, err = self.check()
         self.assertEqual(code, 1)
         self.assertIn("framework-res.apk is not signed with the host's platform key", err)
@@ -442,10 +431,6 @@ class CheckSignersTest(unittest.TestCase):
         code, _, err = self.check()
         self.assertEqual(code, 1)
         self.assertIn("does not map the host's platform key to seinfo platform", err)
-
-    def write_policy(self, body):
-        path = self.system / "etc/security/mac_permissions.xml"
-        path.write_text(f"<?xml version='1.0'?>\n<policy>{body}</policy>")
 
     def test_policy_certificates_in_cert_children_and_package_labels(self):
         host, public = self.HOST_PLATFORM.hex(), self.PUBLIC_TESTKEY.hex()
@@ -465,25 +450,6 @@ class CheckSignersTest(unittest.TestCase):
         code, _, err = self.check()
         self.assertEqual(code, 1)
         self.assertIn("names AOSP's public keys: testkey", err)
-
-    def test_jarsigner_output_needs_every_entry_signed(self):
-        date = "Thu Jan 01 01:01:02 UTC 1981"
-        signed = "\n".join([
-            f"sm      4256 {date} AndroidManifest.xml",
-            f"sm    103832 {date} classes.dex",
-            f"         301 {date} META-INF/MANIFEST.MF",
-            f"         412 {date} META-INF/CERT.SF",
-            "", "  s = signature was verified ", "", "jar verified.", "",
-            "Warning: ", "This jar contains entries whose signer certificate is self-signed."])
-        self.assertEqual(stage.unverified_entries(signed), [])
-        # jarsigner says "jar verified." with some entries unsigned.
-        self.assertEqual(stage.unverified_entries(
-            signed.replace("sm      4256", "        4256")), ["AndroidManifest.xml"])
-        self.assertEqual(stage.unverified_entries(
-            signed.replace(f"sm      4256 {date} AndroidManifest.xml\n", "")),
-            ["AndroidManifest.xml (not listed)"])
-        self.assertIsNone(stage.unverified_entries(
-            "jarsigner: java.lang.SecurityException: invalid SHA1 signature file digest"))
 
 
 if __name__ == "__main__":

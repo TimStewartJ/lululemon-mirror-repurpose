@@ -31,14 +31,14 @@ python "$here/stage.py" stage "$unit" "$OUT/system" "$stage/system"
 # and its patch out. The read-back below proves the image holds the stage.
 rm -f "$stage/system/bin/install-recovery.sh" "$stage/system/recovery-from-boot.p" \
     "$stage/system/etc/recovery-resource.dat"
-# No app may carry one of AOSP's public keys, and the platform key must be the
-# host's own (build.sh passes its folder as SILVERING_KEYS).
+# Every app must verify as Android 6 verifies it (ApkSigners.java), none may
+# carry one of AOSP's public keys, and the platform key must be the host's own
+# (build.sh passes its folder as SILVERING_KEYS).
+javac -nowarn -d "$stage/tools" "$here/ApkSigners.java"
+( cd "$stage/system" && find . -name '*.apk' -type f -print0 | sort -z \
+    | xargs -0 -r java -cp "$stage/tools" ApkSigners ) > "$stage/signers.txt"
 python "$here/stage.py" check-signers "$stage/system" build/target/product/security \
-    "${SILVERING_KEYS:?build Silvering with build.sh}/platform.x509.pem"
-# ... and every app's signature must verify, every entry signed, so that a
-# private key that does not belong to its certificate is caught here rather
-# than at boot.
-python "$here/stage.py" verify-apks "$stage/system"
+    "${SILVERING_KEYS:?build Silvering with build.sh}/platform.x509.pem" < "$stage/signers.txt"
 
 # Owners and modes: fs_config's defaults for the whole tree, with the unit's
 # own for its files.
