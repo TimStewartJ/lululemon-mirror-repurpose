@@ -136,6 +136,10 @@ public final class DeviceInventoryTest {
         write(new java.io.File(node, "qcom,poll-ms"), new byte[2000]);
         assertTrue(new java.io.File(tree, "soc/qcom,other").mkdirs());
         assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal-serial-UNIT7").mkdirs());
+        assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal@0211.2233.4455").mkdirs());
+        write(new java.io.File(node, "qcom,sensor-id"), new byte[]{2, 0x11, 0x22, 0x33, 0x44, 0x55});
+        write(new java.io.File(node, "compatible"), "qcom,msm-thermal\0".getBytes(UTF8));
+        write(new java.io.File(node, "status"), "peer-02:11:22:33:44:55\0".getBytes(UTF8));
         java.io.File parameters = root.resolve("parameters").toFile();
         assertTrue(parameters.mkdirs());
         write(new java.io.File(parameters, "enabled"), "Y\n".getBytes(UTF8));
@@ -183,6 +187,12 @@ public final class DeviceInventoryTest {
         assertTrue(unreadable, unreadable.contains("thermal_zone10"));
         assertTrue(unreadable, unreadable.contains("a node whose name is not shown was left out"));
         assertFalse(thermal.toString().contains("UNIT7"));
+        assertFalse(thermal.toString().contains("0211.2233.4455"));
+        assertEquals("71636f6d2c6d736d2d746865726d616c00",
+                driver.getJSONObject("properties").getString("compatible"));
+        assertFalse(driver.getJSONObject("properties").has("qcom,sensor-id"));
+        assertFalse(driver.getJSONObject("properties").has("status"));
+        assertTrue(unreadable, unreadable.contains("value not valid; left out"));
     }
 
     @Test

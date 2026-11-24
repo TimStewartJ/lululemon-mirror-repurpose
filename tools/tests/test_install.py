@@ -154,6 +154,9 @@ class ThermalGate(unittest.TestCase):
         self.assertNotIn("0211.2233.4455", repr(dotted))
 
     def test_labelled_identifiers_in_diagnostics_are_withheld(self):
+        broken = {"schema": "mirror-thermal/1", "deviceTreeNodes": ["bad"], "zones": {"x": 1}, "unreadable": "x"}
+        self.assertEqual(verdict(broken), install.STOP)
+        self.assertEqual(install.exported(broken)["deviceTreeNodes"], {})
         section = thermal(THROTTLING, unreadable=[{"path": "/sys/module/msm_thermal/parameters/enabled",
                                                    "reason": "serial=UNIT-7K4M"}])
         shown = repr(install.exported(section)) + repr(install.evaluate_thermal(section, LOG))
@@ -302,6 +305,23 @@ class OverAdb(unittest.TestCase):
         read, _ = install.read_thermal_over_adb(tools, SERIAL)
         self.assertFalse(any("reboot" in command for command in asked))
         self.assertIn("/proc/device-tree/soc", [entry["path"] for entry in read["unreadable"]])
+
+    def test_each_listed_line_is_one_name(self):
+        tools, asked = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal\n"
+                                                                          "qcom,msm-thermal alternate\n"})
+        read, log = install.read_thermal_over_adb(tools, SERIAL)
+        self.assertIn("/proc/device-tree/soc", [entry["path"] for entry in read["unreadable"]])
+        self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.STOP)
+
+    def test_address_shaped_names_are_never_shown(self):
+        tools, _ = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal\n"
+                                                                      "qcom,msm-thermal@0211.2233.4455\n"})
+        read, log = install.read_thermal_over_adb(tools, SERIAL)
+        result = install.evaluate_thermal(read, log)
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertNotIn("0211.2233.4455", repr(result) + repr(install.exported(read)))
+        mac_compatible = thermal({**THROTTLING, "compatible": b"qcom,msm-thermal\0peer.0211.2233.4455\0".hex()})
+        self.assertNotIn(b"0211.2233.4455".hex(), repr(install.exported(mac_compatible)))
 
     def test_a_kernel_log_without_its_status_is_refused_without_repeating_it(self):
         tools, _ = self.unit({"dmesg": (0, "[ 0.0] androidboot.serialno=UNIT-7K4M\n", "")})

@@ -403,7 +403,7 @@ final class DeviceInventory {
         for (String name : names) {
             File node = new File(folder, name);
             if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
-                if (IDENTIFYING.matcher(name).find() || !name.matches("[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")) {
+                if (!plainText(name) || !name.matches("[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")) {
                     // Counted, so the node is not taken for absent, but its name is not sent.
                     unreadable.put(unreadable(folder, "a node whose name is not shown was left out"));
                     continue;
@@ -432,11 +432,41 @@ final class DeviceInventory {
                 continue;
             }
             byte[] value = readBytes(entry, unreadable);
-            if (value != null) {
+            if (value != null && !validProperty(name, value)) {
+                unreadable.put(unreadable(entry, "value not valid; left out"));
+            } else if (value != null) {
                 properties.put(name, hex(value));
             }
         }
         return new JSONObject().put("properties", properties).put("listed", listed);
+    }
+
+    /** Shaped like a hardware address or a long identifier. */
+    private static final Pattern ADDRESS_SHAPED = Pattern.compile(
+            "\\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\\b|\\b[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\b"
+                    + "|\\b(?:0[xX])?[0-9a-fA-F]{12,}\\b");
+    private static final Pattern PLAIN_STRING = Pattern.compile("[A-Za-z0-9,._-]{1,64}");
+
+    /** Text that names nothing: no identifier word, and nothing shaped like an address. */
+    static boolean plainText(String text) {
+        return !IDENTIFYING.matcher(text).find() && !ADDRESS_SHAPED.matcher(text).find();
+    }
+
+    /** {@code compatible} and {@code status}: short plain strings; every other known property: one 32-bit cell. */
+    static boolean validProperty(String name, byte[] value) {
+        if (!"compatible".equals(name) && !"status".equals(name)) {
+            return value.length == 4;
+        }
+        if (value.length < 2 || value.length > 256 || value[value.length - 1] != 0) {
+            return false;
+        }
+        String text = new String(value, 0, value.length - 1, Charset.forName("US-ASCII"));
+        for (String entry : text.split("\0", -1)) {
+            if (!PLAIN_STRING.matcher(entry).matches() || !plainText(entry)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static JSONArray thermalZones(File folder, JSONArray unreadable) throws JSONException {
