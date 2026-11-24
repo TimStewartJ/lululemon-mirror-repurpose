@@ -135,6 +135,7 @@ public final class DeviceInventoryTest {
         write(new java.io.File(node, "qcom,wlan-addr"), new byte[]{2, 0x11, 0x22, 0x33, 0x44, 0x55});
         write(new java.io.File(node, "qcom,poll-ms"), new byte[2000]);
         assertTrue(new java.io.File(tree, "soc/qcom,other").mkdirs());
+        assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal-serial-UNIT7").mkdirs());
         java.io.File parameters = root.resolve("parameters").toFile();
         assertTrue(parameters.mkdirs());
         write(new java.io.File(parameters, "enabled"), "Y\n".getBytes(UTF8));
@@ -180,6 +181,8 @@ public final class DeviceInventoryTest {
         String unreadable = thermal.getJSONArray("unreadable").toString();
         assertTrue(unreadable, unreadable.contains("qcom,poll-ms") && unreadable.contains("longer than 1024 bytes"));
         assertTrue(unreadable, unreadable.contains("thermal_zone10"));
+        assertTrue(unreadable, unreadable.contains("a node whose name is not shown was left out"));
+        assertFalse(thermal.toString().contains("UNIT7"));
     }
 
     @Test

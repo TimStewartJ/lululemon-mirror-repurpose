@@ -403,6 +403,11 @@ final class DeviceInventory {
         for (String name : names) {
             File node = new File(folder, name);
             if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
+                if (IDENTIFYING.matcher(name).find() || !name.matches("[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")) {
+                    // Counted, so the node is not taken for absent, but its name is not sent.
+                    unreadable.put(unreadable(folder, "a node whose name is not shown was left out"));
+                    continue;
+                }
                 nodes.put(prefix + name, driverNode(node, unreadable));
             }
         }

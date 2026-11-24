@@ -110,6 +110,7 @@ def in_range(value: int | None, limits: tuple[int, int]) -> bool:
 def redact(line: str) -> str:
     """Text with anything shaped like a hardware address or a long identifier hidden."""
     line = re.sub(r"\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\b", "<hidden>", line)
+    line = re.sub(r"\b[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\b", "<hidden>", line)
     return re.sub(r"\b(?:0[xX])?[0-9a-fA-F]{12,}\b", "<hidden>", line)
 
 
@@ -123,8 +124,24 @@ def safe(value) -> str:
     return redact(text)[:200]
 
 
+def showable_name(name) -> bool:
+    return isinstance(name, str) and bool(SAFE_NODE_PATH.fullmatch(name)) and not IDENTIFYING.search(name)
+
+
 def label(name) -> str:
-    return name if isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name) else "<a node with an unusual name>"
+    return name if showable_name(name) else "<a node whose name is not shown>"
+
+
+def showable_property(key: str, value) -> bool:
+    """A property as it may be exported: one 32-bit cell, or a short string list that names nothing."""
+    if not isinstance(value, str):
+        return False
+    if key in ("compatible", "status"):
+        decoded = strings(value)
+        return (decoded is not None and len(value) <= 256
+                and all(re.fullmatch(r"[A-Za-z0-9,._-]{1,64}", entry) and not IDENTIFYING.search(entry)
+                        for entry in decoded))
+    return bool(re.fullmatch(r"[0-9a-f]{8}", value))
 
 
 def exported(thermal: dict | None) -> dict | None:
@@ -138,14 +155,15 @@ def exported(thermal: dict | None) -> dict | None:
     nodes = {}
     extra = []
     for name, node in (thermal.get("deviceTreeNodes") or {}).items():
-        if isinstance(node, dict) and not (isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name)):
-            extra.append({"path": "<a node with an unusual name>", "reason": "left out of the report"})
-        if isinstance(node, dict) and isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name):
-            properties = node.get("properties") or {}
-            nodes[name] = {"properties": {key: properties[key] for key in KNOWN_PROPERTIES
-                                          if isinstance(properties.get(key), str)
-                                          and re.fullmatch(r"(?:[0-9a-f]{2}){0,1024}", properties[key])},
-                           "listed": node.get("listed") is True}
+        if not showable_name(name) or not isinstance(node, dict):
+            extra.append({"path": "<a node whose name is not shown>", "reason": "left out of the report"})
+            continue
+        properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+        kept = {key: properties[key] for key in KNOWN_PROPERTIES
+                if key in properties and showable_property(key, properties[key])}
+        extra += [{"path": f"{name}/{key}", "reason": "value not valid; left out of the report"}
+                  for key in KNOWN_PROPERTIES if key in properties and key not in kept]
+        nodes[name] = {"properties": kept, "listed": node.get("listed") is True}
     parameters = thermal.get("msmThermalParameters")
     return {
         "schema": thermal.get("schema") if thermal.get("schema") == "mirror-thermal/1" else None,
@@ -211,7 +229,27 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
     if not listed:
         unresolved.append(f"The device tree could not be listed, so another {THERMAL_NODE} node cannot be "
                           "ruled out")
-    for entry in thermal.get("unreadable") or []:
+    candidates = {}
+    records = thermal.get("deviceTreeNodes")
+    if not isinstance(records, dict):
+        stops.append("The report's device-tree nodes are not valid")
+        records = {}
+    for name, node in records.items():
+        if not isinstance(name, str) or not name.rsplit("/", 1)[-1].startswith(THERMAL_NODE):
+            continue
+        if not isinstance(node, dict) or not isinstance(node.get("properties"), dict):
+            stops.append(f"{label(name)} has no readable record, so it cannot be told whose it is")
+            continue
+        candidates[name] = node
+    # A node that could not be listed is recorded as such; that one entry is what "listed" already says.
+    unlisted_folders = {f"{root}/{name}" for name, node in candidates.items() if node.get("listed") is not True
+                        for root in DEVICE_TREES}
+
+    entries = thermal.get("unreadable")
+    if not isinstance(entries, list):
+        stops.append("The report's list of unreadable paths is not valid")
+        entries = []
+    for entry in entries:
         if not isinstance(entry, dict):
             stops.append("The report's list of unreadable paths is not valid")
             continue
@@ -219,7 +257,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         reason = entry.get("reason") if isinstance(entry.get("reason"), str) else ""
         if path in DEVICE_TREES and not listed:
             continue
-        if "known properties read by name" in reason:
+        if path in unlisted_folders:
             continue
         if not path or path.startswith(GATE_PATHS):
             stops.append(f"{safe(path) if path else 'A path'} could not be read: {safe(reason)}")
@@ -228,15 +266,16 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
     if enabled != "Y":
         stops.append(f"msm_thermal's 'enabled' is {safe(enabled)}, not Y")
 
-    nodes = {name: node for name, node in (thermal.get("deviceTreeNodes") or {}).items()
-             if isinstance(name, str) and isinstance(node, dict)
-             and name.rsplit("/", 1)[-1].startswith(THERMAL_NODE)}
+    nodes = candidates
     bound = driver_nodes(nodes, stops)
     if len(bound) != 1:
         stops.append(f"Expected one enabled device-tree node compatible with {THERMAL_NODE}, found "
                      f"{sorted(map(label, bound)) or 'none'} among {sorted(map(label, nodes)) or 'no nodes'}")
     else:
         credited, node = next(iter(bound.items()))
+        if not showable_name(credited):
+            stops.append("The node the gate would rely on has a name that cannot be shown; check its binding "
+                         "by hand at the unit")
         properties = node.get("properties", {})
         if node.get("listed") is not True:
             unresolved.append(f"{label(credited)} could not be listed: a property it holds may have been missed "
@@ -266,7 +305,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         resets = polls and in_range(reset, RESET_RANGE)
         throttles = (polls and in_range(limit, LIMIT_RANGE) and in_range(step, FREQ_STEP_RANGE)
                      and bool(cpus) and not uncovered)
-        review_node = credited
+        review_node = label(credited)
         if reset is not None:
             notes.append(f"qcom,therm-reset-temp {reset} °C: " + (
                 "the kernel resets the chip without a daemon" if resets
@@ -374,9 +413,9 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         return sorted(out.split())
 
     def plain(folder: str, name: str) -> bool:
-        if SAFE_NAME.fullmatch(name):
+        if SAFE_NAME.fullmatch(name) and not IDENTIFYING.search(name):
             return True
-        failed(folder, "a name it lists is outside the expected characters and was not read")
+        failed(folder, "a node whose name is not shown was left out")
         return False
 
     parameters_folder = "/sys/module/msm_thermal/parameters"

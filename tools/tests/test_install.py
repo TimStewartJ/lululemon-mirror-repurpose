@@ -53,7 +53,9 @@ class ThermalGate(unittest.TestCase):
         refused = [{"path": "/proc/device-tree", "reason": "folder cannot be listed"},
                    {"path": "/proc/device-tree/soc/qcom,msm-thermal",
                     "reason": "folder cannot be listed; known properties read by name"}]
-        result = install.evaluate_thermal(thermal(THROTTLING, listed=False, unreadable=refused), LOG)
+        section = thermal(THROTTLING, listed=False, unreadable=refused)
+        section["deviceTreeNodes"]["soc/qcom,msm-thermal"]["listed"] = False
+        result = install.evaluate_thermal(section, LOG)
         self.assertEqual(result["verdict"], install.INCOMPLETE, result)
         self.assertEqual(verdict(thermal(THROTTLING, listed=False)), install.INCOMPLETE)
         unlisted = thermal(THROTTLING)
@@ -121,6 +123,35 @@ class ThermalGate(unittest.TestCase):
         result = install.evaluate_thermal(twice, LOG)
         self.assertEqual(result["verdict"], install.STOP)
         self.assertNotIn("x" * 117, repr(result))
+
+    def test_a_failed_property_read_counts_whatever_its_reason_says(self):
+        unlisted = thermal(THROTTLING, unreadable=[
+            {"path": "/proc/device-tree/soc/qcom,msm-thermal", "reason": "folder cannot be listed; known "
+                                                                          "properties read by name"},
+            {"path": "/proc/device-tree/soc/qcom,msm-thermal/status",
+             "reason": "Permission denied; known properties read by name"}])
+        unlisted["deviceTreeNodes"]["soc/qcom,msm-thermal"]["listed"] = False
+        self.assertEqual(verdict(unlisted), install.STOP)
+
+    def test_every_candidate_must_have_a_record_and_the_ledger_must_be_a_list(self):
+        extra = thermal(THROTTLING)
+        extra["deviceTreeNodes"]["soc/qcom,msm-thermal@1"] = None
+        self.assertEqual(verdict(extra), install.STOP)
+        no_ledger = thermal(THROTTLING)
+        no_ledger["unreadable"] = None
+        self.assertEqual(verdict(no_ledger), install.STOP)
+
+    def test_node_names_and_values_that_may_identify_the_unit_are_not_shown(self):
+        named = thermal(nodes={"soc/qcom,msm-thermal-serial-UNIT-7K4M": {"properties": {
+            "compatible": COMPATIBLE, **THROTTLING}, "listed": True}})
+        shown = repr(install.evaluate_thermal(named, LOG)) + repr(install.exported(named))
+        self.assertNotIn("UNIT-7K4M", shown)
+        self.assertEqual(verdict(named), install.STOP)
+        odd = thermal({**THROTTLING, "qcom,sensor-id": "021122334455"})
+        self.assertNotIn("021122334455", repr(install.exported(odd)))
+        self.assertEqual(verdict(odd), install.STOP)
+        dotted = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 0211.2233.4455"])
+        self.assertNotIn("0211.2233.4455", repr(dotted))
 
     def test_labelled_identifiers_in_diagnostics_are_withheld(self):
         section = thermal(THROTTLING, unreadable=[{"path": "/sys/module/msm_thermal/parameters/enabled",
