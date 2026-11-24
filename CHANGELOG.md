@@ -8,9 +8,11 @@
   parameters, its `qcom,msm-thermal` device-tree node (each property as hex
   bytes), which CPUs exist, and every thermal zone with its temperature and
   trip points, with each path that could not be read and why. The installer
-  begins as `tools/install.py`, whose first stage `thermal` judges the
+  begins as `tools/install.py`, whose first stage `thermal` checks the
   runbook's thermal gate from that section over Wi-Fi (`--mirror`) or, with
-  the kernel log, over USB (`--serial`).
+  the kernel log, over USB (`--serial`); it does not answer a plain pass
+  until the kernel's own success messages are known, so its best answer is
+  `review` (a person reads the driver's kernel lines it lists).
 
 - Silvering signs its system with the build host's own keys (made once in
   `~/silvering/keys`, kept private) instead of AOSP's public test keys, whose

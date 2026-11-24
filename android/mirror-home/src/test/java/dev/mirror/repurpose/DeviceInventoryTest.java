@@ -146,7 +146,9 @@ public final class DeviceInventoryTest {
         write(new java.io.File(zones, "thermal_zone2/trip_point_0_temp"), "105\n".getBytes(UTF8));
         write(new java.io.File(zones, "thermal_zone2/trip_point_0_type"), "critical\n".getBytes(UTF8));
 
-        JSONObject thermal = DeviceInventory.thermal(tree, parameters, zones,
+        write(new java.io.File(node, "local-mac-address"), new byte[]{1, 2, 3, 4, 5, 6});
+        JSONObject thermal = DeviceInventory.thermal(
+                new java.io.File[]{root.resolve("absent").toFile(), tree}, parameters, zones,
                 write(root.resolve("possible").toFile(), "0-3\n".getBytes(UTF8)));
 
         assertEquals("mirror-thermal/1", thermal.getString("schema"));
@@ -158,6 +160,9 @@ public final class DeviceInventoryTest {
         assertEquals("0000003c", driver.getJSONObject("properties").getString("qcom,limit-temp"));
         assertEquals("0000000f", driver.getJSONObject("properties").getString("qcom,freq-control-mask"));
         assertFalse(driver.getJSONObject("properties").has("huge"));
+        assertFalse(driver.getJSONObject("properties").has("local-mac-address"));
+        assertTrue(thermal.getBoolean("deviceTreeListed"));
+        assertTrue(driver.getBoolean("listed"));
         assertEquals("0000000500000007", driver.getJSONObject("children").getJSONObject("qcom,vdd-dig-rstr")
                 .getJSONObject("properties").getString("qcom,levels"));
         JSONArray zoneList = thermal.getJSONArray("zones");
@@ -176,12 +181,32 @@ public final class DeviceInventoryTest {
     @Test
     public void thermalWithoutTheDriverSaysSo() throws Exception {
         java.io.File missing = java.nio.file.Files.createTempDirectory("none").resolve("absent").toFile();
-        JSONObject thermal = DeviceInventory.thermal(missing, missing, missing, missing);
+        JSONObject thermal = DeviceInventory.thermal(new java.io.File[]{missing}, missing, missing, missing);
         assertTrue(thermal.isNull("msmThermalParameters"));
         assertTrue(thermal.isNull("cpusPossible"));
         assertEquals(0, thermal.getJSONObject("deviceTreeNodes").length());
         assertEquals(0, thermal.getJSONArray("zones").length());
         assertEquals(4, thermal.getJSONArray("unreadable").length());
+    }
+
+    @Test
+    public void aTreeThatCannotBeListedIsReadByTheUsualNodeName() throws Exception {
+        java.nio.file.Path root = java.nio.file.Files.createTempDirectory("unlisted");
+        java.io.File node = root.resolve("soc/qcom,msm-thermal").toFile();
+        assertTrue(node.mkdirs());
+        write(new java.io.File(node, "qcom,limit-temp"), new byte[]{0, 0, 0, 60});
+        java.io.File refused = new java.io.File(root.toString()) {
+            @Override
+            public String[] list() {
+                return null;
+            }
+        };
+        java.io.File missing = root.resolve("absent").toFile();
+        JSONObject thermal = DeviceInventory.thermal(new java.io.File[]{refused}, missing, missing, missing);
+        assertFalse(thermal.getBoolean("deviceTreeListed"));
+        assertEquals("0000003c", thermal.getJSONObject("deviceTreeNodes")
+                .getJSONObject("soc/qcom,msm-thermal").getJSONObject("properties").getString("qcom,limit-temp"));
+        assertTrue(thermal.getJSONArray("unreadable").toString().contains("folder cannot be listed"));
     }
 
     private static java.io.File write(java.io.File file, byte[] bytes) throws java.io.IOException {
