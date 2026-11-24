@@ -132,11 +132,13 @@ public final class DeviceInventoryTest {
         write(new java.io.File(node, "qcom,limit-temp"), new byte[]{0, 0, 0, 60});
         write(new java.io.File(node, "qcom,freq-control-mask"), new byte[]{0, 0, 0, 0x0f});
         write(new java.io.File(node, "qcom,vdd-dig-rstr/qcom,levels"), new byte[]{0, 0, 0, 5, 0, 0, 0, 7});
-        write(new java.io.File(node, "huge"), new byte[2000]);
+        write(new java.io.File(node, "qcom,wlan-addr"), new byte[]{2, 0x11, 0x22, 0x33, 0x44, 0x55});
+        write(new java.io.File(node, "qcom,poll-ms"), new byte[2000]);
         assertTrue(new java.io.File(tree, "soc/qcom,other").mkdirs());
         java.io.File parameters = root.resolve("parameters").toFile();
         assertTrue(parameters.mkdirs());
         write(new java.io.File(parameters, "enabled"), "Y\n".getBytes(UTF8));
+        write(new java.io.File(parameters, "sensor_serial"), "bebf077\n".getBytes(UTF8));
         java.io.File zones = root.resolve("thermal").toFile();
         for (String zone : new String[]{"thermal_zone10", "thermal_zone2", "cooling_device0"}) {
             assertTrue(new java.io.File(zones, zone).mkdirs());
@@ -159,12 +161,14 @@ public final class DeviceInventoryTest {
         JSONObject driver = found.getJSONObject("soc/qcom,msm-thermal");
         assertEquals("0000003c", driver.getJSONObject("properties").getString("qcom,limit-temp"));
         assertEquals("0000000f", driver.getJSONObject("properties").getString("qcom,freq-control-mask"));
-        assertFalse(driver.getJSONObject("properties").has("huge"));
+        assertFalse(driver.getJSONObject("properties").has("qcom,poll-ms"));
         assertFalse(driver.getJSONObject("properties").has("local-mac-address"));
+        assertFalse(driver.getJSONObject("properties").has("qcom,wlan-addr"));
+        assertFalse(thermal.toString().contains("bebf077") || thermal.toString().contains("021122334455"));
+        assertEquals(1, thermal.getJSONObject("msmThermalParameters").length());
         assertTrue(thermal.getBoolean("deviceTreeListed"));
         assertTrue(driver.getBoolean("listed"));
-        assertEquals("0000000500000007", driver.getJSONObject("children").getJSONObject("qcom,vdd-dig-rstr")
-                .getJSONObject("properties").getString("qcom,levels"));
+        assertFalse(driver.has("children"));
         JSONArray zoneList = thermal.getJSONArray("zones");
         assertEquals(2, zoneList.length());
         JSONObject first = zoneList.getJSONObject(0);
@@ -174,7 +178,7 @@ public final class DeviceInventoryTest {
         assertEquals("105", first.getJSONArray("trips").getJSONObject(0).getString("temp"));
         assertTrue(zoneList.getJSONObject(1).isNull("temp"));
         String unreadable = thermal.getJSONArray("unreadable").toString();
-        assertTrue(unreadable, unreadable.contains("huge") && unreadable.contains("longer than 1024 bytes"));
+        assertTrue(unreadable, unreadable.contains("qcom,poll-ms") && unreadable.contains("longer than 1024 bytes"));
         assertTrue(unreadable, unreadable.contains("thermal_zone10"));
     }
 
