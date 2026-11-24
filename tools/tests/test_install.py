@@ -27,8 +27,9 @@ def thermal(properties=None, enabled="Y", cpus="0-3", unreadable=(), listed=True
     }
 
 
-THROTTLING = {"qcom,limit-temp": "0000003c", "qcom,freq-step": "00000002",
-              "qcom,freq-control-mask": "0000000f", "qcom,poll-ms": "000000fa"}
+PROBE = {"qcom,sensor-id": "00000005", "qcom,poll-ms": "000000fa", "qcom,limit-temp": "0000003c",
+         "qcom,temp-hysteresis": "0000000a", "qcom,freq-step": "00000002"}
+THROTTLING = {**PROBE, "qcom,freq-control-mask": "0000000f"}
 LOG = ["[    1.2] msm_thermal:msm_thermal_dev_init Registered limits", "[    1.3] tsens: probe ok"]
 
 
@@ -44,7 +45,13 @@ class ThermalGate(unittest.TestCase):
         self.assertEqual(result["kernelLines"], [line.strip() for line in LOG])
 
     def test_a_chip_reset_alone_is_enough_for_review(self):
-        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "00000078", "qcom,poll-ms": "000000fa"})), install.REVIEW)
+        self.assertEqual(verdict(thermal({**PROBE, "qcom,therm-reset-temp": "00000078"})), install.REVIEW)
+
+    def test_the_driver_must_have_what_its_probe_needs(self):
+        for name in PROBE:
+            with self.subTest(missing=name):
+                without = {key: value for key, value in THROTTLING.items() if key != name}
+                self.assertEqual(verdict(thermal({**without, "qcom,therm-reset-temp": "00000078"})), install.STOP)
 
     def test_over_wifi_the_answer_is_at_best_incomplete(self):
         self.assertEqual(verdict(thermal(THROTTLING), None), install.INCOMPLETE)
@@ -220,6 +227,7 @@ class OverAdb(unittest.TestCase):
             "/proc/device-tree": "#address-cells\n#size-cells\nsoc\n",
             "/proc/device-tree/soc": "#address-cells\n#size-cells\nqcom,msm-thermal\nqcom,other\n",
             node: "compatible\nqcom,limit-temp\nqcom,freq-step\nqcom,freq-control-mask\nqcom,poll-ms\n"
+                  "qcom,sensor-id\nqcom,temp-hysteresis\n"
                   "qcom,wlan-addr\nqcom,vdd-dig-rstr\n",
             "/sys/class/thermal": "cooling_device0\nthermal_zone0\n",
             "/sys/class/thermal/thermal_zone0": "mode\ntemp\ntrip_point_0_temp\ntrip_point_0_type\ntype\n",
@@ -228,6 +236,7 @@ class OverAdb(unittest.TestCase):
         dumps = {"compatible": " ".join(COMPATIBLE[i:i + 2] for i in range(0, len(COMPATIBLE), 2)),
                  "qcom,limit-temp": "00 00 00 3c", "qcom,freq-step": "00 00 00 02",
                  "qcom,freq-control-mask": "00 00 00 0f", "qcom,poll-ms": "00 00 00 fa",
+                 "qcom,sensor-id": "00 00 00 05", "qcom,temp-hysteresis": "00 00 00 0a",
                  "qcom,wlan-addr": "02 11 22 33 44 55"}
         overrides = overrides or {}
         asked = []
