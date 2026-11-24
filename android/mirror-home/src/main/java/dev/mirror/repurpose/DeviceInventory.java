@@ -66,7 +66,7 @@ final class DeviceInventory {
                 .put("selinux", selinux(read("/sys/fs/selinux/enforce")))
                 .put("partitions", partitions(read("/proc/partitions"), byName()))
                 .put("mounts", mounts(read("/proc/mounts")))
-                .put("thermal", thermal(deviceTree(), new File(MSM_THERMAL_PARAMETERS),
+                .put("thermal", thermal(deviceTrees(), new File(MSM_THERMAL_PARAMETERS),
                         new File(THERMAL_ZONES), new File(CPUS_POSSIBLE)))
                 .put("packages", packages());
         JSONArray roots = new JSONArray();
@@ -303,62 +303,86 @@ final class DeviceInventory {
         return "1".equals(value) ? "enforcing" : "0".equals(value) ? "permissive" : JSONObject.NULL;
     }
 
-    /** Where the kernel shows its device tree; the first that is a folder is read. */
+    /** Where the kernel shows its device tree, in the order tried. */
     private static final String[] DEVICE_TREES = {"/proc/device-tree", "/sys/firmware/devicetree/base"};
     private static final String MSM_THERMAL_PARAMETERS = "/sys/module/msm_thermal/parameters";
     private static final String THERMAL_ZONES = "/sys/class/thermal";
     private static final String CPUS_POSSIBLE = "/sys/devices/system/cpu/possible";
     /** Device-tree nodes of the kernel's own thermal driver, looked for at the top and under soc. */
     private static final String MSM_THERMAL_NODE = "qcom,msm-thermal";
+    /** Where the driver's node usually is, tried by name when the tree cannot be listed. */
+    private static final String[] KNOWN_NODES = {"soc/qcom,msm-thermal", "qcom,msm-thermal"};
+    /** Properties read by name when a node cannot be listed: what says which driver it is for and what it sets. */
+    private static final String[] KNOWN_PROPERTIES = {
+            "compatible", "status", "qcom,sensor-id", "qcom,poll-ms", "qcom,limit-temp",
+            "qcom,temp-hysteresis", "qcom,freq-step", "qcom,freq-control-mask", "qcom,therm-reset-temp",
+            "qcom,core-limit-temp", "qcom,core-temp-hysteresis", "qcom,core-control-mask",
+            "qcom,hotplug-temp", "qcom,hotplug-temp-hysteresis",
+    };
     private static final int MAX_PROPERTY_BYTES = 1024;
     private static final int MAX_NODE_DEPTH = 3;
     private static final int MAX_TRIP_POINTS = 32;
 
-    private static File deviceTree() {
-        for (String path : DEVICE_TREES) {
-            File folder = new File(path);
-            if (folder.isDirectory()) {
-                return folder;
-            }
+    private static File[] deviceTrees() {
+        File[] trees = new File[DEVICE_TREES.length];
+        for (int i = 0; i < trees.length; i++) {
+            trees[i] = new File(DEVICE_TREES[i]);
         }
-        return new File(DEVICE_TREES[0]);
+        return trees;
     }
 
     /**
      * How the kernel guards the chip against heat without a thermal daemon: the
      * {@code msm_thermal} driver's parameters, its device-tree node (each property
-     * as hex bytes; numbers are big-endian 32-bit cells) and every thermal zone with
+     * as hex bytes; numbers are big-endian 32-bit cells), every thermal zone with
      * its temperature and trip points, and which CPUs exist (the driver throttles only
-     * those its mask names). Anything that cannot be read is listed in
-     * {@code unreadable} with the reason, so a missing value is never mistaken for
-     * an absent one.
+     * those its mask names). {@code deviceTreeListed} says whether the tree could be
+     * listed; when it could not, the usual node is read by name and other nodes cannot
+     * be ruled out. Anything that cannot be read is listed in {@code unreadable} with
+     * the reason, so a missing value is never mistaken for an absent one. Names that
+     * could tell one unit from another are left out.
      */
-    static JSONObject thermal(File deviceTree, File msmThermalParameters, File thermalZones,
+    static JSONObject thermal(File[] deviceTrees, File msmThermalParameters, File thermalZones,
             File cpusPossible) throws JSONException {
         JSONArray unreadable = new JSONArray();
         JSONObject nodes = new JSONObject();
-        for (String parent : new String[]{"", "soc"}) {
-            File folder = parent.isEmpty() ? deviceTree : new File(deviceTree, parent);
-            String[] names = folder.list();
+        File listedTree = null;
+        for (File tree : deviceTrees) {
+            String[] names = tree.list();
             if (names == null) {
-                if (parent.isEmpty()) {
-                    unreadable.put(unreadable(folder, "folder cannot be listed"));
-                }
+                unreadable.put(unreadable(tree, "folder cannot be listed"));
                 continue;
             }
-            Arrays.sort(names);
-            for (String name : names) {
-                File node = new File(folder, name);
-                if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
-                    nodes.put(parent.isEmpty() ? name : parent + "/" + name,
-                            deviceTreeNode(node, 1, unreadable));
+            listedTree = tree;
+            findNodes(tree, "", names, nodes, unreadable);
+            File soc = new File(tree, "soc");
+            String[] socNames = soc.list();
+            if (socNames != null) {
+                findNodes(soc, "soc/", socNames, nodes, unreadable);
+            } else if (Arrays.asList(names).contains("soc")) {
+                unreadable.put(unreadable(soc, "folder cannot be listed"));
+            }
+            break;
+        }
+        if (listedTree == null) {
+            for (File tree : deviceTrees) {
+                for (String known : KNOWN_NODES) {
+                    File node = new File(tree, known);
+                    if (node.isDirectory() && !nodes.has(known)) {
+                        nodes.put(known, node.list() != null
+                                ? deviceTreeNode(node, 1, unreadable) : knownProperties(node, unreadable));
+                    }
+                }
+                if (nodes.length() > 0) {
+                    break;
                 }
             }
         }
         String[] names = msmThermalParameters.list();
         String cpus = readText(cpusPossible, unreadable);
         JSONObject result = new JSONObject().put("schema", "mirror-thermal/1")
-                .put("cpusPossible", cpus == null ? JSONObject.NULL : cpus);
+                .put("cpusPossible", cpus == null ? JSONObject.NULL : cpus)
+                .put("deviceTreeListed", listedTree != null);
         if (names == null) {
             result.put("msmThermalParameters", JSONObject.NULL);
             unreadable.put(unreadable(msmThermalParameters, "folder cannot be listed"));
@@ -366,6 +390,9 @@ final class DeviceInventory {
             JSONObject parameters = new JSONObject();
             Arrays.sort(names);
             for (String name : names) {
+                if (IDENTIFYING.matcher(name).find()) {
+                    continue;
+                }
                 String value = readText(new File(msmThermalParameters, name), unreadable);
                 if (value != null) {
                     parameters.put(name, value);
@@ -379,18 +406,51 @@ final class DeviceInventory {
                 .put("unreadable", unreadable);
     }
 
+    private static void findNodes(File folder, String prefix, String[] names, JSONObject nodes,
+            JSONArray unreadable) throws JSONException {
+        Arrays.sort(names);
+        for (String name : names) {
+            File node = new File(folder, name);
+            if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
+                nodes.put(prefix + name, deviceTreeNode(node, 1, unreadable));
+            }
+        }
+    }
+
+    /** A node that cannot be listed: its known properties, each read by name. */
+    private static JSONObject knownProperties(File node, JSONArray unreadable) throws JSONException {
+        unreadable.put(unreadable(node, "folder cannot be listed; known properties read by name"));
+        JSONObject properties = new JSONObject();
+        for (String name : KNOWN_PROPERTIES) {
+            File entry = new File(node, name);
+            if (!entry.exists()) {
+                continue;
+            }
+            byte[] value = readBytes(entry, unreadable);
+            if (value != null) {
+                properties.put(name, hex(value));
+            }
+        }
+        return new JSONObject().put("properties", properties).put("children", new JSONObject())
+                .put("listed", false);
+    }
+
     private static JSONObject deviceTreeNode(File node, int depth, JSONArray unreadable)
             throws JSONException {
         JSONObject properties = new JSONObject();
         JSONObject children = new JSONObject();
         String[] names = node.list();
-        if (names == null) {
+        boolean listed = names != null;
+        if (!listed) {
             unreadable.put(unreadable(node, "folder cannot be listed"));
             names = new String[0];
         }
         Arrays.sort(names);
         for (String name : names) {
             File entry = new File(node, name);
+            if (IDENTIFYING.matcher(name).find() && !"#address-cells".equals(name)) {
+                continue;
+            }
             if (entry.isDirectory()) {
                 if (depth < MAX_NODE_DEPTH) {
                     children.put(name, deviceTreeNode(entry, depth + 1, unreadable));
@@ -402,7 +462,8 @@ final class DeviceInventory {
                 properties.put(name, hex(value));
             }
         }
-        return new JSONObject().put("properties", properties).put("children", children);
+        return new JSONObject().put("properties", properties).put("children", children)
+                .put("listed", listed);
     }
 
     private static JSONArray thermalZones(File folder, JSONArray unreadable) throws JSONException {

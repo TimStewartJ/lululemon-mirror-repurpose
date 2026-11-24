@@ -145,10 +145,13 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
    Device-tree values are big-endian 32-bit cells (`od` shows their bytes;
    `cat` does not show numbers). `python tools\install.py thermal --serial
-   <serial>` reads all of this (and the kernel log) and judges it as below,
-   exiting 0 only when the gate passes; `--mirror CONFIG` reads the same over
-   Wi-Fi through Mirror Home 2.3.0-dev.30 or later, without the kernel log,
-   so its best answer is `incomplete` (exit 4). Go on only if `enabled` is `Y` (which alone
+   <serial>` reads all of this (and the kernel log) and checks it as below.
+   It never answers a plain pass yet: which kernel messages prove the limits
+   registered is not known for this board, so its best answer is `review`
+   (exit 5: every automatic check passed; read the kernel lines it lists).
+   `--mirror CONFIG` reads the same over Wi-Fi through Mirror Home
+   2.3.0-dev.30 or later, without the kernel log, so its best answer is
+   `incomplete` (exit 4); a Stop is exit 3. Go on only if `enabled` is `Y` (which alone
    is not proof: the driver sets it before registering its frequency limits
    and keeps it if that fails), the kernel log shows the limits registered
    with no error, and the `qcom,msm-thermal` node sets either a chip reset

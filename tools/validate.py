@@ -3552,10 +3552,10 @@ def check_device_inventory(ctx: Context) -> None:
     require("/system" in inventory["fileRoots"], f"File roots: {inventory['fileRoots']}")
     thermal = inventory.get("thermal") or {}
     require(thermal.get("schema") == "mirror-thermal/1", f"Thermal: {describe(thermal)}")
-    listed = sorted(
-        name for name in ctx.adb.shell("ls", "/sys/class/thermal").split()
-        if re.fullmatch(r"thermal_zone\d+", name)
-    )
+    listing = ctx.adb.shell("ls", "/sys/class/thermal")
+    require(not re.search(r"denied|error|No such", listing, re.IGNORECASE),
+            f"/sys/class/thermal could not be listed over ADB: {listing.strip()}")
+    listed = sorted(name for name in listing.split() if re.fullmatch(r"thermal_zone\d+", name))
     require(
         sorted(zone["name"] for zone in thermal["zones"]) == listed,
         f"Thermal zones {[zone['name'] for zone in thermal['zones']]} are not those of /sys/class/thermal: {listed}",

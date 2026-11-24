@@ -167,10 +167,14 @@ the app may read the by-name links; often empty under SELinux), `mounts`,
 the chip against heat: `msmThermalParameters`, the `msm_thermal` driver's
 parameters, or `null` where it has none; `deviceTreeNodes`, each
 `qcom,msm-thermal*` node at the top of the device tree or under `soc` with its
-`properties` as hex bytes (numbers are big-endian 32-bit cells) and
-`children`; `cpusPossible`, such as `0-3`; `zones`, each `thermal_zoneN` with
+`properties` as hex bytes (numbers are big-endian 32-bit cells), `children`
+and whether it could be `listed`; `deviceTreeListed`, false when the app may
+not list the tree, in which case the usual node (`soc/qcom,msm-thermal`) is
+read by its known property names and other nodes cannot be ruled out;
+`cpusPossible`, such as `0-3`; `zones`, each `thermal_zoneN` with
 `type`, `temp`, `mode` and its `trips`; and `unreadable`, every path that
-could not be read with the reason) and `fileRoots`.
+could not be read with the reason; names that could identify a unit are left
+out) and `fileRoots`.
 `GET /api/v1/device/files?root=/system` (or `/firmware`, or `/` for the boot
 image's ramdisk, where listed in `fileRoots`) streams a tar of every file,
 folder and link the app may read, ending with `MIRROR-FILES.json`: counts,
