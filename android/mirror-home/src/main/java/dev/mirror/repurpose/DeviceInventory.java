@@ -443,8 +443,9 @@ final class DeviceInventory {
 
     /** Shaped like a hardware address or a long identifier. */
     private static final Pattern ADDRESS_SHAPED = Pattern.compile(
-            "\\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\\b|\\b[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\b"
-                    + "|\\b(?:0[xX])?[0-9a-fA-F]{12,}\\b");
+            "(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}"
+                    + "|[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}"
+                    + "|(?:0[xX])?[0-9a-fA-F]{12,})(?![0-9a-fA-F])");
     private static final Pattern PLAIN_STRING = Pattern.compile("[A-Za-z0-9,._-]{1,64}");
 
     /** Text that names nothing: no identifier word, and nothing shaped like an address. */
@@ -489,7 +490,7 @@ final class DeviceInventory {
             File zone = new File(folder, name);
             JSONObject entry = new JSONObject().put("name", name);
             for (String field : new String[]{"type", "temp", "mode"}) {
-                String value = readText(new File(zone, field), unreadable);
+                String value = plainValue(new File(zone, field), unreadable);
                 entry.put(field, value == null ? JSONObject.NULL : value);
             }
             JSONArray trips = new JSONArray();
@@ -498,8 +499,8 @@ final class DeviceInventory {
                 if (!temp.exists()) {
                     break;
                 }
-                String type = readText(new File(zone, "trip_point_" + index + "_type"), unreadable);
-                String value = readText(temp, unreadable);
+                String type = plainValue(new File(zone, "trip_point_" + index + "_type"), unreadable);
+                String value = plainValue(temp, unreadable);
                 trips.put(new JSONObject().put("index", index)
                         .put("type", type == null ? JSONObject.NULL : type)
                         .put("temp", value == null ? JSONObject.NULL : value));
@@ -520,6 +521,16 @@ final class DeviceInventory {
 
     private static JSONObject unreadable(File file, String reason) throws JSONException {
         return new JSONObject().put("path", file.getPath()).put("reason", reason);
+    }
+
+    /** A zone's value as it may be sent: the kernel passes on whatever its driver named it, so text that may name the unit is held back. */
+    private static String plainValue(File file, JSONArray unreadable) throws JSONException {
+        String value = readText(file, unreadable);
+        if (value != null && (!plainText(value) || !value.matches("[A-Za-z0-9 ,._:+-]{0,64}"))) {
+            unreadable.put(unreadable(file, "value not shown; it may identify the unit"));
+            return null;
+        }
+        return value;
     }
 
     private static String readText(File file, JSONArray unreadable) throws JSONException {

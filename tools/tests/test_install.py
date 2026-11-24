@@ -307,6 +307,12 @@ class OverAdb(unittest.TestCase):
         self.assertIn("/proc/device-tree/soc", [entry["path"] for entry in read["unreadable"]])
 
     def test_each_listed_line_is_one_name(self):
+        tools, _ = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal\nqcom,msm-thermal \n"})
+        read, log = install.read_thermal_over_adb(tools, SERIAL)
+        self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.STOP)
+        tools, _ = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal\r\nqcom,other\r\n"})
+        read, log = install.read_thermal_over_adb(tools, SERIAL)
+        self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.REVIEW)
         tools, asked = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal\n"
                                                                           "qcom,msm-thermal alternate\n"})
         read, log = install.read_thermal_over_adb(tools, SERIAL)
@@ -322,6 +328,15 @@ class OverAdb(unittest.TestCase):
         self.assertNotIn("0211.2233.4455", repr(result) + repr(install.exported(read)))
         mac_compatible = thermal({**THROTTLING, "compatible": b"qcom,msm-thermal\0peer.0211.2233.4455\0".hex()})
         self.assertNotIn(b"0211.2233.4455".hex(), repr(install.exported(mac_compatible)))
+        for text in ("qcom,msm-thermal_0211.2233.4455", "x_02:11:22:33:44:55", "id_0x021122334455"):
+            self.assertNotEqual(install.redact(text), text, text)
+        underscore = thermal(nodes={"soc/qcom,msm-thermal_0211.2233.4455": {"properties": {
+            "compatible": COMPATIBLE, **THROTTLING}, "listed": True}})
+        self.assertEqual(verdict(underscore), install.STOP)
+        self.assertNotIn("0211.2233.4455", repr(install.exported(underscore)))
+        numbers = thermal({**THROTTLING, "compatible": 7, "qcom,poll-ms": 250})
+        self.assertEqual(verdict(numbers), install.STOP)
+        install.exported(numbers)
 
     def test_a_kernel_log_without_its_status_is_refused_without_repeating_it(self):
         tools, _ = self.unit({"dmesg": (0, "[ 0.0] androidboot.serialno=UNIT-7K4M\n", "")})

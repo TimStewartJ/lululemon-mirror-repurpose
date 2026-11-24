@@ -137,6 +137,7 @@ public final class DeviceInventoryTest {
         assertTrue(new java.io.File(tree, "soc/qcom,other").mkdirs());
         assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal-serial-UNIT7").mkdirs());
         assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal@0211.2233.4455").mkdirs());
+        assertTrue(new java.io.File(tree, "soc/qcom,msm-thermal_0211.2233.4455").mkdirs());
         write(new java.io.File(node, "qcom,sensor-id"), new byte[]{2, 0x11, 0x22, 0x33, 0x44, 0x55});
         write(new java.io.File(node, "compatible"), "qcom,msm-thermal\0".getBytes(UTF8));
         write(new java.io.File(node, "status"), "peer-02:11:22:33:44:55\0".getBytes(UTF8));
@@ -152,6 +153,8 @@ public final class DeviceInventoryTest {
         write(new java.io.File(zones, "thermal_zone2/temp"), "41\n".getBytes(UTF8));
         write(new java.io.File(zones, "thermal_zone2/trip_point_0_temp"), "105\n".getBytes(UTF8));
         write(new java.io.File(zones, "thermal_zone2/trip_point_0_type"), "critical\n".getBytes(UTF8));
+        assertTrue(new java.io.File(zones, "thermal_zone3").mkdirs());
+        write(new java.io.File(zones, "thermal_zone3/type"), "wlan_02:11:22:33:44:55\n".getBytes(UTF8));
 
         write(new java.io.File(node, "local-mac-address"), new byte[]{1, 2, 3, 4, 5, 6});
         JSONObject thermal = DeviceInventory.thermal(
@@ -175,13 +178,17 @@ public final class DeviceInventoryTest {
         assertTrue(driver.getBoolean("listed"));
         assertFalse(driver.has("children"));
         JSONArray zoneList = thermal.getJSONArray("zones");
-        assertEquals(2, zoneList.length());
+        assertEquals(3, zoneList.length());
         JSONObject first = zoneList.getJSONObject(0);
         assertEquals("thermal_zone2", first.getString("name"));
         assertEquals("41", first.getString("temp"));
         assertEquals("critical", first.getJSONArray("trips").getJSONObject(0).getString("type"));
         assertEquals("105", first.getJSONArray("trips").getJSONObject(0).getString("temp"));
-        assertTrue(zoneList.getJSONObject(1).isNull("temp"));
+        assertTrue(zoneList.getJSONObject(1).isNull("type"));
+        assertEquals("thermal_zone10", zoneList.getJSONObject(2).getString("name"));
+        assertTrue(zoneList.getJSONObject(2).isNull("temp"));
+        assertFalse(thermal.toString().contains("02:11:22:33:44:55"));
+        assertFalse(thermal.toString().contains("_0211.2233.4455"));
         String unreadable = thermal.getJSONArray("unreadable").toString();
         assertTrue(unreadable, unreadable.contains("qcom,poll-ms") && unreadable.contains("longer than 1024 bytes"));
         assertTrue(unreadable, unreadable.contains("thermal_zone10"));
