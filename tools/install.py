@@ -53,6 +53,7 @@ NOTED_PROPERTIES = (
 KNOWN_PROPERTIES = ("compatible", "status") + NOTED_PROPERTIES
 # Names the unit lists that are read further; anything else is never put in a command.
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")
+SAFE_NODE_PATH = re.compile(r"(?:soc/)?qcom,msm-thermal[A-Za-z0-9,._#@+-]{0,100}")
 # Degrees Celsius a setting must lie in to be credited: a value outside could never
 # act (60000) or would act all the time; either way it is no evidence of protection.
 RESET_RANGE = (80, 130)
@@ -107,9 +108,44 @@ def in_range(value: int | None, limits: tuple[int, int]) -> bool:
 
 
 def redact(line: str) -> str:
-    """A kernel line with anything shaped like a hardware address or a long identifier hidden."""
+    """Text with anything shaped like a hardware address or a long identifier hidden."""
     line = re.sub(r"\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\b", "<hidden>", line)
-    return re.sub(r"\b[0-9a-fA-F]{12,}\b", "<hidden>", line)
+    return re.sub(r"\b(?:0[xX])?[0-9a-fA-F]{12,}\b", "<hidden>", line)
+
+
+def exported(thermal: dict | None) -> dict | None:
+    """The thermal section as it may leave this computer: only the fields the gate reads, text redacted."""
+    if not isinstance(thermal, dict):
+        return None
+
+    def text(value):
+        return redact(value) if isinstance(value, str) else None
+
+    nodes = {}
+    for name, node in (thermal.get("deviceTreeNodes") or {}).items():
+        if isinstance(node, dict) and isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name):
+            properties = node.get("properties") or {}
+            nodes[name] = {"properties": {key: properties[key] for key in KNOWN_PROPERTIES
+                                          if isinstance(properties.get(key), str)
+                                          and re.fullmatch(r"(?:[0-9a-f]{2}){0,1024}", properties[key])},
+                           "listed": node.get("listed") is True}
+    parameters = thermal.get("msmThermalParameters")
+    return {
+        "schema": thermal.get("schema") if thermal.get("schema") == "mirror-thermal/1" else None,
+        "cpusPossible": text(thermal.get("cpusPossible")),
+        "deviceTreeListed": thermal.get("deviceTreeListed") is True,
+        "msmThermalParameters": None if not isinstance(parameters, dict)
+        else {"enabled": text(parameters["enabled"])} if "enabled" in parameters else {},
+        "deviceTreeNodes": nodes,
+        "zones": [{"name": text(zone.get("name")), "type": text(zone.get("type")), "temp": text(zone.get("temp")),
+                   "mode": text(zone.get("mode")),
+                   "trips": [{"index": trip.get("index") if isinstance(trip.get("index"), int) else None,
+                              "type": text(trip.get("type")), "temp": text(trip.get("temp"))}
+                             for trip in zone.get("trips") or [] if isinstance(trip, dict)]}
+                  for zone in thermal.get("zones") or [] if isinstance(zone, dict)],
+        "unreadable": [{"path": text(entry.get("path")), "reason": text(entry.get("reason"))}
+                       for entry in thermal.get("unreadable") or [] if isinstance(entry, dict)],
+    }
 
 
 def driver_nodes(nodes: dict, stops: list[str]) -> dict:
@@ -128,7 +164,8 @@ def driver_nodes(nodes: dict, stops: list[str]) -> dict:
         if status is None or len(status) != 1:
             stops.append(f"{name}'s status is not one string: {properties['status']!r}")
             continue
-        if THERMAL_NODE in compatible and status[0] in ("okay", "ok"):
+        # The kernel compares compatible strings without regard to case.
+        if THERMAL_NODE in [entry.lower() for entry in compatible] and status[0] in ("okay", "ok"):
             bound[name] = node
     return bound
 
@@ -146,6 +183,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
     noted: dict[str, int] = {}
     review: list[str] = []
     review_node = None
+    thermal = exported(thermal)
     if not thermal or thermal.get("schema") != "mirror-thermal/1":
         return {"verdict": STOP, "stops": ["The unit gave no thermal report (Mirror Home 2.3.0-dev.30 or later "
                                            "reports it)"], "unresolved": [], "notes": [], "values": {},
@@ -280,7 +318,7 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
     unreadable = []
 
     def failed(path: str, out: str) -> None:
-        reason = " ".join(out.split())[:200] or "no answer"
+        reason = redact(" ".join(out.split())[:200]) or "no answer"
         unreadable.append({"path": path, "reason": reason})
 
     def read(path: str) -> str | None:
@@ -303,15 +341,18 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         return "".join(tokens)
 
     def listing(path: str) -> list[str] | None:
+        """Every name in a folder; a caller uses only the plain ones it looks for."""
         ok, out = shell(f"ls {shlex.quote(path)}")
         if not ok:
             failed(path, out)
             return None
-        names = sorted(out.split())
-        strange = [name for name in names if not SAFE_NAME.fullmatch(name)]
-        if strange:
-            failed(path, f"{len(strange)} names outside the expected characters")
-        return [name for name in names if SAFE_NAME.fullmatch(name)]
+        return sorted(out.split())
+
+    def plain(folder: str, name: str) -> bool:
+        if SAFE_NAME.fullmatch(name):
+            return True
+        failed(folder, "a name it lists is outside the expected characters and was not read")
+        return False
 
     parameters_folder = "/sys/module/msm_thermal/parameters"
     if exists(parameters_folder):
@@ -328,7 +369,7 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         for prefix, parent in parents:
             entries = top if not prefix else listing(parent)
             for name in entries or []:
-                if not name.startswith(THERMAL_NODE):
+                if not name.startswith(THERMAL_NODE) or not plain(parent, name):
                     continue
                 node = f"{parent}/{name}"
                 present = listing(node)
@@ -347,9 +388,10 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         for field in ("type", "temp", "mode"):
             zone[field] = read(f"{folder}/{field}")
         trips = []
+        present = listing(folder) or []
         for index in range(32):
-            # Only a trip point that is not there ends the list; one that cannot be read is recorded.
-            if not exists(f"{folder}/trip_point_{index}_temp"):
+            # The zone's own listing says which trip points exist; one that cannot be read is recorded.
+            if f"trip_point_{index}_temp" not in present:
                 break
             trips.append({"index": index, "type": read(f"{folder}/trip_point_{index}_type"),
                           "temp": read(f"{folder}/trip_point_{index}_temp")})
@@ -366,7 +408,7 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
     }
     ok, log = shell("dmesg")
     if not ok:
-        raise RuntimeError(f"The kernel log could not be read over ADB: {' '.join(log.split())[:200]}")
+        raise RuntimeError(f"The kernel log could not be read over ADB: {redact(' '.join(log.split())[:200])}")
     return thermal, log.splitlines()
 
 
@@ -406,7 +448,7 @@ def command_thermal(arguments: argparse.Namespace) -> int:
         return 1
     result = evaluate_thermal(thermal, kernel_log)
     if arguments.json:
-        print(json.dumps({"schema": "mirror-install-thermal/1", **result, "thermal": thermal}, indent=1))
+        print(json.dumps({"schema": "mirror-install-thermal/1", **result, "thermal": exported(thermal)}, indent=1))
     else:
         print_verdict(result)
     return EXIT_CODES[result["verdict"]]
