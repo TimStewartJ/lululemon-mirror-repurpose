@@ -124,8 +124,13 @@ def safe(value) -> str:
     return redact(text)[:200]
 
 
+def plain_text(text: str) -> bool:
+    """Text that names nothing: no identifier word, and nothing the address redactor would hide."""
+    return not IDENTIFYING.search(text) and redact(text) == text
+
+
 def showable_name(name) -> bool:
-    return isinstance(name, str) and bool(SAFE_NODE_PATH.fullmatch(name)) and not IDENTIFYING.search(name)
+    return isinstance(name, str) and bool(SAFE_NODE_PATH.fullmatch(name)) and plain_text(name)
 
 
 def label(name) -> str:
@@ -139,9 +144,17 @@ def showable_property(key: str, value) -> bool:
     if key in ("compatible", "status"):
         decoded = strings(value)
         return (decoded is not None and len(value) <= 256
-                and all(re.fullmatch(r"[A-Za-z0-9,._-]{1,64}", entry) and not IDENTIFYING.search(entry)
+                and all(re.fullmatch(r"[A-Za-z0-9,._-]{1,64}", entry) and plain_text(entry)
                         for entry in decoded))
     return bool(re.fullmatch(r"[0-9a-f]{8}", value))
+
+
+def as_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value) -> list:
+    return value if isinstance(value, list) else []
 
 
 def exported(thermal: dict | None) -> dict | None:
@@ -154,7 +167,7 @@ def exported(thermal: dict | None) -> dict | None:
 
     nodes = {}
     extra = []
-    for name, node in (thermal.get("deviceTreeNodes") or {}).items():
+    for name, node in as_dict(thermal.get("deviceTreeNodes")).items():
         if not showable_name(name) or not isinstance(node, dict):
             extra.append({"path": "<a node whose name is not shown>", "reason": "left out of the report"})
             continue
@@ -176,10 +189,10 @@ def exported(thermal: dict | None) -> dict | None:
                    "mode": text(zone.get("mode")),
                    "trips": [{"index": trip.get("index") if isinstance(trip.get("index"), int) else None,
                               "type": text(trip.get("type")), "temp": text(trip.get("temp"))}
-                             for trip in zone.get("trips") or [] if isinstance(trip, dict)]}
-                  for zone in thermal.get("zones") or [] if isinstance(zone, dict)],
+                             for trip in as_list(zone.get("trips")) if isinstance(trip, dict)]}
+                  for zone in as_list(thermal.get("zones")) if isinstance(zone, dict)],
         "unreadable": [{"path": text(entry.get("path")), "reason": text(entry.get("reason"))}
-                       for entry in thermal.get("unreadable") or [] if isinstance(entry, dict)] + extra,
+                       for entry in as_list(thermal.get("unreadable")) if isinstance(entry, dict)] + extra,
     }
 
 
@@ -262,7 +275,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         if not path or path.startswith(GATE_PATHS):
             stops.append(f"{safe(path) if path else 'A path'} could not be read: {safe(reason)}")
 
-    enabled = (thermal.get("msmThermalParameters") or {}).get("enabled")
+    enabled = as_dict(thermal.get("msmThermalParameters")).get("enabled")
     if enabled != "Y":
         stops.append(f"msm_thermal's 'enabled' is {safe(enabled)}, not Y")
 
@@ -321,8 +334,11 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
                          f"within {LIMIT_RANGE[0]}-{LIMIT_RANGE[1]} °C, qcom,freq-step within "
                          f"{FREQ_STEP_RANGE[0]}-{FREQ_STEP_RANGE[1]} and a qcom,freq-control-mask covering each CPU)")
 
-    for zone in thermal.get("zones", []):
-        critical = [safe(trip.get("temp")) for trip in zone.get("trips", []) if trip.get("type") == "critical"]
+    for zone in as_list(thermal.get("zones")):
+        if not isinstance(zone, dict):
+            continue
+        critical = [safe(trip.get("temp")) for trip in as_list(zone.get("trips"))
+                    if isinstance(trip, dict) and trip.get("type") == "critical"]
         notes.append(f"{safe(zone.get('name'))} ({safe(zone.get('type'))}): {safe(zone.get('temp'))}"
                      + (f", critical trip at {', '.join(critical)}" if critical else ""))
 
@@ -410,10 +426,10 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         if not ok:
             failed(path, out)
             return None
-        return sorted(out.split())
+        return sorted(line.strip() for line in out.splitlines() if line.strip())
 
     def plain(folder: str, name: str) -> bool:
-        if SAFE_NAME.fullmatch(name) and not IDENTIFYING.search(name):
+        if SAFE_NAME.fullmatch(name) and plain_text(name):
             return True
         failed(folder, "a node whose name is not shown was left out")
         return False
