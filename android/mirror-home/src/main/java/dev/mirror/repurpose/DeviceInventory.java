@@ -66,6 +66,8 @@ final class DeviceInventory {
                 .put("selinux", selinux(read("/sys/fs/selinux/enforce")))
                 .put("partitions", partitions(read("/proc/partitions"), byName()))
                 .put("mounts", mounts(read("/proc/mounts")))
+                .put("thermal", thermal(deviceTree(), new File(MSM_THERMAL_PARAMETERS),
+                        new File(THERMAL_ZONES), new File(CPUS_POSSIBLE)))
                 .put("packages", packages());
         JSONArray roots = new JSONArray();
         for (String root : FILE_ROOTS) {
@@ -299,6 +301,196 @@ final class DeviceInventory {
     static Object selinux(String enforce) {
         String value = enforce.trim();
         return "1".equals(value) ? "enforcing" : "0".equals(value) ? "permissive" : JSONObject.NULL;
+    }
+
+    /** Where the kernel shows its device tree; the first that is a folder is read. */
+    private static final String[] DEVICE_TREES = {"/proc/device-tree", "/sys/firmware/devicetree/base"};
+    private static final String MSM_THERMAL_PARAMETERS = "/sys/module/msm_thermal/parameters";
+    private static final String THERMAL_ZONES = "/sys/class/thermal";
+    private static final String CPUS_POSSIBLE = "/sys/devices/system/cpu/possible";
+    /** Device-tree nodes of the kernel's own thermal driver, looked for at the top and under soc. */
+    private static final String MSM_THERMAL_NODE = "qcom,msm-thermal";
+    private static final int MAX_PROPERTY_BYTES = 1024;
+    private static final int MAX_NODE_DEPTH = 3;
+    private static final int MAX_TRIP_POINTS = 32;
+
+    private static File deviceTree() {
+        for (String path : DEVICE_TREES) {
+            File folder = new File(path);
+            if (folder.isDirectory()) {
+                return folder;
+            }
+        }
+        return new File(DEVICE_TREES[0]);
+    }
+
+    /**
+     * How the kernel guards the chip against heat without a thermal daemon: the
+     * {@code msm_thermal} driver's parameters, its device-tree node (each property
+     * as hex bytes; numbers are big-endian 32-bit cells) and every thermal zone with
+     * its temperature and trip points, and which CPUs exist (the driver throttles only
+     * those its mask names). Anything that cannot be read is listed in
+     * {@code unreadable} with the reason, so a missing value is never mistaken for
+     * an absent one.
+     */
+    static JSONObject thermal(File deviceTree, File msmThermalParameters, File thermalZones,
+            File cpusPossible) throws JSONException {
+        JSONArray unreadable = new JSONArray();
+        JSONObject nodes = new JSONObject();
+        for (String parent : new String[]{"", "soc"}) {
+            File folder = parent.isEmpty() ? deviceTree : new File(deviceTree, parent);
+            String[] names = folder.list();
+            if (names == null) {
+                if (parent.isEmpty()) {
+                    unreadable.put(unreadable(folder, "folder cannot be listed"));
+                }
+                continue;
+            }
+            Arrays.sort(names);
+            for (String name : names) {
+                File node = new File(folder, name);
+                if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
+                    nodes.put(parent.isEmpty() ? name : parent + "/" + name,
+                            deviceTreeNode(node, 1, unreadable));
+                }
+            }
+        }
+        String[] names = msmThermalParameters.list();
+        String cpus = readText(cpusPossible, unreadable);
+        JSONObject result = new JSONObject().put("schema", "mirror-thermal/1")
+                .put("cpusPossible", cpus == null ? JSONObject.NULL : cpus);
+        if (names == null) {
+            result.put("msmThermalParameters", JSONObject.NULL);
+            unreadable.put(unreadable(msmThermalParameters, "folder cannot be listed"));
+        } else {
+            JSONObject parameters = new JSONObject();
+            Arrays.sort(names);
+            for (String name : names) {
+                String value = readText(new File(msmThermalParameters, name), unreadable);
+                if (value != null) {
+                    parameters.put(name, value);
+                }
+            }
+            result.put("msmThermalParameters", parameters);
+        }
+        return result
+                .put("deviceTreeNodes", nodes)
+                .put("zones", thermalZones(thermalZones, unreadable))
+                .put("unreadable", unreadable);
+    }
+
+    private static JSONObject deviceTreeNode(File node, int depth, JSONArray unreadable)
+            throws JSONException {
+        JSONObject properties = new JSONObject();
+        JSONObject children = new JSONObject();
+        String[] names = node.list();
+        if (names == null) {
+            unreadable.put(unreadable(node, "folder cannot be listed"));
+            names = new String[0];
+        }
+        Arrays.sort(names);
+        for (String name : names) {
+            File entry = new File(node, name);
+            if (entry.isDirectory()) {
+                if (depth < MAX_NODE_DEPTH) {
+                    children.put(name, deviceTreeNode(entry, depth + 1, unreadable));
+                }
+                continue;
+            }
+            byte[] value = readBytes(entry, unreadable);
+            if (value != null) {
+                properties.put(name, hex(value));
+            }
+        }
+        return new JSONObject().put("properties", properties).put("children", children);
+    }
+
+    private static JSONArray thermalZones(File folder, JSONArray unreadable) throws JSONException {
+        JSONArray zones = new JSONArray();
+        String[] names = folder.list();
+        if (names == null) {
+            unreadable.put(unreadable(folder, "folder cannot be listed"));
+            return zones;
+        }
+        Arrays.sort(names, new java.util.Comparator<String>() {
+            @Override
+            public int compare(String a, String b) {
+                return zoneNumber(a) - zoneNumber(b);
+            }
+        });
+        for (String name : names) {
+            if (zoneNumber(name) < 0) {
+                continue;
+            }
+            File zone = new File(folder, name);
+            JSONObject entry = new JSONObject().put("name", name);
+            for (String field : new String[]{"type", "temp", "mode"}) {
+                String value = readText(new File(zone, field), unreadable);
+                entry.put(field, value == null ? JSONObject.NULL : value);
+            }
+            JSONArray trips = new JSONArray();
+            for (int index = 0; index < MAX_TRIP_POINTS; index++) {
+                File temp = new File(zone, "trip_point_" + index + "_temp");
+                if (!temp.exists()) {
+                    break;
+                }
+                String type = readText(new File(zone, "trip_point_" + index + "_type"), unreadable);
+                String value = readText(temp, unreadable);
+                trips.put(new JSONObject().put("index", index)
+                        .put("type", type == null ? JSONObject.NULL : type)
+                        .put("temp", value == null ? JSONObject.NULL : value));
+            }
+            zones.put(entry.put("trips", trips));
+        }
+        return zones;
+    }
+
+    /** The number of {@code thermal_zoneN}, or -1 for any other name. */
+    static int zoneNumber(String name) {
+        if (!name.startsWith("thermal_zone") || name.length() == "thermal_zone".length()) {
+            return -1;
+        }
+        String number = name.substring("thermal_zone".length());
+        return number.matches("\\d{1,6}") ? Integer.parseInt(number) : -1;
+    }
+
+    private static JSONObject unreadable(File file, String reason) throws JSONException {
+        return new JSONObject().put("path", file.getPath()).put("reason", reason);
+    }
+
+    private static String readText(File file, JSONArray unreadable) throws JSONException {
+        byte[] bytes = readBytes(file, unreadable);
+        return bytes == null ? null : new String(bytes, UTF8).trim();
+    }
+
+    /** At most {@link #MAX_PROPERTY_BYTES}; null (and listed as unreadable) when it cannot be read or is longer. */
+    private static byte[] readBytes(File file, JSONArray unreadable) throws JSONException {
+        try (InputStream input = new FileInputStream(file)) {
+            byte[] buffer = new byte[MAX_PROPERTY_BYTES + 1];
+            int length = 0;
+            int count;
+            while (length < buffer.length
+                    && (count = input.read(buffer, length, buffer.length - length)) > 0) {
+                length += count;
+            }
+            if (length > MAX_PROPERTY_BYTES) {
+                unreadable.put(unreadable(file, "longer than " + MAX_PROPERTY_BYTES + " bytes"));
+                return null;
+            }
+            return Arrays.copyOf(buffer, length);
+        } catch (IOException error) {
+            String reason = error.getMessage();
+            unreadable.put(unreadable(file, reason == null ? error.getClass().getSimpleName() : reason));
+            return null;
+        }
+    }
+
+    static String hex(byte[] bytes) {
+        StringBuilder text = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) {
+            text.append(Character.forDigit((value >> 4) & 0xf, 16)).append(Character.forDigit(value & 0xf, 16));
+        }
+        return text.toString();
     }
 
     /** Partition name to block device name, from the by-name links. */
