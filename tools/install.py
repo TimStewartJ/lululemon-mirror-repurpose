@@ -71,14 +71,14 @@ EXIT_CODES = {STOP: 3, INCOMPLETE: 4, REVIEW: 5}
 
 def cells(hex_value: str) -> list[int] | None:
     """Big-endian 32-bit cells of a device-tree property, or None if it is not a whole number of them."""
-    if not re.fullmatch(r"(?:[0-9a-f]{8})+", hex_value or ""):
+    if not isinstance(hex_value, str) or not re.fullmatch(r"(?:[0-9a-f]{8})+", hex_value):
         return None
     return [int(hex_value[i:i + 8], 16) for i in range(0, len(hex_value), 8)]
 
 
 def strings(hex_value: str) -> list[str] | None:
     """A device-tree string list (NUL-separated), or None if it is not one."""
-    if not re.fullmatch(r"(?:[0-9a-f]{2})+", hex_value or ""):
+    if not isinstance(hex_value, str) or not re.fullmatch(r"(?:[0-9a-f]{2})+", hex_value):
         return None
     raw = bytes.fromhex(hex_value)
     if not raw.endswith(b"\0"):
@@ -108,10 +108,14 @@ def in_range(value: int | None, limits: tuple[int, int]) -> bool:
 
 
 def redact(line: str) -> str:
-    """Text with anything shaped like a hardware address or a long identifier hidden."""
-    line = re.sub(r"\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\b", "<hidden>", line)
-    line = re.sub(r"\b[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\b", "<hidden>", line)
-    return re.sub(r"\b(?:0[xX])?[0-9a-fA-F]{12,}\b", "<hidden>", line)
+    """Text with anything shaped like a hardware address or a long identifier hidden.
+
+    Boundaries are any character that is not a hex digit (``_`` included), not word boundaries.
+    """
+    line = re.sub(r"(?<![0-9a-fA-F])[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}(?![0-9a-fA-F])", "<hidden>", line)
+    line = re.sub(r"(?<![0-9a-fA-F])[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}(?![0-9a-fA-F])", "<hidden>",
+                  line)
+    return re.sub(r"(?<![0-9a-fA-F])(?:0[xX])?[0-9a-fA-F]{12,}(?![0-9a-fA-F])", "<hidden>", line)
 
 
 def safe(value) -> str:
@@ -143,7 +147,7 @@ def showable_property(key: str, value) -> bool:
         return False
     if key in ("compatible", "status"):
         decoded = strings(value)
-        return (decoded is not None and len(value) <= 256
+        return (decoded is not None and len(value) <= 2 * 256
                 and all(re.fullmatch(r"[A-Za-z0-9,._-]{1,64}", entry) and plain_text(entry)
                         for entry in decoded))
     return bool(re.fullmatch(r"[0-9a-f]{8}", value))
@@ -426,7 +430,8 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
         if not ok:
             failed(path, out)
             return None
-        return sorted(line.strip() for line in out.splitlines() if line.strip())
+        # Only the line ends are taken off: a name that differs by a space is another name.
+        return sorted(line.rstrip("\r") for line in out.split("\n") if line.rstrip("\r"))
 
     def plain(folder: str, name: str) -> bool:
         if SAFE_NAME.fullmatch(name) and plain_text(name):
@@ -458,6 +463,9 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
                     there = entry in present if present is not None else exists(f"{node}/{entry}")
                     if there and (value := read_hex(f"{node}/{entry}")) is not None:
                         properties[entry] = value
+                if prefix + name in nodes:
+                    failed(parent, "two listed names lead to the same node")
+                    continue
                 nodes[prefix + name] = {"properties": properties, "listed": present is not None}
     zones = []
     for name in sorted(listing("/sys/class/thermal") or [], key=zone_number):
