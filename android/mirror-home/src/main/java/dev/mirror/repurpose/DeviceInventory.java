@@ -320,7 +320,6 @@ final class DeviceInventory {
             "qcom,hotplug-temp", "qcom,hotplug-temp-hysteresis",
     };
     private static final int MAX_PROPERTY_BYTES = 1024;
-    private static final int MAX_NODE_DEPTH = 3;
     private static final int MAX_TRIP_POINTS = 32;
 
     private static File[] deviceTrees() {
@@ -368,9 +367,8 @@ final class DeviceInventory {
             for (File tree : deviceTrees) {
                 for (String known : KNOWN_NODES) {
                     File node = new File(tree, known);
-                    if (node.isDirectory() && !nodes.has(known)) {
-                        nodes.put(known, node.list() != null
-                                ? deviceTreeNode(node, 1, unreadable) : knownProperties(node, unreadable));
+                    if (node.isDirectory()) {
+                        nodes.put(known, driverNode(node, unreadable));
                     }
                 }
                 if (nodes.length() > 0) {
@@ -378,25 +376,18 @@ final class DeviceInventory {
                 }
             }
         }
-        String[] names = msmThermalParameters.list();
         String cpus = readText(cpusPossible, unreadable);
         JSONObject result = new JSONObject().put("schema", "mirror-thermal/1")
                 .put("cpusPossible", cpus == null ? JSONObject.NULL : cpus)
                 .put("deviceTreeListed", listedTree != null);
-        if (names == null) {
+        if (!msmThermalParameters.isDirectory()) {
             result.put("msmThermalParameters", JSONObject.NULL);
-            unreadable.put(unreadable(msmThermalParameters, "folder cannot be listed"));
+            unreadable.put(unreadable(msmThermalParameters, "not found"));
         } else {
             JSONObject parameters = new JSONObject();
-            Arrays.sort(names);
-            for (String name : names) {
-                if (IDENTIFYING.matcher(name).find()) {
-                    continue;
-                }
-                String value = readText(new File(msmThermalParameters, name), unreadable);
-                if (value != null) {
-                    parameters.put(name, value);
-                }
+            String enabled = readText(new File(msmThermalParameters, "enabled"), unreadable);
+            if (enabled != null) {
+                parameters.put("enabled", enabled);
             }
             result.put("msmThermalParameters", parameters);
         }
@@ -412,49 +403,27 @@ final class DeviceInventory {
         for (String name : names) {
             File node = new File(folder, name);
             if (name.startsWith(MSM_THERMAL_NODE) && node.isDirectory()) {
-                nodes.put(prefix + name, deviceTreeNode(node, 1, unreadable));
+                nodes.put(prefix + name, driverNode(node, unreadable));
             }
         }
     }
 
-    /** A node that cannot be listed: its known properties, each read by name. */
-    private static JSONObject knownProperties(File node, JSONArray unreadable) throws JSONException {
-        unreadable.put(unreadable(node, "folder cannot be listed; known properties read by name"));
-        JSONObject properties = new JSONObject();
-        for (String name : KNOWN_PROPERTIES) {
-            File entry = new File(node, name);
-            if (!entry.exists()) {
-                continue;
-            }
-            byte[] value = readBytes(entry, unreadable);
-            if (value != null) {
-                properties.put(name, hex(value));
-            }
-        }
-        return new JSONObject().put("properties", properties).put("children", new JSONObject())
-                .put("listed", false);
-    }
-
-    private static JSONObject deviceTreeNode(File node, int depth, JSONArray unreadable)
-            throws JSONException {
-        JSONObject properties = new JSONObject();
-        JSONObject children = new JSONObject();
+    /**
+     * Only the properties the gate needs, each read by name, so nothing else a
+     * board's tree holds (addresses, identifiers) is sent. {@code listed} says
+     * whether the node could be listed: only then is a property known to be absent.
+     */
+    private static JSONObject driverNode(File node, JSONArray unreadable) throws JSONException {
         String[] names = node.list();
         boolean listed = names != null;
         if (!listed) {
-            unreadable.put(unreadable(node, "folder cannot be listed"));
-            names = new String[0];
+            unreadable.put(unreadable(node, "folder cannot be listed; known properties read by name"));
         }
-        Arrays.sort(names);
-        for (String name : names) {
+        List<String> present = listed ? Arrays.asList(names) : null;
+        JSONObject properties = new JSONObject();
+        for (String name : KNOWN_PROPERTIES) {
             File entry = new File(node, name);
-            if (IDENTIFYING.matcher(name).find() && !"#address-cells".equals(name)) {
-                continue;
-            }
-            if (entry.isDirectory()) {
-                if (depth < MAX_NODE_DEPTH) {
-                    children.put(name, deviceTreeNode(entry, depth + 1, unreadable));
-                }
+            if (listed ? !present.contains(name) : !entry.exists()) {
                 continue;
             }
             byte[] value = readBytes(entry, unreadable);
@@ -462,8 +431,7 @@ final class DeviceInventory {
                 properties.put(name, hex(value));
             }
         }
-        return new JSONObject().put("properties", properties).put("children", children)
-                .put("listed", listed);
+        return new JSONObject().put("properties", properties).put("listed", listed);
     }
 
     private static JSONArray thermalZones(File folder, JSONArray unreadable) throws JSONException {

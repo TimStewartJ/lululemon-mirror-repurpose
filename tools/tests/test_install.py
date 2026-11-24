@@ -1,4 +1,5 @@
 import pathlib
+import shlex
 import sys
 import unittest
 
@@ -27,7 +28,7 @@ def thermal(properties=None, enabled="Y", cpus="0-3", unreadable=(), listed=True
 
 
 THROTTLING = {"qcom,limit-temp": "0000003c", "qcom,freq-step": "00000002",
-              "qcom,freq-control-mask": "0000000f"}
+              "qcom,freq-control-mask": "0000000f", "qcom,poll-ms": "000000fa"}
 LOG = ["[    1.2] msm_thermal:msm_thermal_dev_init Registered limits", "[    1.3] tsens: probe ok"]
 
 
@@ -43,7 +44,7 @@ class ThermalGate(unittest.TestCase):
         self.assertEqual(result["kernelLines"], [line.strip() for line in LOG])
 
     def test_a_chip_reset_alone_is_enough_for_review(self):
-        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "00000078"})), install.REVIEW)
+        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "00000078", "qcom,poll-ms": "000000fa"})), install.REVIEW)
 
     def test_over_wifi_the_answer_is_at_best_incomplete(self):
         self.assertEqual(verdict(thermal(THROTTLING), None), install.INCOMPLETE)
@@ -54,7 +55,20 @@ class ThermalGate(unittest.TestCase):
                     "reason": "folder cannot be listed; known properties read by name"}]
         result = install.evaluate_thermal(thermal(THROTTLING, listed=False, unreadable=refused), LOG)
         self.assertEqual(result["verdict"], install.INCOMPLETE, result)
-        self.assertEqual(len(result["unresolved"]), 2)
+        self.assertEqual(verdict(thermal(THROTTLING, listed=False)), install.INCOMPLETE)
+        unlisted = thermal(THROTTLING)
+        unlisted["deviceTreeNodes"]["soc/qcom,msm-thermal"]["listed"] = False
+        self.assertEqual(verdict(unlisted), install.INCOMPLETE)
+
+    def test_polling_must_be_frequent_enough(self):
+        self.assertEqual(verdict(thermal({**THROTTLING, "qcom,poll-ms": "05265c00"})), install.STOP)
+        no_poll = {key: value for key, value in THROTTLING.items() if key != "qcom,poll-ms"}
+        self.assertEqual(verdict(thermal(no_poll)), install.STOP)
+        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "00000078"})), install.STOP)
+
+    def test_a_status_that_is_not_one_string_is_a_stop(self):
+        self.assertEqual(verdict(thermal({**THROTTLING, "status": b"okay\0\0".hex()})), install.STOP)
+        self.assertEqual(verdict(thermal({**THROTTLING, "status": b"okay\0".hex()})), install.REVIEW)
 
     def test_a_mask_missing_a_cpu_is_a_stop(self):
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,freq-control-mask": "00000007"})), install.STOP)
@@ -63,7 +77,7 @@ class ThermalGate(unittest.TestCase):
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,freq-step": "00000000"})), install.STOP)
 
     def test_temperatures_that_could_never_act_are_not_credited(self):
-        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "0000ea60"})), install.STOP)
+        self.assertEqual(verdict(thermal({"qcom,therm-reset-temp": "0000ea60", "qcom,poll-ms": "000000fa"})), install.STOP)
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,limit-temp": "0000ea60"})), install.STOP)
 
     def test_driver_not_enabled_is_a_stop(self):
@@ -93,6 +107,10 @@ class ThermalGate(unittest.TestCase):
         result = install.evaluate_thermal(thermal(THROTTLING), log)
         self.assertEqual(result["verdict"], install.STOP)
         self.assertNotIn(SERIAL, repr(result))
+        shown = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 02:11:22:33:44:55"])
+        self.assertNotIn("02:11:22:33:44:55", repr(shown))
+        shown = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 02:11:22:33:44:55"])
+        self.assertNotIn("02:11:22:33:44:55", repr(shown))
 
     def test_a_property_that_is_not_one_cell_is_a_stop(self):
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,limit-temp": "0000003c00000001"})), install.STOP)
@@ -121,7 +139,8 @@ class ThermalGate(unittest.TestCase):
 class OverAdb(unittest.TestCase):
     NODE = "/proc/device-tree/soc/qcom,msm-thermal"
 
-    def unit(self, overrides=None):
+    def unit(self, overrides=None, listings_extra=None):
+        node = self.NODE
         files = {
             "/sys/module/msm_thermal/parameters/enabled": "Y\n",
             "/sys/devices/system/cpu/possible": "0-3\n",
@@ -131,17 +150,22 @@ class OverAdb(unittest.TestCase):
             "/sys/class/thermal/thermal_zone0/trip_point_0_temp": "120\n",
             "/sys/class/thermal/thermal_zone0/trip_point_0_type": "critical\n",
         }
+        folders = {"/sys/module/msm_thermal/parameters"}
         listings = {
-            "/sys/module/msm_thermal/parameters": "enabled\n",
             "/proc/device-tree": "soc\n",
             "/proc/device-tree/soc": "qcom,msm-thermal\nqcom,other\n",
+            node: "compatible\nqcom,limit-temp\nqcom,freq-step\nqcom,freq-control-mask\nqcom,poll-ms\n"
+                  "qcom,wlan-addr\nqcom,vdd-dig-rstr\n",
             "/sys/class/thermal": "cooling_device0\nthermal_zone0\n",
+            **(listings_extra or {}),
         }
         dumps = {"compatible": " ".join(COMPATIBLE[i:i + 2] for i in range(0, len(COMPATIBLE), 2)),
                  "qcom,limit-temp": "00 00 00 3c", "qcom,freq-step": "00 00 00 02",
-                 "qcom,freq-control-mask": "00 00 00 0f"}
+                 "qcom,freq-control-mask": "00 00 00 0f", "qcom,poll-ms": "00 00 00 fa",
+                 "qcom,wlan-addr": "02 11 22 33 44 55"}
         overrides = overrides or {}
         asked = []
+        ok, failed = f"{install.STATUS_MARKER}0\n", f"{install.STATUS_MARKER}1\n"
 
         def runner(arguments):
             self.assertEqual(arguments[:4], ["adb", "-s", SERIAL, "shell"])
@@ -150,20 +174,19 @@ class OverAdb(unittest.TestCase):
             asked.append(command)
             if command in overrides:
                 return overrides[command]
-            if command.startswith("cat '"):
-                path = command[5:-1]
-                if path in files:
-                    return 0, files[path] + f"{install.STATUS_MARKER}0\n", ""
-                return 0, f"{path}: No such file or directory\n{install.STATUS_MARKER}1\n", ""
-            if command.startswith("ls '"):
-                path = command[4:-1]
-                return 0, listings[path] + f"{install.STATUS_MARKER}0\n", ""
-            if command.startswith("for f in"):
-                return 0, "\n".join(dumps) + f"\n{install.STATUS_MARKER}0\n", ""
-            if command.startswith("od -An -tx1 '"):
-                return 0, " " + dumps[command[13:-1].rsplit("/", 1)[1]] + f"\n{install.STATUS_MARKER}0\n", ""
-            if command == "dmesg":
-                return 0, "\n".join(LOG) + f"\n{install.STATUS_MARKER}0\n", ""
+            words = shlex.split(command)
+            if words[0] == "cat":
+                return (0, files[words[1]] + ok, "") if words[1] in files else \
+                    (0, f"{words[1]}: No such file or directory\n" + failed, "")
+            if words[0] == "[":
+                there = words[2] in files or words[2] in folders or words[2] in listings
+                return 0, ok if there else failed, ""
+            if words[0] == "ls":
+                return 0, listings[words[1]] + ok, ""
+            if words[:3] == ["od", "-An", "-tx1"]:
+                return 0, " " + dumps[words[3].rsplit("/", 1)[1]] + "\n" + ok, ""
+            if words == ["dmesg"]:
+                return 0, "\n".join(LOG) + "\n" + ok, ""
             self.fail(f"unexpected command {command}")
 
         return identify.Tools("adb", "fastboot", runner), asked
@@ -174,7 +197,11 @@ class OverAdb(unittest.TestCase):
         node = read["deviceTreeNodes"]["soc/qcom,msm-thermal"]
         self.assertEqual(node["properties"]["qcom,limit-temp"], "0000003c")
         self.assertEqual(install.strings(node["properties"]["compatible"]), ["qcom,msm-thermal"])
+        self.assertNotIn("qcom,wlan-addr", node["properties"])
+        self.assertNotIn("021122334455", repr(read))
+        self.assertTrue(node["listed"])
         self.assertTrue(read["deviceTreeListed"])
+        self.assertEqual(read["msmThermalParameters"], {"enabled": "Y"})
         self.assertEqual([zone["name"] for zone in read["zones"]], ["thermal_zone0"])
         self.assertEqual(read["zones"][0]["trips"], [{"index": 0, "type": "critical", "temp": "120"}])
         self.assertEqual(read["unreadable"], [])
@@ -182,8 +209,8 @@ class OverAdb(unittest.TestCase):
         self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.REVIEW)
 
     def test_a_failure_adb_does_not_report_is_still_caught(self):
-        tools, _ = self.unit({"ls '/proc/device-tree'": (0, f"ls: {SERIAL}: Input/output error\n"
-                                                             f"{install.STATUS_MARKER}1\n", "")})
+        tools, _ = self.unit({"ls /proc/device-tree": (0, f"ls: {SERIAL}: Input/output error\n"
+                                                          f"{install.STATUS_MARKER}1\n", "")})
         read, log = install.read_thermal_over_adb(tools, SERIAL)
         self.assertFalse(read["deviceTreeListed"])
         self.assertNotIn(SERIAL, repr(read))
@@ -191,15 +218,29 @@ class OverAdb(unittest.TestCase):
         self.assertNotEqual(install.evaluate_thermal(read, log)["verdict"], install.REVIEW)
 
     def test_a_command_without_its_status_counts_as_failed(self):
-        tools, _ = self.unit({"cat '/sys/module/msm_thermal/parameters/enabled'": (0, "Y\n", "")})
+        tools, _ = self.unit({"cat /sys/module/msm_thermal/parameters/enabled": (0, "Y\n", "")})
         read, log = install.read_thermal_over_adb(tools, SERIAL)
         self.assertEqual(read["msmThermalParameters"], {})
         self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.STOP)
 
+    def test_a_trip_point_that_cannot_be_read_is_recorded(self):
+        path = "/sys/class/thermal/thermal_zone0/trip_point_0_temp"
+        tools, _ = self.unit({f"cat {path}": (0, f"cat: {path}: Permission denied\n{install.STATUS_MARKER}1\n", "")})
+        read, _ = install.read_thermal_over_adb(tools, SERIAL)
+        self.assertEqual(read["zones"][0]["trips"][0]["temp"], None)
+        self.assertIn(path, [entry["path"] for entry in read["unreadable"]])
+
+    def test_names_that_are_not_plain_are_never_put_in_a_command(self):
+        tools, asked = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal'; reboot; '\n"
+                                                                          "qcom,msm-thermal\n"})
+        read, _ = install.read_thermal_over_adb(tools, SERIAL)
+        self.assertFalse(any("reboot" in command for command in asked))
+        self.assertIn("/proc/device-tree/soc", [entry["path"] for entry in read["unreadable"]])
+
     def test_od_output_that_is_not_byte_pairs_is_refused(self):
         for dump in (" 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n*\n", " 0 0000078\n"):
             with self.subTest(dump=dump):
-                tools, _ = self.unit({f"od -An -tx1 '{self.NODE}/qcom,limit-temp'":
+                tools, _ = self.unit({f"od -An -tx1 {self.NODE}/qcom,limit-temp":
                                       (0, dump + f"{install.STATUS_MARKER}0\n", "")})
                 read, _ = install.read_thermal_over_adb(tools, SERIAL)
                 self.assertNotIn("qcom,limit-temp", read["deviceTreeNodes"]["soc/qcom,msm-thermal"]["properties"])
