@@ -122,4 +122,70 @@ public final class DeviceInventoryTest {
         assertEquals("restarting", properties.getString("init.svc.wcnss-service"));
         assertFalse(properties.has("init.svcs"));
     }
+
+    @Test
+    public void thermalReportsDriverNodeZonesAndWhatCouldNotBeRead() throws Exception {
+        java.nio.file.Path root = java.nio.file.Files.createTempDirectory("thermal");
+        java.io.File tree = root.resolve("device-tree").toFile();
+        java.io.File node = new java.io.File(tree, "soc/qcom,msm-thermal");
+        assertTrue(new java.io.File(node, "qcom,vdd-dig-rstr").mkdirs());
+        write(new java.io.File(node, "qcom,limit-temp"), new byte[]{0, 0, 0, 60});
+        write(new java.io.File(node, "qcom,freq-control-mask"), new byte[]{0, 0, 0, 0x0f});
+        write(new java.io.File(node, "qcom,vdd-dig-rstr/qcom,levels"), new byte[]{0, 0, 0, 5, 0, 0, 0, 7});
+        write(new java.io.File(node, "huge"), new byte[2000]);
+        assertTrue(new java.io.File(tree, "soc/qcom,other").mkdirs());
+        java.io.File parameters = root.resolve("parameters").toFile();
+        assertTrue(parameters.mkdirs());
+        write(new java.io.File(parameters, "enabled"), "Y\n".getBytes(UTF8));
+        java.io.File zones = root.resolve("thermal").toFile();
+        for (String zone : new String[]{"thermal_zone10", "thermal_zone2", "cooling_device0"}) {
+            assertTrue(new java.io.File(zones, zone).mkdirs());
+        }
+        write(new java.io.File(zones, "thermal_zone2/type"), "tsens_tz_sensor2\n".getBytes(UTF8));
+        write(new java.io.File(zones, "thermal_zone2/temp"), "41\n".getBytes(UTF8));
+        write(new java.io.File(zones, "thermal_zone2/trip_point_0_temp"), "105\n".getBytes(UTF8));
+        write(new java.io.File(zones, "thermal_zone2/trip_point_0_type"), "critical\n".getBytes(UTF8));
+
+        JSONObject thermal = DeviceInventory.thermal(tree, parameters, zones,
+                write(root.resolve("possible").toFile(), "0-3\n".getBytes(UTF8)));
+
+        assertEquals("mirror-thermal/1", thermal.getString("schema"));
+        assertEquals("0-3", thermal.getString("cpusPossible"));
+        assertEquals("Y", thermal.getJSONObject("msmThermalParameters").getString("enabled"));
+        JSONObject found = thermal.getJSONObject("deviceTreeNodes");
+        assertEquals(1, found.length());
+        JSONObject driver = found.getJSONObject("soc/qcom,msm-thermal");
+        assertEquals("0000003c", driver.getJSONObject("properties").getString("qcom,limit-temp"));
+        assertEquals("0000000f", driver.getJSONObject("properties").getString("qcom,freq-control-mask"));
+        assertFalse(driver.getJSONObject("properties").has("huge"));
+        assertEquals("0000000500000007", driver.getJSONObject("children").getJSONObject("qcom,vdd-dig-rstr")
+                .getJSONObject("properties").getString("qcom,levels"));
+        JSONArray zoneList = thermal.getJSONArray("zones");
+        assertEquals(2, zoneList.length());
+        JSONObject first = zoneList.getJSONObject(0);
+        assertEquals("thermal_zone2", first.getString("name"));
+        assertEquals("41", first.getString("temp"));
+        assertEquals("critical", first.getJSONArray("trips").getJSONObject(0).getString("type"));
+        assertEquals("105", first.getJSONArray("trips").getJSONObject(0).getString("temp"));
+        assertTrue(zoneList.getJSONObject(1).isNull("temp"));
+        String unreadable = thermal.getJSONArray("unreadable").toString();
+        assertTrue(unreadable, unreadable.contains("huge") && unreadable.contains("longer than 1024 bytes"));
+        assertTrue(unreadable, unreadable.contains("thermal_zone10"));
+    }
+
+    @Test
+    public void thermalWithoutTheDriverSaysSo() throws Exception {
+        java.io.File missing = java.nio.file.Files.createTempDirectory("none").resolve("absent").toFile();
+        JSONObject thermal = DeviceInventory.thermal(missing, missing, missing, missing);
+        assertTrue(thermal.isNull("msmThermalParameters"));
+        assertTrue(thermal.isNull("cpusPossible"));
+        assertEquals(0, thermal.getJSONObject("deviceTreeNodes").length());
+        assertEquals(0, thermal.getJSONArray("zones").length());
+        assertEquals(4, thermal.getJSONArray("unreadable").length());
+    }
+
+    private static java.io.File write(java.io.File file, byte[] bytes) throws java.io.IOException {
+        java.nio.file.Files.write(file.toPath(), bytes);
+        return file;
+    }
 }

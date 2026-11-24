@@ -3550,6 +3550,16 @@ def check_device_inventory(ctx: Context) -> None:
         "The inventory carries a serial number",
     )
     require("/system" in inventory["fileRoots"], f"File roots: {inventory['fileRoots']}")
+    thermal = inventory.get("thermal") or {}
+    require(thermal.get("schema") == "mirror-thermal/1", f"Thermal: {describe(thermal)}")
+    listed = sorted(
+        name for name in ctx.adb.shell("ls", "/sys/class/thermal").split()
+        if re.fullmatch(r"thermal_zone\d+", name)
+    )
+    require(
+        sorted(zone["name"] for zone in thermal["zones"]) == listed,
+        f"Thermal zones {[zone['name'] for zone in thermal['zones']]} are not those of /sys/class/thermal: {listed}",
+    )
     require(
         any(package["name"] == PACKAGE for package in inventory["packages"]),
         f"Mirror Home is not among the packages: {inventory['packages']}",

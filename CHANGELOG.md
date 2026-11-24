@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Tell before the first flash whether the kernel guards the chip against
+  heat by itself, since Silvering has no `thermal-engine`. The device
+  inventory now has a `thermal` section: the `msm_thermal` driver's
+  parameters, its `qcom,msm-thermal` device-tree node (each property as hex
+  bytes), which CPUs exist, and every thermal zone with its temperature and
+  trip points, with each path that could not be read and why. The installer
+  begins as `tools/install.py`, whose first stage `thermal` judges the
+  runbook's thermal gate from that section over Wi-Fi (`--mirror`) or, with
+  the kernel log, over USB (`--serial`).
+
 - Silvering signs its system with the build host's own keys (made once in
   `~/silvering/keys`, kept private) instead of AOSP's public test keys, whose
   platform key would let anyone sign an app with system rights. Builds are

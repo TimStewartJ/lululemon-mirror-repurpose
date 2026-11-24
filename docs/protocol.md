@@ -163,7 +163,14 @@ on has none); never anything that tells one unit from another, such as
 serial numbers or MAC addresses), `kernel` (`release`, `version`), `selinux`
 (`enforcing`, `permissive` or `null`), `partitions` (name and size, where
 the app may read the by-name links; often empty under SELinux), `mounts`,
-`packages` (factory and Mirror packages) and `fileRoots`.
+`packages` (factory and Mirror packages), `thermal` (how the kernel guards
+the chip against heat: `msmThermalParameters`, the `msm_thermal` driver's
+parameters, or `null` where it has none; `deviceTreeNodes`, each
+`qcom,msm-thermal*` node at the top of the device tree or under `soc` with its
+`properties` as hex bytes (numbers are big-endian 32-bit cells) and
+`children`; `cpusPossible`, such as `0-3`; `zones`, each `thermal_zoneN` with
+`type`, `temp`, `mode` and its `trips`; and `unreadable`, every path that
+could not be read with the reason) and `fileRoots`.
 `GET /api/v1/device/files?root=/system` (or `/firmware`, or `/` for the boot
 image's ramdisk, where listed in `fileRoots`) streams a tar of every file,
 folder and link the app may read, ending with `MIRROR-FILES.json`: counts,
