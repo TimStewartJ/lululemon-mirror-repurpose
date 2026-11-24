@@ -60,6 +60,8 @@ RESET_RANGE = (80, 130)
 LIMIT_RANGE = (50, 110)
 FREQ_STEP_RANGE = (1, 20)
 POLL_MS_RANGE = (10, 1000)
+# What the CAF msm_thermal probe reads before anything else; any one missing and it gives up.
+PROBE_INPUTS = ("qcom,sensor-id", "qcom,poll-ms", "qcom,limit-temp", "qcom,temp-hysteresis", "qcom,freq-step")
 MAX_CPUS = 32
 
 # What the gate rests on: anything unreadable here is a Stop; an unreadable zone is only noted.
@@ -316,6 +318,11 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         uncovered = sorted(cpu for cpu in cpus if not mask >> cpu & 1)
         # The driver checks the temperature for both the reset and the throttling every poll-ms.
         polls = in_range(poll, POLL_MS_RANGE)
+        # Without these the CAF driver's probe stops before it sets up either the reset or the throttling.
+        missing = [name for name in PROBE_INPUTS if name not in noted]
+        if missing:
+            stops.append(f"The driver cannot start without {', '.join(missing)} (one 32-bit cell each)")
+            polls = False
         if not polls:
             stops.append(f"qcom,poll-ms is {poll!r}: the driver would not check the temperature often enough "
                          f"(credited {POLL_MS_RANGE[0]}-{POLL_MS_RANGE[1]} ms)")

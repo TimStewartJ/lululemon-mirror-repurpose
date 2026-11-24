@@ -166,7 +166,11 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    that needs no daemon (`qcom,therm-reset-temp`) or frequency throttling:
    `qcom,limit-temp`, a positive `qcom,freq-step`, and a
    `qcom,freq-control-mask` that covers the CPUs (the driver throttles no CPU
-   whose bit is clear, so an absent or zero mask means no throttling). Note
+   whose bit is clear, so an absent or zero mask means no throttling). Either
+   way the node must also carry what the driver's probe reads first,
+   `qcom,sensor-id`, `qcom,poll-ms` (10-1000 ms), `qcom,limit-temp`,
+   `qcom,temp-hysteresis` and `qcom,freq-step`: without any one of them the
+   CAF driver gives up before setting up the reset or the throttling. Note
    each value. Anything missing, unreadable or failed: **Stop**. After the first boot, while the owner is
    at the unit, read every `/sys/class/thermal/thermal_zone*/temp` every ten
    seconds through ten minutes of Mirror Home playing a film; power the unit
