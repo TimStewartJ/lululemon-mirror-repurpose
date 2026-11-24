@@ -112,6 +112,24 @@ class ThermalGate(unittest.TestCase):
         self.assertNotIn("02:11:22:33:44:55", repr(shown))
         self.assertNotIn("021122334455", repr(shown))
 
+    def test_evidence_is_judged_before_it_is_trimmed_for_the_report(self):
+        long_status = thermal({**THROTTLING, "status": (b"disabled\0" + b"x" * 1023 + b"\0").hex()})
+        self.assertEqual(verdict(long_status), install.STOP)
+        long_name = "soc/qcom,msm-thermal" + "x" * 117
+        twice = thermal(THROTTLING)
+        twice["deviceTreeNodes"][long_name] = twice["deviceTreeNodes"]["soc/qcom,msm-thermal"]
+        result = install.evaluate_thermal(twice, LOG)
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertNotIn("x" * 117, repr(result))
+
+    def test_labelled_identifiers_in_diagnostics_are_withheld(self):
+        section = thermal(THROTTLING, unreadable=[{"path": "/sys/module/msm_thermal/parameters/enabled",
+                                                   "reason": "serial=UNIT-7K4M"}])
+        shown = repr(install.exported(section)) + repr(install.evaluate_thermal(section, LOG))
+        self.assertNotIn("UNIT-7K4M", shown)
+        self.assertEqual(install.evaluate_thermal({"schema": "mirror-thermal/1", "unreadable": [
+            {"path": None, "reason": None}]}, LOG)["verdict"], install.STOP)
+
     def test_a_property_that_is_not_one_cell_is_a_stop(self):
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,limit-temp": "0000003c00000001"})), install.STOP)
 
@@ -196,7 +214,8 @@ class OverAdb(unittest.TestCase):
                 there = words[2] in files or words[2] in folders or words[2] in listings
                 return 0, ok if there else failed, ""
             if words[0] == "ls":
-                return 0, listings[words[1]] + ok, ""
+                self.assertTrue(words[1].endswith("/"), "a folder is listed with a trailing slash")
+                return 0, listings[words[1].rstrip("/")] + ok, ""
             if words[:3] == ["od", "-An", "-tx1"]:
                 return 0, " " + dumps[words[3].rsplit("/", 1)[1]] + "\n" + ok, ""
             if words == ["dmesg"]:
@@ -223,7 +242,7 @@ class OverAdb(unittest.TestCase):
         self.assertEqual(install.evaluate_thermal(read, log)["verdict"], install.REVIEW)
 
     def test_a_failure_adb_does_not_report_is_still_caught(self):
-        tools, _ = self.unit({"ls /proc/device-tree": (0, f"ls: {SERIAL}: Input/output error\n"
+        tools, _ = self.unit({"ls /proc/device-tree/": (0, f"ls: {SERIAL}: Input/output error\n"
                                                           f"{install.STATUS_MARKER}1\n", "")})
         read, log = install.read_thermal_over_adb(tools, SERIAL)
         self.assertFalse(read["deviceTreeListed"])
@@ -252,6 +271,12 @@ class OverAdb(unittest.TestCase):
         read, _ = install.read_thermal_over_adb(tools, SERIAL)
         self.assertFalse(any("reboot" in command for command in asked))
         self.assertIn("/proc/device-tree/soc", [entry["path"] for entry in read["unreadable"]])
+
+    def test_a_kernel_log_without_its_status_is_refused_without_repeating_it(self):
+        tools, _ = self.unit({"dmesg": (0, "[ 0.0] androidboot.serialno=UNIT-7K4M\n", "")})
+        with self.assertRaises(RuntimeError) as raised:
+            install.read_thermal_over_adb(tools, SERIAL)
+        self.assertNotIn("UNIT-7K4M", str(raised.exception))
 
     def test_od_output_that_is_not_byte_pairs_is_refused(self):
         for dump in (" 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n*\n", " 0 0000078\n"):

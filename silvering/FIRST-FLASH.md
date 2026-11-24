@@ -33,6 +33,14 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
   computer's ADB already works with. `userdata.sh` keeps `mtp,adb`.
 - Everything in `userdata` is lost: Mirror Home's pairings, layout, board,
   photos, background films and Android's Wi-Fi networks.
+- Heat, read through Mirror Home 2.3.0-dev.31 on 2026-11-24 with
+  `tools\install.py thermal --mirror`: `msm_thermal` is built in with
+  `enabled` = `Y`, CPUs `0-3`, and seven readable thermal zones (five TSENS
+  sensors at 40-52 °C while idle, `pm8916_tz` with a 145 °C critical trip,
+  `battery`). The app may not reach the device tree at all (neither
+  `/proc/device-tree` nor `/sys/firmware/devicetree/base`, not even the
+  node by name), so the device-tree half of the thermal gate, like the
+  kernel log, can only be read over USB.
 
 ## Not ready yet (each one is a Stop until done)
 

@@ -53,7 +53,7 @@ NOTED_PROPERTIES = (
 KNOWN_PROPERTIES = ("compatible", "status") + NOTED_PROPERTIES
 # Names the unit lists that are read further; anything else is never put in a command.
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")
-SAFE_NODE_PATH = re.compile(r"(?:soc/)?qcom,msm-thermal[A-Za-z0-9,._#@+-]{0,100}")
+SAFE_NODE_PATH = re.compile(r"(?:soc/)?(?=qcom,msm-thermal)[A-Za-z0-9][A-Za-z0-9,._#@+-]{0,127}")
 # Degrees Celsius a setting must lie in to be credited: a value outside could never
 # act (60000) or would act all the time; either way it is no evidence of protection.
 RESET_RANGE = (80, 130)
@@ -91,7 +91,7 @@ def strings(hex_value: str) -> list[str] | None:
 
 def parse_cpu_list(text: str | None) -> set[int] | None:
     """CPUs in a kernel list such as ``0-3`` or ``0,2-3``; None if any part of it is not valid."""
-    if not text or not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", text.strip()):
+    if not isinstance(text, str) or not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", text.strip()):
         return None
     cpus = set()
     for part in text.strip().split(","):
@@ -113,16 +113,33 @@ def redact(line: str) -> str:
     return re.sub(r"\b(?:0[xX])?[0-9a-fA-F]{12,}\b", "<hidden>", line)
 
 
+def safe(value) -> str:
+    """Text from the unit as it may be shown: redacted, short, and withheld if it names an identifier."""
+    if value is None:
+        return "none"
+    text = " ".join(str(value).split())
+    if IDENTIFYING.search(text):
+        return "<left out: it may identify the unit>"
+    return redact(text)[:200]
+
+
+def label(name) -> str:
+    return name if isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name) else "<a node with an unusual name>"
+
+
 def exported(thermal: dict | None) -> dict | None:
     """The thermal section as it may leave this computer: only the fields the gate reads, text redacted."""
     if not isinstance(thermal, dict):
         return None
 
     def text(value):
-        return redact(value) if isinstance(value, str) else None
+        return safe(value) if isinstance(value, str) else None
 
     nodes = {}
+    extra = []
     for name, node in (thermal.get("deviceTreeNodes") or {}).items():
+        if isinstance(node, dict) and not (isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name)):
+            extra.append({"path": "<a node with an unusual name>", "reason": "left out of the report"})
         if isinstance(node, dict) and isinstance(name, str) and SAFE_NODE_PATH.fullmatch(name):
             properties = node.get("properties") or {}
             nodes[name] = {"properties": {key: properties[key] for key in KNOWN_PROPERTIES
@@ -144,7 +161,7 @@ def exported(thermal: dict | None) -> dict | None:
                              for trip in zone.get("trips") or [] if isinstance(trip, dict)]}
                   for zone in thermal.get("zones") or [] if isinstance(zone, dict)],
         "unreadable": [{"path": text(entry.get("path")), "reason": text(entry.get("reason"))}
-                       for entry in thermal.get("unreadable") or [] if isinstance(entry, dict)],
+                       for entry in thermal.get("unreadable") or [] if isinstance(entry, dict)] + extra,
     }
 
 
@@ -154,15 +171,15 @@ def driver_nodes(nodes: dict, stops: list[str]) -> dict:
     for name, node in nodes.items():
         properties = node.get("properties", {})
         if "compatible" not in properties:
-            stops.append(f"{name} has no readable compatible property, so it cannot be told whose it is")
+            stops.append(f"{label(name)} has no readable compatible property, so it cannot be told whose it is")
             continue
         compatible = strings(properties["compatible"])
         if compatible is None:
-            stops.append(f"{name}'s compatible is not a string list: {properties['compatible']!r}")
+            stops.append(f"{label(name)}'s compatible is not a string list")
             continue
         status = strings(properties["status"]) if "status" in properties else ["okay"]
         if status is None or len(status) != 1:
-            stops.append(f"{name}'s status is not one string: {properties['status']!r}")
+            stops.append(f"{label(name)}'s status is not one string")
             continue
         # The kernel compares compatible strings without regard to case.
         if THERMAL_NODE in [entry.lower() for entry in compatible] and status[0] in ("okay", "ok"):
@@ -183,7 +200,8 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
     noted: dict[str, int] = {}
     review: list[str] = []
     review_node = None
-    thermal = exported(thermal)
+    if not isinstance(thermal, dict):
+        thermal = None
     if not thermal or thermal.get("schema") != "mirror-thermal/1":
         return {"verdict": STOP, "stops": ["The unit gave no thermal report (Mirror Home 2.3.0-dev.30 or later "
                                            "reports it)"], "unresolved": [], "notes": [], "values": {},
@@ -193,36 +211,41 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
     if not listed:
         unresolved.append(f"The device tree could not be listed, so another {THERMAL_NODE} node cannot be "
                           "ruled out")
-    for entry in thermal.get("unreadable", []):
-        path = entry.get("path", "")
+    for entry in thermal.get("unreadable") or []:
+        if not isinstance(entry, dict):
+            stops.append("The report's list of unreadable paths is not valid")
+            continue
+        path = entry.get("path") if isinstance(entry.get("path"), str) else ""
+        reason = entry.get("reason") if isinstance(entry.get("reason"), str) else ""
         if path in DEVICE_TREES and not listed:
             continue
-        if "known properties read by name" in entry.get("reason", ""):
+        if "known properties read by name" in reason:
             continue
-        if path.startswith(GATE_PATHS):
-            stops.append(f"{path} could not be read: {entry.get('reason')}")
+        if not path or path.startswith(GATE_PATHS):
+            stops.append(f"{safe(path) if path else 'A path'} could not be read: {safe(reason)}")
 
     enabled = (thermal.get("msmThermalParameters") or {}).get("enabled")
     if enabled != "Y":
-        stops.append(f"msm_thermal's 'enabled' is {enabled!r}, not 'Y'")
+        stops.append(f"msm_thermal's 'enabled' is {safe(enabled)}, not Y")
 
     nodes = {name: node for name, node in (thermal.get("deviceTreeNodes") or {}).items()
-             if name.rsplit("/", 1)[-1].startswith(THERMAL_NODE)}
+             if isinstance(name, str) and isinstance(node, dict)
+             and name.rsplit("/", 1)[-1].startswith(THERMAL_NODE)}
     bound = driver_nodes(nodes, stops)
     if len(bound) != 1:
         stops.append(f"Expected one enabled device-tree node compatible with {THERMAL_NODE}, found "
-                     f"{sorted(bound) or 'none'} among {sorted(nodes) or 'no nodes'}")
+                     f"{sorted(map(label, bound)) or 'none'} among {sorted(map(label, nodes)) or 'no nodes'}")
     else:
         credited, node = next(iter(bound.items()))
         properties = node.get("properties", {})
         if node.get("listed") is not True:
-            unresolved.append(f"{credited} could not be listed: a property it holds may have been missed "
+            unresolved.append(f"{label(credited)} could not be listed: a property it holds may have been missed "
                               "(status, for one)")
         for name in NOTED_PROPERTIES:
             if name in properties:
                 values = cells(properties[name])
                 if values is None or len(values) != 1:
-                    stops.append(f"{name} is not one 32-bit cell: {properties[name]!r}")
+                    stops.append(f"{name} is not one 32-bit cell")
                 else:
                     noted[name] = values[0]
         reset = noted.get("qcom,therm-reset-temp")
@@ -232,7 +255,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         poll = noted.get("qcom,poll-ms")
         cpus = parse_cpu_list(thermal.get("cpusPossible"))
         if cpus is None:
-            stops.append(f"Which CPUs exist could not be read: {thermal.get('cpusPossible')!r}")
+            stops.append("Which CPUs exist could not be read, or the list is not valid")
             cpus = set()
         uncovered = sorted(cpu for cpu in cpus if not mask >> cpu & 1)
         # The driver checks the temperature for both the reset and the throttling every poll-ms.
@@ -260,8 +283,8 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
                          f"{FREQ_STEP_RANGE[0]}-{FREQ_STEP_RANGE[1]} and a qcom,freq-control-mask covering each CPU)")
 
     for zone in thermal.get("zones", []):
-        critical = [str(trip.get("temp")) for trip in zone.get("trips", []) if trip.get("type") == "critical"]
-        notes.append(f"{zone.get('name')} ({zone.get('type')}): {zone.get('temp')}"
+        critical = [safe(trip.get("temp")) for trip in zone.get("trips", []) if trip.get("type") == "critical"]
+        notes.append(f"{safe(zone.get('name'))} ({safe(zone.get('type'))}): {safe(zone.get('temp'))}"
                      + (f", critical trip at {', '.join(critical)}" if critical else ""))
 
     if kernel_log is not None:
@@ -318,7 +341,7 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
     unreadable = []
 
     def failed(path: str, out: str) -> None:
-        reason = redact(" ".join(out.split())[:200]) or "no answer"
+        reason = safe(out) if out.strip() else "no answer"
         unreadable.append({"path": path, "reason": reason})
 
     def read(path: str) -> str | None:
@@ -342,7 +365,9 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
 
     def listing(path: str) -> list[str] | None:
         """Every name in a folder; a caller uses only the plain ones it looks for."""
-        ok, out = shell(f"ls {shlex.quote(path)}")
+        # Android 6's ls shows a link to a folder (each thermal zone, the device tree) as the link itself
+        # unless the path ends in /.
+        ok, out = shell(f"ls {shlex.quote(path.rstrip('/') + '/')}")
         if not ok:
             failed(path, out)
             return None
@@ -408,7 +433,7 @@ def read_thermal_over_adb(tools: identify.Tools, serial: str) -> tuple[dict, lis
     }
     ok, log = shell("dmesg")
     if not ok:
-        raise RuntimeError(f"The kernel log could not be read over ADB: {redact(' '.join(log.split())[:200])}")
+        raise RuntimeError(f"The kernel log could not be read over ADB: {safe(log)}")
     return thermal, log.splitlines()
 
 
