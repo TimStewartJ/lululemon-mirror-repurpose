@@ -107,10 +107,10 @@ class ThermalGate(unittest.TestCase):
         result = install.evaluate_thermal(thermal(THROTTLING), log)
         self.assertEqual(result["verdict"], install.STOP)
         self.assertNotIn(SERIAL, repr(result))
-        shown = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 02:11:22:33:44:55"])
+        shown = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 02:11:22:33:44:55",
+                                                                     "[ 2.1] msm_thermal: id 0x021122334455"])
         self.assertNotIn("02:11:22:33:44:55", repr(shown))
-        shown = install.evaluate_thermal(thermal(THROTTLING), LOG + ["[ 2.0] msm_thermal: peer 02:11:22:33:44:55"])
-        self.assertNotIn("02:11:22:33:44:55", repr(shown))
+        self.assertNotIn("021122334455", repr(shown))
 
     def test_a_property_that_is_not_one_cell_is_a_stop(self):
         self.assertEqual(verdict(thermal({**THROTTLING, "qcom,limit-temp": "0000003c00000001"})), install.STOP)
@@ -126,6 +126,19 @@ class ThermalGate(unittest.TestCase):
         enabled = {"properties": {"compatible": COMPATIBLE, "qcom,therm-reset-temp": "00000078"}}
         two = {"soc/qcom,msm-thermal": enabled, "soc/qcom,msm-thermal@0": enabled}
         self.assertEqual(verdict(thermal(nodes=two)), install.STOP)
+        shouting = {"properties": {"compatible": b"QCOM,MSM-THERMAL\0".hex(), "qcom,therm-reset-temp": "00000078"}}
+        with_case = thermal(THROTTLING)
+        with_case["deviceTreeNodes"]["qcom,msm-thermal@1"] = shouting
+        self.assertEqual(verdict(with_case), install.STOP)
+
+    def test_what_leaves_this_computer_is_only_what_the_gate_reads(self):
+        old = thermal({**THROTTLING, "qcom,wlan-addr": "021122334455"})
+        old["msmThermalParameters"]["sensor_serial"] = SERIAL
+        old["unreadable"] = [{"path": "/sys/x", "reason": "peer 02:11:22:33:44:55 id 0x021122334455"}]
+        shown = repr(install.exported(old)) + repr(install.evaluate_thermal(old, LOG))
+        for secret in (SERIAL, "021122334455", "02:11:22:33:44:55"):
+            self.assertNotIn(secret, shown)
+        self.assertEqual(install.exported(old)["msmThermalParameters"], {"enabled": "Y"})
 
     def test_cpu_lists(self):
         self.assertEqual(install.parse_cpu_list("0-3"), {0, 1, 2, 3})
@@ -152,11 +165,12 @@ class OverAdb(unittest.TestCase):
         }
         folders = {"/sys/module/msm_thermal/parameters"}
         listings = {
-            "/proc/device-tree": "soc\n",
-            "/proc/device-tree/soc": "qcom,msm-thermal\nqcom,other\n",
+            "/proc/device-tree": "#address-cells\n#size-cells\nsoc\n",
+            "/proc/device-tree/soc": "#address-cells\n#size-cells\nqcom,msm-thermal\nqcom,other\n",
             node: "compatible\nqcom,limit-temp\nqcom,freq-step\nqcom,freq-control-mask\nqcom,poll-ms\n"
                   "qcom,wlan-addr\nqcom,vdd-dig-rstr\n",
             "/sys/class/thermal": "cooling_device0\nthermal_zone0\n",
+            "/sys/class/thermal/thermal_zone0": "mode\ntemp\ntrip_point_0_temp\ntrip_point_0_type\ntype\n",
             **(listings_extra or {}),
         }
         dumps = {"compatible": " ".join(COMPATIBLE[i:i + 2] for i in range(0, len(COMPATIBLE), 2)),
@@ -225,10 +239,12 @@ class OverAdb(unittest.TestCase):
 
     def test_a_trip_point_that_cannot_be_read_is_recorded(self):
         path = "/sys/class/thermal/thermal_zone0/trip_point_0_temp"
-        tools, _ = self.unit({f"cat {path}": (0, f"cat: {path}: Permission denied\n{install.STATUS_MARKER}1\n", "")})
+        tools, _ = self.unit({f"cat {path}": (0, f"cat: {path}: Permission denied 02:11:22:33:44:55\n"
+                                                 f"{install.STATUS_MARKER}1\n", "")})
         read, _ = install.read_thermal_over_adb(tools, SERIAL)
         self.assertEqual(read["zones"][0]["trips"][0]["temp"], None)
         self.assertIn(path, [entry["path"] for entry in read["unreadable"]])
+        self.assertNotIn("02:11:22:33:44:55", repr(read))
 
     def test_names_that_are_not_plain_are_never_put_in_a_command(self):
         tools, asked = self.unit(listings_extra={"/proc/device-tree/soc": "qcom,msm-thermal'; reboot; '\n"
