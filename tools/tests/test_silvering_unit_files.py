@@ -509,6 +509,11 @@ class CheckExt4(unittest.TestCase):
         self.assertEqual(self.check(self.HEAD.replace("Pass 5: Checking group summary information\n", "")
                                     + self.PADDING + self.TAIL, 4), 1)
         self.assertEqual(self.check(self.HEAD + self.PADDING + self.TAIL, 8), 1)
+        self.assertEqual(self.check(self.HEAD + self.PADDING, 4), 1)
+        self.assertEqual(self.check(self.HEAD + self.PADDING + self.TAIL.rsplit("\n\n", 1)[0] + "\n", 4), 1)
+        repeated = self.HEAD.replace("Pass 5: Checking group summary information", "Pass 4: Checking reference counts")
+        self.assertEqual(self.check(repeated + self.PADDING + self.TAIL, 4), 1)
+        self.assertEqual(self.check(self.HEAD + self.PADDING + self.PADDING + self.TAIL, 4), 1)
 
 
 if __name__ == "__main__":

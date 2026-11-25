@@ -20,19 +20,21 @@ status=0
 LC_ALL=C LANGUAGE= "$e2fsck" -fn "$1" > "$log" 2>&1 || status=$?
 
 [ "$status" -eq 0 ] && exit 0
-padding='Padding at end of inode bitmap is not set. Fix? no'
-unexpected=$(grep -vE \
-    -e '^$' \
-    -e '^e2fsck [0-9][0-9.]* \(' \
-    -e '^Pass [1-5]: ' \
-    -e '^Padding at end of inode bitmap is not set\. Fix\? no$' \
-    -e ': \*+ WARNING: Filesystem still has errors \*+$' \
-    -e ': [0-9]+/[0-9]+ files \([0-9.]+% non-contiguous\), [0-9]+/[0-9]+ blocks$' \
-    "$log" || true)
-passes=$(grep -cE '^Pass [1-5]: ' "$log" || true)
-if [ "$status" -eq 4 ] && [ -z "$unexpected" ] && [ "$passes" -eq 5 ] && grep -qxF "$padding" "$log"; then
-    exit 0
-fi
+# Exit 4 passes only on this whole report, line by line, blank lines aside: a report cut short
+# could hide a finding e2fsck makes after the inode bitmaps (the block bitmaps' padding, for one).
+expected=(
+    '^e2fsck [0-9][0-9.]* \('
+    '^Pass 1: ' '^Pass 2: ' '^Pass 3: ' '^Pass 4: ' '^Pass 5: '
+    '^Padding at end of inode bitmap is not set\. Fix\? no$'
+    ': \*+ WARNING: Filesystem still has errors \*+$'
+    ': [0-9]+/[0-9]+ files \([0-9.]+% non-contiguous\), [0-9]+/[0-9]+ blocks$'
+)
+mapfile -t lines < <(grep -v '^$' "$log" || true)
+whole=$([ "$status" -eq 4 ] && [ "${#lines[@]}" -eq "${#expected[@]}" ] && echo yes || echo no)
+for i in "${!expected[@]}"; do
+    [[ ${lines[$i]:-} =~ ${expected[$i]} ]] || whole=no
+done
+[ "$whole" = yes ] && exit 0
 echo "$1 does not pass e2fsck -fn (exit $status):" >&2
 tail -n 20 "$log" >&2
 exit 1
