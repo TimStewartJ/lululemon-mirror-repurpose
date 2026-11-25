@@ -38,7 +38,6 @@ import pathlib
 import re
 import shlex
 import struct
-import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -619,13 +618,18 @@ def recorded_hash(path: pathlib.Path, image: str) -> str:
 
 def check_superblock(superblock: bytes | None) -> int:
     """The size in bytes of the ext4 file system this superblock describes; raises ValueError
-    unless its geometry is one a kernel would mount (the checks ext4_fill_super makes)."""
+    unless the superblock is consistent.
+
+    This tells a whole ext4 image from anything else named like one. It does not show that the
+    file system mounts: the build shows that by reading the image back (stage-image.sh with
+    debugfs, userdata.sh with e2fsck) before writing its sha256, and the hash ties this copy to it.
+    """
     if superblock is None or struct.unpack_from("<H", superblock, 0x38)[0] != EXT4_MAGIC:
         raise ValueError("it is not an ext4 file system")
     inodes, blocks, first_block, log_block_size, blocks_per_group, inodes_per_group = (
         struct.unpack_from("<I", superblock, offset)[0] for offset in (0x00, 0x04, 0x14, 0x18, 0x20, 0x28))
-    if struct.unpack_from("<I", superblock, 0x60)[0] & 0x80:  # 64bit: the count's high half
-        blocks |= struct.unpack_from("<I", superblock, 0x150)[0] << 32
+    if struct.unpack_from("<I", superblock, 0x60)[0] & 0x80:
+        raise ValueError("it is a 64-bit ext4 file system, which Silvering's build never makes")
     if log_block_size > 6:
         raise ValueError("its ext4 block size is not valid")
     block_size = 1024 << log_block_size
@@ -634,7 +638,7 @@ def check_superblock(superblock: bytes | None) -> int:
     if (first_block != (1 if block_size == 1024 else 0) or not 0 < blocks_per_group <= 8 * block_size
             or not 0 < inodes_per_group <= 8 * block_size or not groups or inodes != groups * inodes_per_group
             or (revision >= 1 and (inode_size < 128 or inode_size > block_size or inode_size & (inode_size - 1)))):
-        raise ValueError("its ext4 superblock describes a file system no kernel would mount")
+        raise ValueError("its ext4 superblock is not consistent")
     return blocks * block_size
 
 
@@ -680,10 +684,13 @@ def read_layout(stream, file_size: int) -> dict:
                 if low < high and kind != CHUNK_DONT_CARE:
                     if kind == CHUNK_RAW:
                         stream.seek(start + low - block * block_size)
-                        found[low - offset:high - offset] = stream.read(high - low)
+                        piece = stream.read(high - low)
                     else:  # a fill chunk starts on a block, and blocks are whole words
                         pattern = stream.read(4)
-                        found[low - offset:high - offset] = bytes(pattern[i % 4] for i in range(low, high))
+                        piece = bytes(pattern[i % 4] for i in range(low, high)) if len(pattern) == 4 else b""
+                    if len(piece) != high - low:
+                        raise ValueError("it changed while it was being read")
+                    found[low - offset:high - offset] = piece
                     covered += high - low
                 stream.seek(start + data)
                 block += blocks
@@ -737,15 +744,28 @@ def check_image(image: pathlib.Path, hash_file: pathlib.Path) -> dict:
         if identity(os.fstat(stream.fileno())) != identity(opened) or identity(image.stat()) != identity(opened) \
                 or recorded_hash(hash_file, image.name) != expected:
             raise ValueError(f"{image.name} or its hash changed while it was being checked")
-    return {"sha256": expected, **layout}
+    return {"sha256": expected, **layout, "identity": identity(opened)}
 
 
-def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) -> dict:
-    """What the images folder holds, each image checked against its hash and as ext4."""
+def unchanged(folder: pathlib.Path, names: list[str], images: dict) -> bool:
+    """Whether the folder still holds exactly what was checked: the same names, the same image
+    files and the same recorded hashes."""
+    try:
+        return (sorted(entry.name for entry in folder.iterdir()) == names
+                and all(identity((folder / f"{partition}.img").stat()) == image["identity"]
+                        and recorded_hash(folder / f"{partition}.img.sha256", f"{partition}.img") == image["sha256"]
+                        for partition, image in images.items()))
+    except (OSError, ValueError):
+        return False
+
+
+def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) -> tuple[dict, list[str]]:
+    """What the images folder holds (its names, for the last look before ready), each image
+    checked against its hash and as ext4."""
     images = {}
     if not folder.is_dir():
         stops.append(f"{folder} is not a folder")
-        return images
+        return images, []
     names = sorted(entry.name for entry in folder.iterdir())
     others = [name for name in names if name not in IMAGE_FILES]
     if others:
@@ -775,7 +795,7 @@ def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) 
                             else "do not begin with dm-verity's metadata"))
             continue
         images[partition] = checked
-    return images
+    return images, names
 
 
 def fastboot_version(tools: identify.Tools) -> str | None:
@@ -799,8 +819,20 @@ def partition_size(tools: identify.Tools, serial: str, partition: str) -> int:
     return int(match.group(1), 16)
 
 
-def shell_words(arguments: list[str]) -> str:
-    return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
+SERIAL_PLACEHOLDER = "<serial>"
+
+
+def render(arguments: list[str], shell: str) -> str:
+    """A command for PowerShell or a POSIX shell, with the unit's serial as the shell variable
+    ``$serial`` or ``$SERIAL`` in place of the placeholder."""
+    if shell == "powershell":
+        def word(argument: str) -> str:
+            if argument == SERIAL_PLACEHOLDER:
+                return "$serial"
+            return argument if re.fullmatch(r"[A-Za-z0-9._-]+", argument) else "'" + argument.replace("'", "''") + "'"
+        return "& " + " ".join(word(argument) for argument in arguments)
+    return " ".join('"$SERIAL"' if argument == SERIAL_PLACEHOLDER else shlex.quote(argument)
+                    for argument in arguments)
 
 
 def evaluate_plan(images: dict, sizes: dict, stops: list[str], unresolved: list[str]) -> list[str]:
@@ -841,7 +873,7 @@ def make_plan(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -
     if version != FASTBOOT_VERSION:
         stops.append(f"fastboot is {version or 'missing or did not say its version'}, not {FASTBOOT_VERSION}: "
                      "older clients erase ext4 partitions before writing them")
-    images = check_images(folder, stops, unresolved)
+    images, names = check_images(folder, stops, unresolved)
     state, found = find_one_unit(tools, serial)
     sizes = {}
     if state == "fastboot":
@@ -860,13 +892,17 @@ def make_plan(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -
     if "userdata" in sizes and "userdata" not in images and USERDATA_RANGE[0] <= sizes["userdata"] <= USERDATA_RANGE[1]:
         userdata_command = (f"FILE_CONTEXTS=~/silvering/units/<profile>/ramdisk/file_contexts ./userdata.sh "
                             f"{sizes['userdata']:#x} adbkey.pub userdata.img")
+    if not stops and not unresolved and not unchanged(folder, names, images):
+        stops.append("The images folder changed while it was being checked")
     verdict = STOP if stops else INCOMPLETE if unresolved else READY
     # The very client whose version was checked, so another fastboot on the PATH cannot answer.
-    writes = [shell_words([tools.fastboot_path, *flash_arguments("<serial>", partition, f"{partition}.img")])
+    writes = [[tools.fastboot_path, *flash_arguments(SERIAL_PLACEHOLDER, partition, f"{partition}.img")]
               for partition in WRITABLE] if verdict == READY else []
     return {"verdict": verdict, "stops": stops, "unresolved": unresolved, "notes": notes,
             "fastboot": version, "fastbootPath": tools.fastboot_path, "folder": str(folder.resolve()),
-            "images": images, "partitionBytes": sizes, "userdataCommand": userdata_command, "writes": writes}
+            "images": {partition: {key: value for key, value in image.items() if key != "identity"}
+                       for partition, image in images.items()},
+            "partitionBytes": sizes, "userdataCommand": userdata_command, "writes": writes}
 
 
 def print_plan(result: dict) -> None:
@@ -884,14 +920,23 @@ def print_plan(result: dict) -> None:
         print("  Build userdata.img on the build host, then copy it and its .sha256 here and run this stage again:")
         print(f"    {result['userdataCommand']}")
     if result["writes"]:
-        print(f"  The only writes, run from {result['folder']}, one at a time, each only after the one before "
-              "ended with 'Finished' and no 'FAILED' (silvering/FIRST-FLASH.md, In the session, step 5):")
+        shell = "powershell" if os.name == "nt" else "posix"
+        variable = "$serial" if shell == "powershell" else "SERIAL"
+        print(f"  The only writes, in {'PowerShell' if shell == 'powershell' else 'a POSIX shell'} from "
+              f"{result['folder']} with {variable} set to the serial `fastboot devices` lists, one at a time, "
+              "each only after the one before ended with 'Finished' and no 'FAILED' (silvering/FIRST-FLASH.md, "
+              "In the session, step 5):")
         for write in result["writes"]:
-            print(f"    {write}")
+            print(f"    {render(write, shell)}")
+
+
+def absolute_tool(path: str | None) -> str | None:
+    """A tool's absolute path, fixed before it is first run, so the printed writes name it from any folder."""
+    return str(pathlib.Path(path).resolve()) if path else None
 
 
 def command_plan(arguments: argparse.Namespace) -> int:
-    tools = identify.Tools(identify.find_tool("adb"), identify.find_tool("fastboot"))
+    tools = identify.Tools(identify.find_tool("adb"), absolute_tool(identify.find_tool("fastboot")))
     try:
         result = make_plan(tools, pathlib.Path(arguments.images), arguments.serial)
     except (RuntimeError, OSError) as error:

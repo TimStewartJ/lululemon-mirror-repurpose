@@ -54,6 +54,9 @@ out_marker=$root/src/out/.silvering-product-out-$target
 product_out=$root/src/$(sed 's|^/src/||' "$out_marker")
 host_bin=$root/src/out/host/linux-x86/bin
 [ -x "$host_bin/make_ext4fs" ] || { echo "no make_ext4fs in $host_bin" >&2; exit 1; }
+[ -x "$host_bin/simg2img" ] || { echo "no simg2img in $host_bin" >&2; exit 1; }
+e2fsck=$(command -v e2fsck || command -v /sbin/e2fsck || command -v /usr/sbin/e2fsck) \
+    || { echo "e2fsck (e2fsprogs) is needed to check the image" >&2; exit 1; }
 contexts=${FILE_CONTEXTS:-$product_out/root/file_contexts}
 [ -f "$contexts" ] || { echo "no file_contexts at $contexts" >&2; exit 1; }
 grep -q '^/data/misc/adb(' "$contexts" || { echo "$contexts has no label for /data/misc/adb" >&2; exit 1; }
@@ -140,6 +143,13 @@ docker build -q -t "$image" --build-arg UID="$(id -u)" --build-arg GID="$(id -g)
 docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
     /host/linux-x86/bin/make_ext4fs -s -T 0 -l "$length" -a data \
         -S /work/file_contexts -C /work/fs_config /work/out/userdata.img /work/stage
+
+# Read the image back before it is hashed: the hash is what later vouches for it.
+docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
+    /host/linux-x86/bin/simg2img /work/out/userdata.img /work/out/userdata.raw
+"$e2fsck" -fn "$work/out/userdata.raw" > "$work/e2fsck.log" 2>&1 \
+    || { echo "the new userdata image does not pass e2fsck -fn:" >&2; tail -n 20 "$work/e2fsck.log" >&2; exit 1; }
+rm -f "$work/out/userdata.raw"
 
 mv "$work/out/userdata.img" "$out"
 ( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )

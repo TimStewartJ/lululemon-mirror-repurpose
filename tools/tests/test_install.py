@@ -1,9 +1,11 @@
 import hashlib
 import json
+import os
 import pathlib
 import shlex
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -480,8 +482,8 @@ class Plan(unittest.TestCase):
     def test_ready_lists_only_system_then_userdata(self):
         result = self.plan()
         self.assertEqual(result["verdict"], install.READY, result)
-        self.assertEqual(result["writes"], ["fastboot -s <serial> flash system system.img",
-                                            "fastboot -s <serial> flash userdata userdata.img"])
+        self.assertEqual(result["writes"], [["fastboot", "-s", "<serial>", "flash", "system", "system.img"],
+                                            ["fastboot", "-s", "<serial>", "flash", "userdata", "userdata.img"]])
         self.assertEqual(result["images"]["system"]["unpackedBytes"], 32 * BLOCK)
         self.assertEqual(result["images"]["system"]["sha256"], hashlib.sha256(SYSTEM).hexdigest())
         self.assertEqual(result["partitionBytes"], {"system": 0x40000, "userdata": USERDATA_PARTITION})
@@ -599,7 +601,11 @@ class Plan(unittest.TestCase):
             with self.subTest(what):
                 result = self.plan({"system.img": sparse(32, first=bytes(1024) + block), "userdata.img": USERDATA})
                 self.assertEqual(result["verdict"], install.STOP, result)
-                self.assertIn("no kernel would mount", result["stops"][0])
+                self.assertIn("not consistent", result["stops"][0])
+        sixty_four = bytearray(superblock(32))
+        struct.pack_into("<I", sixty_four, 0x60, 0x80)
+        result = self.plan({"system.img": sparse(32, first=bytes(1024) + bytes(sixty_four)), "userdata.img": USERDATA})
+        self.assertIn("64-bit", result["stops"][0])
 
     def test_sparse_checksums_are_refused_not_skipped(self):
         for image in (sparse(32, crc=True), sparse(32, checksum=0x1B3463E3)):
@@ -621,9 +627,43 @@ class Plan(unittest.TestCase):
         folder = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
         result = install.make_plan(tools, folder, None)
         self.assertEqual(result["verdict"], install.READY, result)
-        self.assertEqual(result["writes"][0],
-                         install.shell_words([tools.fastboot_path, "-s", "<serial>", "flash", "system", "system.img"]))
-        self.assertTrue(result["writes"][0].startswith(("'C:", '"C:')), result["writes"][0])
+        self.assertEqual(result["writes"][0], [tools.fastboot_path, "-s", "<serial>", "flash", "system", "system.img"])
+        self.assertTrue(pathlib.Path(install.absolute_tool(r"platform-tools\fastboot.exe")).is_absolute())
+
+    def test_the_writes_are_rendered_for_the_shell_they_are_run_in(self):
+        write = ["/opt/platform tools/fastboot", "-s", "<serial>", "flash", "system", "system.img"]
+        self.assertEqual(shlex.split(install.render(write, "posix")),
+                         ["/opt/platform tools/fastboot", "-s", "$SERIAL", "flash", "system", "system.img"])
+        rendered = install.render([r"C:\Program Files\it's\fastboot.exe", *write[1:]], "powershell")
+        self.assertEqual(rendered, "& 'C:\\Program Files\\it''s\\fastboot.exe' -s $serial flash system system.img")
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("no PowerShell to parse the command with")
+        script = ("$e = $null; $t = $null; $a = [System.Management.Automation.Language.Parser]::ParseInput("
+                  "$env:RENDERED, [ref]$t, [ref]$e); if ($e.Count) { exit 3 }; "
+                  "$c = $a.EndBlock.Statements[0].PipelineElements[0]; "
+                  "$c.CommandElements | ForEach-Object { $_.Extent.Text }")
+        parsed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", script], text=True,
+                                capture_output=True, env={**os.environ, "RENDERED": rendered}, timeout=60)
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        self.assertEqual(parsed.stdout.split("\n")[:6],
+                         ["'C:\\Program Files\\it''s\\fastboot.exe'", "-s", "$serial", "flash", "system", "system.img"])
+
+    def test_a_folder_that_changes_before_ready_is_a_stop(self):
+        tools, _ = self.unit()
+        folder = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
+        answer = tools.runner
+
+        def runner(arguments):
+            if arguments[3:4] == ["getvar"]:
+                (folder / "boot.img").write_bytes(b"ANDROID!")
+            return answer(arguments)
+
+        tools.runner = runner
+        result = install.make_plan(tools, folder, None)
+        self.assertEqual(result["verdict"], install.STOP, result)
+        self.assertIn("changed", result["stops"][0])
+        self.assertEqual(result["writes"], [])
 
     def test_two_units_are_refused_without_naming_them(self):
         tools, _ = self.unit(fastboot=f"{SERIAL}\tfastboot\nother42\tfastboot\n")
