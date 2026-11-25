@@ -122,10 +122,12 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 4. Copy `system.img` and, in the session, the new `userdata.img` to the
    flashing computer, each with its sha256 file, into an empty folder, and
    check **both** hashes there before the first write:
-   `python tools\install.py plan --images <folder>` hashes each image,
-   walks every chunk of the sparse file (a cut-off copy is refused), checks
-   that each holds ext4 of the size it unpacks to, and refuses a folder that
-   holds anything else, so no other image can be written by mistake.
+   `python tools\install.py plan --images <folder>` hashes each image and
+   reads it through the same open file, walks every chunk of the sparse file
+   (a cut-off copy is refused), checks that each holds ext4 with a geometry a
+   kernel would mount (`system` may carry the build's dm-verity metadata and
+   hash tree after it, `userdata` nothing), and refuses a folder that holds
+   anything else, so no other image can be written by mistake.
 
 ## In the session
 
@@ -198,7 +200,8 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    cable, steps 3 and 4). Both images are on the flashing computer with
    matching hashes before anything is written: `install.py plan` answers
    `ready` (exit 0) only then, with a userdata file system that leaves the
-   partition's last 16 KiB free, and lists the two writes below.
+   partition's last 16 KiB free, and lists the two writes below with the
+   full path of the fastboot whose version it checked.
 5. **Write, one command at a time, each only after the command as a whole has
    ended with `Finished` and no `FAILED`:**
 
