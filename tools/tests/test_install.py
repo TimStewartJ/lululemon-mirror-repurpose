@@ -382,22 +382,27 @@ USERDATA_PARTITION = 1 << 30
 USERDATA_BLOCKS = (USERDATA_PARTITION - install.CRYPT_FOOTER) // BLOCK
 
 
-def superblock(blocks, magic=install.EXT4_MAGIC):
+def superblock(blocks, magic=install.EXT4_MAGIC, inodes_per_group=16, blocks_per_group=8 * BLOCK, inodes=None):
+    """An ext4 superblock with 4096-byte blocks and a geometry a kernel would mount."""
+    groups = -(-blocks // blocks_per_group) if blocks_per_group else 0
     block = bytearray(1024)
-    struct.pack_into("<I", block, 0x04, blocks)
-    struct.pack_into("<I", block, 0x18, 2)  # 1024 << 2 = 4096-byte blocks
+    for offset, value in ((0x00, groups * inodes_per_group if inodes is None else inodes), (0x04, blocks),
+                          (0x18, 2), (0x20, blocks_per_group), (0x28, inodes_per_group), (0x4C, 1)):
+        struct.pack_into("<I", block, offset, value)
     struct.pack_into("<H", block, 0x38, magic)
+    struct.pack_into("<H", block, 0x58, 256)
     return bytes(block)
 
 
 def sparse(blocks, file_system_blocks=None, magic=install.EXT4_MAGIC, header_blocks=None, cut=0, extra=b"",
-           tail=None):
+           tail=None, first=None, crc=False, checksum=0):
     """A sparse ext4 image of ``blocks`` blocks; ``tail`` is the first block after a smaller file system."""
     file_system_blocks = blocks if file_system_blocks is None else file_system_blocks
-    first = bytes(1024) + superblock(file_system_blocks, magic)
+    first = bytes(1024) + superblock(file_system_blocks, magic) if first is None else first
     chunks = [struct.pack("<HHII", install.CHUNK_RAW, 0, 1, 12 + BLOCK) + first + bytes(BLOCK - len(first)),
-              struct.pack("<HHII", install.CHUNK_FILL, 0, 2, 16) + b"\xff\0\0\0",
-              struct.pack("<HHII", install.CHUNK_CRC32, 0, 0, 16) + bytes(4)]
+              struct.pack("<HHII", install.CHUNK_FILL, 0, 2, 16) + b"\xff\0\0\0"]
+    if crc:
+        chunks.append(struct.pack("<HHII", install.CHUNK_CRC32, 0, 0, 16) + bytes(4))
     if tail is None:
         chunks.append(struct.pack("<HHII", install.CHUNK_DONT_CARE, 0, blocks - 3, 12))
     else:
@@ -405,9 +410,23 @@ def sparse(blocks, file_system_blocks=None, magic=install.EXT4_MAGIC, header_blo
                    struct.pack("<HHII", install.CHUNK_RAW, 0, 1, 12 + BLOCK) + tail + bytes(BLOCK - len(tail)),
                    struct.pack("<HHII", install.CHUNK_DONT_CARE, 0, blocks - file_system_blocks - 1, 12)]
     header = struct.pack("<IHHHHIIII", install.SPARSE_MAGIC, 1, 0, 28, 12, BLOCK,
-                         blocks if header_blocks is None else header_blocks, len(chunks), 0)
+                         blocks if header_blocks is None else header_blocks, len(chunks), checksum)
     image = header + b"".join(chunks) + extra
     return image[:len(image) - cut]
+
+
+def encode_sparse(raw, block_size):
+    """``raw`` as a sparse image of one chunk per block: a fill chunk where the block repeats one word."""
+    chunks = []
+    for offset in range(0, len(raw), block_size):
+        data = raw[offset:offset + block_size]
+        if data == data[:4] * (block_size // 4):
+            chunks.append(struct.pack("<HHII", install.CHUNK_FILL, 0, 1, 16) + data[:4])
+        else:
+            chunks.append(struct.pack("<HHII", install.CHUNK_RAW, 0, 1, 12 + block_size) + data)
+    header = struct.pack("<IHHHHIIII", install.SPARSE_MAGIC, 1, 0, 28, 12, block_size, len(raw) // block_size,
+                         len(chunks), 0)
+    return header + b"".join(chunks)
 
 
 SYSTEM = sparse(32)
@@ -435,7 +454,7 @@ class Plan(unittest.TestCase):
             if tool == "adb":
                 self.assertEqual(rest, ["devices"])
                 return 0, "List of devices attached\n" + adb, ""
-            self.assertEqual(tool, "fastboot")
+            self.assertTrue(tool.endswith(("fastboot", "fastboot.exe")), tool)
             if rest == ["--version"]:
                 return 0, f"fastboot version {version}\nInstalled as /opt/platform-tools/fastboot\n", ""
             if rest == ["devices"]:
@@ -565,6 +584,74 @@ class Plan(unittest.TestCase):
         result = self.plan(sizes={"system": "0x40000"})
         self.assertEqual(result["verdict"], install.STOP)
         self.assertEqual(result["writes"], [])
+
+    def test_only_one_whole_size_line_is_read(self):
+        for answer in ("\n40000", "0x40000\npartition-size:system: 0x80000", "0x40000 0x80000"):
+            with self.subTest(answer=answer):
+                result = self.plan(sizes={"system": answer, "userdata": f"{USERDATA_PARTITION:x}"})
+                self.assertEqual(result["verdict"], install.STOP, result)
+
+    def test_superblocks_no_kernel_would_mount_are_refused(self):
+        bad = {"no inodes": superblock(32, inodes_per_group=0, inodes=0),
+               "no blocks per group": superblock(32, blocks_per_group=0),
+               "inodes that do not add up": superblock(32, inodes=17)}
+        for what, block in bad.items():
+            with self.subTest(what):
+                result = self.plan({"system.img": sparse(32, first=bytes(1024) + block), "userdata.img": USERDATA})
+                self.assertEqual(result["verdict"], install.STOP, result)
+                self.assertIn("no kernel would mount", result["stops"][0])
+
+    def test_sparse_checksums_are_refused_not_skipped(self):
+        for image in (sparse(32, crc=True), sparse(32, checksum=0x1B3463E3)):
+            result = self.plan({"system.img": image, "userdata.img": USERDATA})
+            self.assertEqual(result["verdict"], install.STOP, result)
+            self.assertIn("checksum", result["stops"][0])
+
+    def test_a_superblock_across_chunks_and_fills_is_read(self):
+        raw = bytes(1024) + superblock(4) + bytes(4 * BLOCK - 2048)
+        folder = self.folder({}, hashes=False)
+        (folder / "small-blocks.img").write_bytes(encode_sparse(raw, 512))
+        self.assertEqual(install.image_layout(folder / "small-blocks.img"),
+                         {"format": "sparse", "unpackedBytes": 4 * BLOCK, "fileSystemBytes": 4 * BLOCK,
+                          "afterFileSystem": None})
+
+    def test_the_writes_name_the_fastboot_whose_version_was_checked(self):
+        tools, _ = self.unit()
+        tools.fastboot_path = r"C:\Program Files\platform-tools\fastboot.exe"
+        folder = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
+        result = install.make_plan(tools, folder, None)
+        self.assertEqual(result["verdict"], install.READY, result)
+        self.assertEqual(result["writes"][0],
+                         install.shell_words([tools.fastboot_path, "-s", "<serial>", "flash", "system", "system.img"]))
+        self.assertTrue(result["writes"][0].startswith(("'C:", '"C:')), result["writes"][0])
+
+    def test_two_units_are_refused_without_naming_them(self):
+        tools, _ = self.unit(fastboot=f"{SERIAL}\tfastboot\nother42\tfastboot\n")
+        with self.assertRaises(RuntimeError) as raised:
+            install.make_plan(tools, self.folder({"system.img": SYSTEM}), None)
+        self.assertNotIn(SERIAL, str(raised.exception))
+        self.assertNotIn("other42", str(raised.exception))
+
+    def test_a_hash_file_that_is_not_one_line_is_not_read_whole(self):
+        result = self.plan({"system.img": SYSTEM, "userdata.img": USERDATA,
+                            "system.img.sha256": hashlib.sha256(SYSTEM).hexdigest().encode() + b"  system.img"
+                            + b" " * 2000 + b"\n"})
+        self.assertEqual(result["verdict"], install.STOP, result)
+
+    def test_an_image_that_changes_while_it_is_checked_is_refused(self):
+        folder = self.folder({"system.img": SYSTEM})
+        original = install.read_layout
+
+        def changing(stream, size):
+            with (folder / "system.img").open("ab") as image:
+                image.write(b"\0")
+            return original(stream, size)
+
+        install.read_layout = changing
+        self.addCleanup(setattr, install, "read_layout", original)
+        with self.assertRaises(ValueError) as raised:
+            install.check_image(folder / "system.img", folder / "system.img.sha256")
+        self.assertIn("changed", str(raised.exception))
 
 
 if __name__ == "__main__":

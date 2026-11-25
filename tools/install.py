@@ -33,10 +33,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shlex
 import struct
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -522,6 +524,15 @@ def zone_number(name: str) -> int:
     return int(match.group(1)) if match else -1
 
 
+def find_one_unit(tools: identify.Tools, serial: str | None) -> tuple[str, str | None]:
+    """identify.find_unit, with a refusal that names no serial (it may be pasted into an issue)."""
+    try:
+        return identify.find_unit(tools, serial)
+    except RuntimeError:
+        raise RuntimeError("adb or fastboot lists more than one unit, or one in a state this stage cannot "
+                           "use: see `adb devices` and `fastboot devices`, and choose one with --serial") from None
+
+
 def print_verdict(result: dict) -> None:
     print(f"Thermal protection: {result['verdict'].upper()}")
     for stop in result["stops"]:
@@ -544,7 +555,7 @@ def command_thermal(arguments: argparse.Namespace) -> int:
             kernel_log = None
         else:
             tools = identify.Tools(identify.find_tool("adb"), identify.find_tool("fastboot"))
-            state, serial = identify.find_unit(tools, arguments.serial)
+            state, serial = find_one_unit(tools, arguments.serial)
             if state != "android" or not serial:
                 raise RuntimeError(f"Over USB this stage needs Android with ADB authorized; the unit is {state!r}")
             thermal, kernel_log = read_thermal_over_adb(tools, serial)
@@ -577,6 +588,7 @@ SUPERBLOCK = (1024, 1024)  # offset and length in the unpacked image
 # The board's fstab marks userdata encryptable=footer: its last 16 KiB stay outside the file system.
 CRYPT_FOOTER = 16384
 USERDATA_RANGE = (1 << 30, 64 << 30)
+MAX_HASH_FILE = 1024
 READY = "ready"
 EXIT_CODES[READY] = 0
 
@@ -593,94 +605,139 @@ def flash_arguments(serial: str, partition: str, image: str) -> list[str]:
     return ["-s", serial, "flash", partition, image]
 
 
-def sha256_of(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def recorded_hash(path: pathlib.Path, image: str) -> str:
     """The sha256 a ``sha256sum`` line records for ``image``; raises ValueError if it records anything else."""
-    lines = [line for line in path.read_text(encoding="ascii", errors="replace").splitlines() if line.strip()]
-    match = re.fullmatch(r"([0-9a-f]{64}) [ *](\S+)", lines[0].strip()) if len(lines) == 1 else None
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_HASH_FILE + 1)
+    lines = [line for line in raw.decode("ascii", errors="replace").splitlines() if line.strip()]
+    match = re.fullmatch(r"([0-9a-f]{64}) [ *](\S+)", lines[0].strip()) \
+        if len(raw) <= MAX_HASH_FILE and len(lines) == 1 else None
     if not match or match.group(2) != image:
         raise ValueError(f"{path.name} is not one sha256sum line for {image}")
     return match.group(1)
 
 
-def image_layout(path: pathlib.Path) -> dict:
+def check_superblock(superblock: bytes | None) -> int:
+    """The size in bytes of the ext4 file system this superblock describes; raises ValueError
+    unless its geometry is one a kernel would mount (the checks ext4_fill_super makes)."""
+    if superblock is None or struct.unpack_from("<H", superblock, 0x38)[0] != EXT4_MAGIC:
+        raise ValueError("it is not an ext4 file system")
+    inodes, blocks, first_block, log_block_size, blocks_per_group, inodes_per_group = (
+        struct.unpack_from("<I", superblock, offset)[0] for offset in (0x00, 0x04, 0x14, 0x18, 0x20, 0x28))
+    if struct.unpack_from("<I", superblock, 0x60)[0] & 0x80:  # 64bit: the count's high half
+        blocks |= struct.unpack_from("<I", superblock, 0x150)[0] << 32
+    if log_block_size > 6:
+        raise ValueError("its ext4 block size is not valid")
+    block_size = 1024 << log_block_size
+    revision, inode_size = struct.unpack_from("<I", superblock, 0x4C)[0], struct.unpack_from("<H", superblock, 0x58)[0]
+    groups = -(-(blocks - first_block) // blocks_per_group) if blocks_per_group and blocks > first_block else 0
+    if (first_block != (1 if block_size == 1024 else 0) or not 0 < blocks_per_group <= 8 * block_size
+            or not 0 < inodes_per_group <= 8 * block_size or not groups or inodes != groups * inodes_per_group
+            or (revision >= 1 and (inode_size < 128 or inode_size > block_size or inode_size & (inode_size - 1)))):
+        raise ValueError("its ext4 superblock describes a file system no kernel would mount")
+    return blocks * block_size
+
+
+def read_layout(stream, file_size: int) -> dict:
     """How big an image is once unpacked, its ext4 file system's size, and what follows that.
 
-    Reads Android sparse images (walking every chunk header, so a cut-off or padded file is
-    refused) and raw images. Raises ValueError for anything that is not a whole ext4 image.
+    Reads Android sparse images, walking every chunk header (a cut-off or padded file is
+    refused), and raw images. Raises ValueError for anything that is not a whole ext4 image.
     ``afterFileSystem`` is None when the file system fills the image, ``verity`` when the rest
     begins with dm-verity's metadata (the build appends it and the hash tree), else ``unknown``.
     """
-    file_size = path.stat().st_size
-    # (first, last, where in the file) of each run of raw data, in bytes of the unpacked image
-    extents = []
-    with path.open("rb") as stream:
-        head = stream.read(28)
-        if len(head) == 28 and struct.unpack_from("<I", head)[0] == SPARSE_MAGIC:
-            (_, major, _, file_header, chunk_header, block_size, total_blocks, total_chunks,
-             _) = struct.unpack("<IHHHHIIII", head)
-            if major != 1 or file_header < 28 or chunk_header < 12 or not block_size or block_size % 4:
-                raise ValueError("its sparse header is not one this tool reads")
+    stream.seek(0)
+    head = stream.read(28)
+    if len(head) == 28 and struct.unpack_from("<I", head)[0] == SPARSE_MAGIC:
+        (_, major, _, file_header, chunk_header, block_size, total_blocks, total_chunks,
+         checksum) = struct.unpack("<IHHHHIIII", head)
+        if major != 1 or file_header < 28 or chunk_header < 12 or not block_size or block_size % 4:
+            raise ValueError("its sparse header is not one this tool reads")
+        if checksum:
+            raise ValueError("it carries a sparse checksum, which this tool does not check")
+        if total_chunks > total_blocks or total_chunks * chunk_header > file_size - file_header:
+            raise ValueError("its header counts more chunks than it can hold")
+
+        def read_at(offset: int, length: int) -> bytes | None:
+            """Walks every chunk; the unpacked bytes at offset if all of them are data (raw or fill)."""
             stream.seek(file_header)
-            block = 0
+            found, covered, block = bytearray(length), 0, 0
             for _ in range(total_chunks):
                 header = stream.read(chunk_header)
                 if len(header) != chunk_header:
                     raise ValueError("it ends inside a chunk header")
                 kind, _, blocks, total = struct.unpack_from("<HHII", header)
-                data = total - chunk_header
-                expected = {CHUNK_RAW: blocks * block_size, CHUNK_FILL: 4, CHUNK_DONT_CARE: 0,
-                            CHUNK_CRC32: 4}.get(kind)
-                if expected is None or data != expected or (kind == CHUNK_CRC32 and blocks):
+                if kind == CHUNK_CRC32:
+                    raise ValueError("it carries sparse checksums, which this tool does not check")
+                data = {CHUNK_RAW: blocks * block_size, CHUNK_FILL: 4, CHUNK_DONT_CARE: 0}.get(kind)
+                if data is None or total - chunk_header != data or not blocks:
                     raise ValueError(f"a chunk at block {block} is not valid")
                 start = stream.tell()
                 if start + data > file_size:
                     raise ValueError(f"it ends inside the chunk at block {block}")
-                if kind == CHUNK_RAW:
-                    extents.append((block * block_size, (block + blocks) * block_size, start))
+                low = max(block * block_size, offset)
+                high = min((block + blocks) * block_size, offset + length)
+                if low < high and kind != CHUNK_DONT_CARE:
+                    if kind == CHUNK_RAW:
+                        stream.seek(start + low - block * block_size)
+                        found[low - offset:high - offset] = stream.read(high - low)
+                    else:  # a fill chunk starts on a block, and blocks are whole words
+                        pattern = stream.read(4)
+                        found[low - offset:high - offset] = bytes(pattern[i % 4] for i in range(low, high))
+                    covered += high - low
                 stream.seek(start + data)
                 block += blocks
             if block != total_blocks:
                 raise ValueError(f"its chunks hold {block} blocks, its header says {total_blocks}")
             if stream.tell() != file_size:
                 raise ValueError("it has bytes after its last chunk")
-            unpacked, sparse = total_blocks * block_size, True
-        else:
-            extents.append((0, file_size, 0))
-            unpacked, sparse = file_size, False
+            return bytes(found) if covered == length else None
 
+        unpacked, sparse = total_blocks * block_size, True
+    else:
         def read_at(offset: int, length: int) -> bytes | None:
-            for first, last, where in extents:
-                if first <= offset and offset + length <= last:
-                    stream.seek(where + offset - first)
-                    return stream.read(length)
-            return None
+            stream.seek(offset)
+            data = stream.read(length)
+            return data if len(data) == length else None
 
-        superblock = read_at(*SUPERBLOCK)
-        if superblock is None or struct.unpack_from("<H", superblock, 0x38)[0] != EXT4_MAGIC:
-            raise ValueError("it is not an ext4 file system")
-        blocks = struct.unpack_from("<I", superblock, 0x04)[0]
-        if struct.unpack_from("<I", superblock, 0x60)[0] & 0x80:  # 64bit: the count's high half
-            blocks |= struct.unpack_from("<I", superblock, 0x150)[0] << 32
-        log_block_size = struct.unpack_from("<I", superblock, 0x18)[0]
-        if log_block_size > 6:
-            raise ValueError("its ext4 block size is not valid")
-        file_system = blocks * (1024 << log_block_size)
-        if file_system > unpacked:
-            raise ValueError(f"its file system ({file_system} bytes) is larger than the image ({unpacked})")
-        after = None
-        if file_system < unpacked:
-            magic = read_at(file_system, 4)
-            after = "verity" if magic and struct.unpack("<I", magic)[0] == VERITY_MAGIC else "unknown"
+        unpacked, sparse = file_size, False
+    file_system = check_superblock(read_at(*SUPERBLOCK))
+    if file_system > unpacked:
+        raise ValueError(f"its file system ({file_system} bytes) is larger than the image ({unpacked})")
+    after = None
+    if file_system < unpacked:
+        magic = read_at(file_system, 4)
+        after = "verity" if magic and struct.unpack("<I", magic)[0] == VERITY_MAGIC else "unknown"
     return {"format": "sparse" if sparse else "raw", "unpackedBytes": unpacked, "fileSystemBytes": file_system,
             "afterFileSystem": after}
+
+
+def image_layout(path: pathlib.Path) -> dict:
+    with path.open("rb") as stream:
+        return read_layout(stream, os.fstat(stream.fileno()).st_size)
+
+
+def identity(status: os.stat_result) -> tuple:
+    return status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns
+
+
+def check_image(image: pathlib.Path, hash_file: pathlib.Path) -> dict:
+    """An image hashed and read through one open handle; raises ValueError if anything is wrong,
+    including either file changing while it was checked."""
+    expected = recorded_hash(hash_file, image.name)
+    with image.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        digest = hashlib.sha256()
+        while chunk := stream.read(1 << 20):
+            digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise ValueError(f"{image.name}'s sha256 is {digest.hexdigest()}, but {hash_file.name} records "
+                             f"{expected}")
+        layout = read_layout(stream, opened.st_size)
+        if identity(os.fstat(stream.fileno())) != identity(opened) or identity(image.stat()) != identity(opened) \
+                or recorded_hash(hash_file, image.name) != expected:
+            raise ValueError(f"{image.name} or its hash changed while it was being checked")
+    return {"sha256": expected, **layout}
 
 
 def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) -> dict:
@@ -707,44 +764,43 @@ def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) 
             stops.append(f"{partition}.img and {partition}.img.sha256 must both be there, as files")
             continue
         try:
-            expected = recorded_hash(hash_file, image.name)
-        except ValueError as error:
-            stops.append(str(error))
-            continue
-        actual = sha256_of(image)
-        if actual != expected:
-            stops.append(f"{image.name}'s sha256 is {actual}, but {hash_file.name} records {expected}")
-            continue
-        try:
-            layout = image_layout(image)
+            checked = check_image(image, hash_file)
         except ValueError as error:
             stops.append(f"{image.name} cannot be written: {error}")
             continue
-        extra = layout["unpackedBytes"] - layout["fileSystemBytes"]
-        if layout["afterFileSystem"] == "unknown" or (partition == "userdata" and extra):
+        extra = checked["unpackedBytes"] - checked["fileSystemBytes"]
+        if checked["afterFileSystem"] == "unknown" or (partition == "userdata" and extra):
             stops.append(f"{image.name} holds {extra} bytes after its file system that "
                          + ("userdata.sh never writes" if partition == "userdata"
                             else "do not begin with dm-verity's metadata"))
             continue
-        images[partition] = {"sha256": actual, **layout}
+        images[partition] = checked
     return images
 
 
 def fastboot_version(tools: identify.Tools) -> str | None:
-    _, out, err = tools.fastboot("--version")
+    code, out, err = tools.fastboot("--version")
     match = re.search(r"^fastboot version (\S+)", out + "\n" + err, re.MULTILINE)
-    return match.group(1) if match else None
+    return match.group(1) if code == 0 and match else None
 
 
 def partition_size(tools: identify.Tools, serial: str, partition: str) -> int:
     """``getvar partition-size:<partition>`` in bytes. fastboot prints it on standard error,
-    always in hex, with or without 0x (CAF's bootloader sends it either way)."""
+    always in hex, with or without 0x (CAF's bootloader sends it either way). Exactly one
+    answer line must name the partition, and it must hold the number alone."""
     code, out, err = tools.fastboot("-s", serial, "getvar", f"partition-size:{partition}")
-    text = (err + "\n" + out).replace(serial, "<unit>")
-    match = re.search(rf"^partition-size:{partition}:\s*(?:0x)?([0-9a-fA-F]{{1,16}})\s*$", text, re.MULTILINE)
-    if code != 0 or not match or "FAILED" in text:
-        raise RuntimeError(f"fastboot getvar partition-size:{partition} gave no size: {safe(text)}")
+    lines = [line.rstrip("\r") for line in (err + "\n" + out).splitlines()]
+    answers = [line for line in lines if line.startswith(f"partition-size:{partition}:")]
+    match = re.fullmatch(rf"partition-size:{partition}:[ \t]*(?:0x)?([0-9a-fA-F]{{1,16}})[ \t]*", answers[0]) \
+        if len(answers) == 1 else None
+    if code != 0 or not match or any("FAILED" in line for line in lines):
+        shown = safe("; ".join(line for line in lines if line.strip()).replace(serial, "<unit>"))
+        raise RuntimeError(f"fastboot getvar partition-size:{partition} gave no single size: {shown}")
     return int(match.group(1), 16)
+
+
+def shell_words(arguments: list[str]) -> str:
+    return subprocess.list2cmdline(arguments) if os.name == "nt" else shlex.join(arguments)
 
 
 def evaluate_plan(images: dict, sizes: dict, stops: list[str], unresolved: list[str]) -> list[str]:
@@ -786,7 +842,7 @@ def make_plan(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -
         stops.append(f"fastboot is {version or 'missing or did not say its version'}, not {FASTBOOT_VERSION}: "
                      "older clients erase ext4 partitions before writing them")
     images = check_images(folder, stops, unresolved)
-    state, found = identify.find_unit(tools, serial)
+    state, found = find_one_unit(tools, serial)
     sizes = {}
     if state == "fastboot":
         for partition in WRITABLE:
@@ -805,11 +861,12 @@ def make_plan(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -
         userdata_command = (f"FILE_CONTEXTS=~/silvering/units/<profile>/ramdisk/file_contexts ./userdata.sh "
                             f"{sizes['userdata']:#x} adbkey.pub userdata.img")
     verdict = STOP if stops else INCOMPLETE if unresolved else READY
-    writes = [" ".join(["fastboot", *flash_arguments("<serial>", partition, f"{partition}.img")])
+    # The very client whose version was checked, so another fastboot on the PATH cannot answer.
+    writes = [shell_words([tools.fastboot_path, *flash_arguments("<serial>", partition, f"{partition}.img")])
               for partition in WRITABLE] if verdict == READY else []
     return {"verdict": verdict, "stops": stops, "unresolved": unresolved, "notes": notes,
-            "fastboot": version, "images": images, "partitionBytes": sizes, "userdataCommand": userdata_command,
-            "writes": writes}
+            "fastboot": version, "fastbootPath": tools.fastboot_path, "folder": str(folder.resolve()),
+            "images": images, "partitionBytes": sizes, "userdataCommand": userdata_command, "writes": writes}
 
 
 def print_plan(result: dict) -> None:
@@ -827,7 +884,7 @@ def print_plan(result: dict) -> None:
         print("  Build userdata.img on the build host, then copy it and its .sha256 here and run this stage again:")
         print(f"    {result['userdataCommand']}")
     if result["writes"]:
-        print("  The only writes, from the images folder, one at a time, each only after the one before "
+        print(f"  The only writes, run from {result['folder']}, one at a time, each only after the one before "
               "ended with 'Finished' and no 'FAILED' (silvering/FIRST-FLASH.md, In the session, step 5):")
         for write in result["writes"]:
             print(f"    {write}")
