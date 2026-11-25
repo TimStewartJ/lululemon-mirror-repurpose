@@ -8,6 +8,12 @@ Stages arrive one at a time; each says whether it reads or changes the unit.
               "Thermal protection"). Over Wi-Fi through Mirror Home
               (``--mirror CONFIG``) it checks the driver and its device tree;
               the kernel log can only be read over USB (``--serial``).
+    plan      reads only: the fastboot client's version, a folder holding
+              only system.img, userdata.img and their sha256 files (each image
+              hashed, walked chunk by chunk and checked to be ext4), and, with
+              the unit in fastboot, the partitions' sizes. Prints the only
+              writes the installer ever makes: system, then userdata. Never
+              restarts the unit and never sends it anything but getvar.
 
 The thermal stage never answers a plain pass yet: which kernel messages prove
 that the limits were registered is not known for this board, so its best
@@ -15,18 +21,22 @@ answer over USB is ``review`` (every automatic check passed; a person reads
 the driver's kernel lines it lists), and over Wi-Fi ``incomplete``.
 
 Exit codes: 1 the unit could not be read, 3 Stop (the gate fails),
-4 incomplete (what was read passes; the rest must be read over USB),
+4 incomplete (what was read passes; the rest must be read over USB, or for
+the plan, the unit is not in fastboot or userdata.img is not built yet),
 5 review (all automatic checks pass; a person judges the kernel lines shown).
-0 is kept for a pass once the kernel's own messages are known.
+0 is the plan's ``ready``, and is kept for a thermal pass once the kernel's
+own messages are known.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
 import shlex
+import struct
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -323,7 +333,7 @@ def evaluate_thermal(thermal: dict | None, kernel_log: list[str] | None) -> dict
         if missing:
             stops.append(f"The driver cannot start without {', '.join(missing)} (one 32-bit cell each)")
             polls = False
-        if not polls:
+        if "qcom,poll-ms" in noted and not in_range(poll, POLL_MS_RANGE):
             stops.append(f"qcom,poll-ms is {poll!r}: the driver would not check the temperature often enough "
                          f"(credited {POLL_MS_RANGE[0]}-{POLL_MS_RANGE[1]} ms)")
         resets = polls and in_range(reset, RESET_RANGE)
@@ -549,6 +559,294 @@ def command_thermal(arguments: argparse.Namespace) -> int:
     return EXIT_CODES[result["verdict"]]
 
 
+# ---------------------------------------------------------------------------
+# The plan: the images and the unit in fastboot, checked before any write.
+# ---------------------------------------------------------------------------
+
+# The only partitions the installer ever writes, in the order it writes them. boot, aboot,
+# recovery and the rest stay as the factory left them: a unit whose boot is overwritten stays
+# in fastboot until it gets a boot image signed for its board, which nobody hosts.
+WRITABLE = ("system", "userdata")
+FASTBOOT_VERSION = "35.0.1-11580240"
+IMAGE_FILES = {f"{partition}{suffix}" for partition in WRITABLE for suffix in (".img", ".img.sha256")}
+SPARSE_MAGIC = 0xED26FF3A
+CHUNK_RAW, CHUNK_FILL, CHUNK_DONT_CARE, CHUNK_CRC32 = 0xCAC1, 0xCAC2, 0xCAC3, 0xCAC4
+EXT4_MAGIC = 0xEF53
+VERITY_MAGIC = 0xB001B001
+SUPERBLOCK = (1024, 1024)  # offset and length in the unpacked image
+# The board's fstab marks userdata encryptable=footer: its last 16 KiB stay outside the file system.
+CRYPT_FOOTER = 16384
+USERDATA_RANGE = (1 << 30, 64 << 30)
+READY = "ready"
+EXIT_CODES[READY] = 0
+
+
+def flash_arguments(serial: str, partition: str, image: str) -> list[str]:
+    """fastboot's arguments for one write: the only kind of write the installer builds.
+
+    Only ``system`` and ``userdata``, each from the image of its own name.
+    """
+    if partition not in WRITABLE:
+        raise ValueError(f"{partition!r} is never written; only {' and '.join(WRITABLE)} are")
+    if image != f"{partition}.img":
+        raise ValueError(f"{partition} is written only from {partition}.img, not {image!r}")
+    return ["-s", serial, "flash", partition, image]
+
+
+def sha256_of(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def recorded_hash(path: pathlib.Path, image: str) -> str:
+    """The sha256 a ``sha256sum`` line records for ``image``; raises ValueError if it records anything else."""
+    lines = [line for line in path.read_text(encoding="ascii", errors="replace").splitlines() if line.strip()]
+    match = re.fullmatch(r"([0-9a-f]{64}) [ *](\S+)", lines[0].strip()) if len(lines) == 1 else None
+    if not match or match.group(2) != image:
+        raise ValueError(f"{path.name} is not one sha256sum line for {image}")
+    return match.group(1)
+
+
+def image_layout(path: pathlib.Path) -> dict:
+    """How big an image is once unpacked, its ext4 file system's size, and what follows that.
+
+    Reads Android sparse images (walking every chunk header, so a cut-off or padded file is
+    refused) and raw images. Raises ValueError for anything that is not a whole ext4 image.
+    ``afterFileSystem`` is None when the file system fills the image, ``verity`` when the rest
+    begins with dm-verity's metadata (the build appends it and the hash tree), else ``unknown``.
+    """
+    file_size = path.stat().st_size
+    # (first, last, where in the file) of each run of raw data, in bytes of the unpacked image
+    extents = []
+    with path.open("rb") as stream:
+        head = stream.read(28)
+        if len(head) == 28 and struct.unpack_from("<I", head)[0] == SPARSE_MAGIC:
+            (_, major, _, file_header, chunk_header, block_size, total_blocks, total_chunks,
+             _) = struct.unpack("<IHHHHIIII", head)
+            if major != 1 or file_header < 28 or chunk_header < 12 or not block_size or block_size % 4:
+                raise ValueError("its sparse header is not one this tool reads")
+            stream.seek(file_header)
+            block = 0
+            for _ in range(total_chunks):
+                header = stream.read(chunk_header)
+                if len(header) != chunk_header:
+                    raise ValueError("it ends inside a chunk header")
+                kind, _, blocks, total = struct.unpack_from("<HHII", header)
+                data = total - chunk_header
+                expected = {CHUNK_RAW: blocks * block_size, CHUNK_FILL: 4, CHUNK_DONT_CARE: 0,
+                            CHUNK_CRC32: 4}.get(kind)
+                if expected is None or data != expected or (kind == CHUNK_CRC32 and blocks):
+                    raise ValueError(f"a chunk at block {block} is not valid")
+                start = stream.tell()
+                if start + data > file_size:
+                    raise ValueError(f"it ends inside the chunk at block {block}")
+                if kind == CHUNK_RAW:
+                    extents.append((block * block_size, (block + blocks) * block_size, start))
+                stream.seek(start + data)
+                block += blocks
+            if block != total_blocks:
+                raise ValueError(f"its chunks hold {block} blocks, its header says {total_blocks}")
+            if stream.tell() != file_size:
+                raise ValueError("it has bytes after its last chunk")
+            unpacked, sparse = total_blocks * block_size, True
+        else:
+            extents.append((0, file_size, 0))
+            unpacked, sparse = file_size, False
+
+        def read_at(offset: int, length: int) -> bytes | None:
+            for first, last, where in extents:
+                if first <= offset and offset + length <= last:
+                    stream.seek(where + offset - first)
+                    return stream.read(length)
+            return None
+
+        superblock = read_at(*SUPERBLOCK)
+        if superblock is None or struct.unpack_from("<H", superblock, 0x38)[0] != EXT4_MAGIC:
+            raise ValueError("it is not an ext4 file system")
+        blocks = struct.unpack_from("<I", superblock, 0x04)[0]
+        if struct.unpack_from("<I", superblock, 0x60)[0] & 0x80:  # 64bit: the count's high half
+            blocks |= struct.unpack_from("<I", superblock, 0x150)[0] << 32
+        log_block_size = struct.unpack_from("<I", superblock, 0x18)[0]
+        if log_block_size > 6:
+            raise ValueError("its ext4 block size is not valid")
+        file_system = blocks * (1024 << log_block_size)
+        if file_system > unpacked:
+            raise ValueError(f"its file system ({file_system} bytes) is larger than the image ({unpacked})")
+        after = None
+        if file_system < unpacked:
+            magic = read_at(file_system, 4)
+            after = "verity" if magic and struct.unpack("<I", magic)[0] == VERITY_MAGIC else "unknown"
+    return {"format": "sparse" if sparse else "raw", "unpackedBytes": unpacked, "fileSystemBytes": file_system,
+            "afterFileSystem": after}
+
+
+def check_images(folder: pathlib.Path, stops: list[str], unresolved: list[str]) -> dict:
+    """What the images folder holds, each image checked against its hash and as ext4."""
+    images = {}
+    if not folder.is_dir():
+        stops.append(f"{folder} is not a folder")
+        return images
+    names = sorted(entry.name for entry in folder.iterdir())
+    others = [name for name in names if name not in IMAGE_FILES]
+    if others:
+        stops.append(f"The images folder holds {', '.join(others)} as well: it may hold only "
+                     f"{', '.join(sorted(IMAGE_FILES))}, so no other image can be written by mistake")
+    for partition in WRITABLE:
+        image, hash_file = folder / f"{partition}.img", folder / f"{partition}.img.sha256"
+        if not image.exists() and not hash_file.exists():
+            if partition == "system":
+                stops.append("There is no system.img")
+            else:
+                unresolved.append("There is no userdata.img yet: build it for this unit's partition size "
+                                  "(the command is below once the unit is in fastboot)")
+            continue
+        if not image.is_file() or not hash_file.is_file():
+            stops.append(f"{partition}.img and {partition}.img.sha256 must both be there, as files")
+            continue
+        try:
+            expected = recorded_hash(hash_file, image.name)
+        except ValueError as error:
+            stops.append(str(error))
+            continue
+        actual = sha256_of(image)
+        if actual != expected:
+            stops.append(f"{image.name}'s sha256 is {actual}, but {hash_file.name} records {expected}")
+            continue
+        try:
+            layout = image_layout(image)
+        except ValueError as error:
+            stops.append(f"{image.name} cannot be written: {error}")
+            continue
+        extra = layout["unpackedBytes"] - layout["fileSystemBytes"]
+        if layout["afterFileSystem"] == "unknown" or (partition == "userdata" and extra):
+            stops.append(f"{image.name} holds {extra} bytes after its file system that "
+                         + ("userdata.sh never writes" if partition == "userdata"
+                            else "do not begin with dm-verity's metadata"))
+            continue
+        images[partition] = {"sha256": actual, **layout}
+    return images
+
+
+def fastboot_version(tools: identify.Tools) -> str | None:
+    _, out, err = tools.fastboot("--version")
+    match = re.search(r"^fastboot version (\S+)", out + "\n" + err, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def partition_size(tools: identify.Tools, serial: str, partition: str) -> int:
+    """``getvar partition-size:<partition>`` in bytes. fastboot prints it on standard error,
+    always in hex, with or without 0x (CAF's bootloader sends it either way)."""
+    code, out, err = tools.fastboot("-s", serial, "getvar", f"partition-size:{partition}")
+    text = (err + "\n" + out).replace(serial, "<unit>")
+    match = re.search(rf"^partition-size:{partition}:\s*(?:0x)?([0-9a-fA-F]{{1,16}})\s*$", text, re.MULTILINE)
+    if code != 0 or not match or "FAILED" in text:
+        raise RuntimeError(f"fastboot getvar partition-size:{partition} gave no size: {safe(text)}")
+    return int(match.group(1), 16)
+
+
+def evaluate_plan(images: dict, sizes: dict, stops: list[str], unresolved: list[str]) -> list[str]:
+    """Checks the images against the partitions; the notes of what fits."""
+    notes = []
+    system, userdata = images.get("system"), images.get("userdata")
+    if "system" in sizes and system:
+        if system["unpackedBytes"] > sizes["system"]:
+            stops.append(f"system.img unpacks to {system['unpackedBytes']} bytes; the system partition holds "
+                         f"{sizes['system']}")
+        else:
+            notes.append(f"system.img ({system['unpackedBytes']} bytes unpacked) fits the system partition "
+                         f"({sizes['system']} bytes)")
+    if system and system["afterFileSystem"] == "verity":
+        notes.append(f"system.img carries {system['unpackedBytes'] - system['fileSystemBytes']} bytes of "
+                     "dm-verity metadata and hash tree after its file system; a board whose fstab has no "
+                     "verify flag (the last gate over ADB) never reads them")
+    if "userdata" in sizes:
+        size = sizes["userdata"]
+        if not USERDATA_RANGE[0] <= size <= USERDATA_RANGE[1]:
+            stops.append(f"The userdata partition is {size} bytes, not between 1 and 64 GiB")
+        elif userdata:
+            wanted = (size - CRYPT_FOOTER) // 4096 * 4096
+            if userdata["fileSystemBytes"] != wanted:
+                stops.append(f"userdata.img holds a {userdata['fileSystemBytes']}-byte file system; this unit's "
+                             f"partition takes {wanted} bytes ({size} less the 16 KiB encryption footer): it "
+                             "was built for another partition")
+            else:
+                notes.append(f"userdata.img was built for this partition ({size} bytes, the last 16 KiB left "
+                             "for the encryption footer)")
+    return notes
+
+
+def make_plan(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> dict:
+    stops: list[str] = []
+    unresolved: list[str] = []
+    version = fastboot_version(tools)
+    if version != FASTBOOT_VERSION:
+        stops.append(f"fastboot is {version or 'missing or did not say its version'}, not {FASTBOOT_VERSION}: "
+                     "older clients erase ext4 partitions before writing them")
+    images = check_images(folder, stops, unresolved)
+    state, found = identify.find_unit(tools, serial)
+    sizes = {}
+    if state == "fastboot":
+        for partition in WRITABLE:
+            try:
+                sizes[partition] = partition_size(tools, found, partition)
+            except RuntimeError as error:
+                stops.append(str(error))
+    elif state == "none":
+        unresolved.append("No unit is in fastboot: power it off, then hold VOL- while powering it on")
+    else:
+        unresolved.append("The unit is running Android. This stage does not restart it: power it off, then "
+                          "hold VOL- while powering it on, which also shows the way back works by hand")
+    notes = evaluate_plan(images, sizes, stops, unresolved)
+    userdata_command = None
+    if "userdata" in sizes and "userdata" not in images and USERDATA_RANGE[0] <= sizes["userdata"] <= USERDATA_RANGE[1]:
+        userdata_command = (f"FILE_CONTEXTS=~/silvering/units/<profile>/ramdisk/file_contexts ./userdata.sh "
+                            f"{sizes['userdata']:#x} adbkey.pub userdata.img")
+    verdict = STOP if stops else INCOMPLETE if unresolved else READY
+    writes = [" ".join(["fastboot", *flash_arguments("<serial>", partition, f"{partition}.img")])
+              for partition in WRITABLE] if verdict == READY else []
+    return {"verdict": verdict, "stops": stops, "unresolved": unresolved, "notes": notes,
+            "fastboot": version, "images": images, "partitionBytes": sizes, "userdataCommand": userdata_command,
+            "writes": writes}
+
+
+def print_plan(result: dict) -> None:
+    print(f"Plan: {result['verdict'].upper()}")
+    for stop in result["stops"]:
+        print(f"  Stop: {stop}")
+    for item in result["unresolved"]:
+        print(f"  Not settled: {item}")
+    for partition, image in result["images"].items():
+        print(f"  {partition}.img: sha256 {image['sha256']}, {image['format']}, {image['unpackedBytes']} bytes "
+              "unpacked, ext4")
+    for note in result["notes"]:
+        print(f"  {note}")
+    if result["userdataCommand"]:
+        print("  Build userdata.img on the build host, then copy it and its .sha256 here and run this stage again:")
+        print(f"    {result['userdataCommand']}")
+    if result["writes"]:
+        print("  The only writes, from the images folder, one at a time, each only after the one before "
+              "ended with 'Finished' and no 'FAILED' (silvering/FIRST-FLASH.md, In the session, step 5):")
+        for write in result["writes"]:
+            print(f"    {write}")
+
+
+def command_plan(arguments: argparse.Namespace) -> int:
+    tools = identify.Tools(identify.find_tool("adb"), identify.find_tool("fastboot"))
+    try:
+        result = make_plan(tools, pathlib.Path(arguments.images), arguments.serial)
+    except (RuntimeError, OSError) as error:
+        print(f"Could not read the unit or the images: {error}", file=sys.stderr)
+        return 1
+    if arguments.json:
+        print(json.dumps({"schema": "mirror-install-plan/1", **result}, indent=1))
+    else:
+        print_plan(result)
+    return EXIT_CODES[result["verdict"]]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     stages = parser.add_subparsers(dest="stage", required=True)
@@ -559,6 +857,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="over Wi-Fi through Mirror Home: a JSON file with host, port and a paired token")
     thermal.add_argument("--json", action="store_true", help="print the verdict and what was read as JSON")
     thermal.set_defaults(run=command_thermal)
+    plan = stages.add_parser("plan", help="reads only: checks the images and the unit in fastboot, and prints "
+                                          "the only writes allowed")
+    plan.add_argument("--images", required=True, metavar="FOLDER",
+                      help="a folder holding only system.img, userdata.img and their .sha256 files")
+    plan.add_argument("--serial", help="the unit, when more than one is connected")
+    plan.add_argument("--json", action="store_true", help="print the plan as JSON")
+    plan.set_defaults(run=command_plan)
     arguments = parser.parse_args(argv)
     return arguments.run(arguments)
 
