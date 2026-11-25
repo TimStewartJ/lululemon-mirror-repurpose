@@ -10,8 +10,9 @@
 #
 #   ./userdata.sh <partition size> <adb public key> [output image]
 #
-#   partition size  in bytes, as `fastboot getvar partition-size:userdata`
-#                   prints it (0x... is fine)
+#   partition size  in bytes: 0x... as `install.py plan` gives it, or decimal.
+#                   CAF's bootloader may send the size in hex without 0x,
+#                   which this script would read as decimal: add the 0x.
 #   adb public key  the owner's computer's adbkey.pub (~/.android/adbkey.pub)
 #   output image    default $SILVERING_ROOT/images/userdata-<time>.img
 #   FILE_CONTEXTS   SELinux labels (default: the build's root/file_contexts;
@@ -34,7 +35,7 @@ target=${TARGET:-silvering-userdebug}
 image=silvering-build:trusty
 footer=16384
 
-[ $# -ge 2 ] || { sed -n '2,28p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,29p' "$0" >&2; exit 2; }
 if [[ $1 =~ ^0[xX][0-9a-fA-F]{1,16}$ ]]; then
     size=$(( 16#${1:2} ))
 elif [[ $1 =~ ^[1-9][0-9]{0,18}$ ]]; then
@@ -67,7 +68,7 @@ esac
 out=${3:-$root/images/userdata-$(date +%Y%m%d-%H%M%S).img}
 mkdir -p "$(dirname "$out")"
 out=$(cd "$(dirname "$out")" && pwd)/$(basename "$out")
-[ ! -e "$out" ] || { echo "$out already exists" >&2; exit 1; }
+[ ! -e "$out" ] && [ ! -e "$out.sha256" ] || { echo "$out or its .sha256 already exists" >&2; exit 1; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -141,4 +142,5 @@ docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
         -S /work/file_contexts -C /work/fs_config /work/out/userdata.img /work/stage
 
 mv "$work/out/userdata.img" "$out"
-echo "userdata: $out ($length bytes of a $size-byte partition; sparse)"
+( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
+echo "userdata: $out ($length bytes of a $size-byte partition; sparse; sha256 in $(basename "$out").sha256)"

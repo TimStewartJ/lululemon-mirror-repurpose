@@ -1,6 +1,11 @@
+import hashlib
+import json
 import pathlib
 import shlex
+import shutil
+import struct
 import sys
+import tempfile
 import unittest
 
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
@@ -361,6 +366,205 @@ class OverAdb(unittest.TestCase):
                 read, _ = install.read_thermal_over_adb(tools, SERIAL)
                 self.assertNotIn("qcom,limit-temp", read["deviceTreeNodes"]["soc/qcom,msm-thermal"]["properties"])
                 self.assertIn(f"{self.NODE}/qcom,limit-temp", [e["path"] for e in read["unreadable"]])
+
+    def test_a_missing_probe_input_does_not_blame_poll_ms(self):
+        without = {key: value for key, value in THROTTLING.items() if key != "qcom,sensor-id"}
+        stops = install.evaluate_thermal(thermal(without), LOG)["stops"]
+        self.assertTrue(any("qcom,sensor-id" in stop for stop in stops), stops)
+        self.assertFalse(any("poll-ms is" in stop for stop in stops), stops)
+        slow = install.evaluate_thermal(thermal({**THROTTLING, "qcom,poll-ms": "00002710"}), LOG)["stops"]
+        self.assertTrue(any("poll-ms is 10000" in stop for stop in slow), slow)
+
+
+BLOCK = 4096
+# 1 GiB, as CAF's bootloader sends it (hex without 0x), and the file system userdata.sh makes for it.
+USERDATA_PARTITION = 1 << 30
+USERDATA_BLOCKS = (USERDATA_PARTITION - install.CRYPT_FOOTER) // BLOCK
+
+
+def superblock(blocks, magic=install.EXT4_MAGIC):
+    block = bytearray(1024)
+    struct.pack_into("<I", block, 0x04, blocks)
+    struct.pack_into("<I", block, 0x18, 2)  # 1024 << 2 = 4096-byte blocks
+    struct.pack_into("<H", block, 0x38, magic)
+    return bytes(block)
+
+
+def sparse(blocks, file_system_blocks=None, magic=install.EXT4_MAGIC, header_blocks=None, cut=0, extra=b"",
+           tail=None):
+    """A sparse ext4 image of ``blocks`` blocks; ``tail`` is the first block after a smaller file system."""
+    file_system_blocks = blocks if file_system_blocks is None else file_system_blocks
+    first = bytes(1024) + superblock(file_system_blocks, magic)
+    chunks = [struct.pack("<HHII", install.CHUNK_RAW, 0, 1, 12 + BLOCK) + first + bytes(BLOCK - len(first)),
+              struct.pack("<HHII", install.CHUNK_FILL, 0, 2, 16) + b"\xff\0\0\0",
+              struct.pack("<HHII", install.CHUNK_CRC32, 0, 0, 16) + bytes(4)]
+    if tail is None:
+        chunks.append(struct.pack("<HHII", install.CHUNK_DONT_CARE, 0, blocks - 3, 12))
+    else:
+        chunks += [struct.pack("<HHII", install.CHUNK_DONT_CARE, 0, file_system_blocks - 3, 12),
+                   struct.pack("<HHII", install.CHUNK_RAW, 0, 1, 12 + BLOCK) + tail + bytes(BLOCK - len(tail)),
+                   struct.pack("<HHII", install.CHUNK_DONT_CARE, 0, blocks - file_system_blocks - 1, 12)]
+    header = struct.pack("<IHHHHIIII", install.SPARSE_MAGIC, 1, 0, 28, 12, BLOCK,
+                         blocks if header_blocks is None else header_blocks, len(chunks), 0)
+    image = header + b"".join(chunks) + extra
+    return image[:len(image) - cut]
+
+
+SYSTEM = sparse(32)
+USERDATA = sparse(USERDATA_BLOCKS)
+VERITY = struct.pack("<II", install.VERITY_MAGIC, 0)
+
+
+class Plan(unittest.TestCase):
+    def folder(self, files, hashes=True):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory)
+        for name, data in files.items():
+            (directory / name).write_bytes(data)
+            if hashes and name.endswith(".img"):
+                (directory / f"{name}.sha256").write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+        return directory
+
+    def unit(self, sizes=None, version=install.FASTBOOT_VERSION, adb="", fastboot=f"{SERIAL}\tfastboot\n"):
+        sizes = {"system": "0x0000000000040000", "userdata": f"{USERDATA_PARTITION:x}"} if sizes is None else sizes
+        asked = []
+
+        def runner(arguments):
+            asked.append(arguments)
+            tool, *rest = arguments
+            if tool == "adb":
+                self.assertEqual(rest, ["devices"])
+                return 0, "List of devices attached\n" + adb, ""
+            self.assertEqual(tool, "fastboot")
+            if rest == ["--version"]:
+                return 0, f"fastboot version {version}\nInstalled as /opt/platform-tools/fastboot\n", ""
+            if rest == ["devices"]:
+                return 0, fastboot, ""
+            self.assertEqual(rest[:3], ["-s", SERIAL, "getvar"])
+            self.assertEqual(len(rest), 4)
+            partition = rest[3].removeprefix("partition-size:")
+            if partition not in sizes:
+                return 1, "", f"getvar:{rest[3]} FAILED (remote: 'GetVar Variable Not found')\nFinished.\n"
+            return 0, "", f"{rest[3]}: {sizes[partition]}\nFinished. Total time: 0.001s\n"
+
+        return identify.Tools("adb", "fastboot", runner), asked
+
+    def plan(self, files=None, **unit):
+        tools, asked = self.unit(**unit)
+        folder = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA} if files is None else files)
+        result = install.make_plan(tools, folder, None)
+        for arguments in asked:
+            # Nothing but questions reaches the unit.
+            self.assertTrue(arguments[1:] in (["devices"], ["--version"]) or arguments[3] == "getvar", arguments)
+        return result
+
+    def test_ready_lists_only_system_then_userdata(self):
+        result = self.plan()
+        self.assertEqual(result["verdict"], install.READY, result)
+        self.assertEqual(result["writes"], ["fastboot -s <serial> flash system system.img",
+                                            "fastboot -s <serial> flash userdata userdata.img"])
+        self.assertEqual(result["images"]["system"]["unpackedBytes"], 32 * BLOCK)
+        self.assertEqual(result["images"]["system"]["sha256"], hashlib.sha256(SYSTEM).hexdigest())
+        self.assertEqual(result["partitionBytes"], {"system": 0x40000, "userdata": USERDATA_PARTITION})
+        self.assertNotIn(SERIAL, json.dumps(result))
+        self.assertEqual(install.EXIT_CODES[result["verdict"]], 0)
+
+    def test_no_other_partition_or_image_can_be_written(self):
+        for partition in ("boot", "aboot", "recovery", "modem", "System", "system ", ""):
+            with self.subTest(partition=partition), self.assertRaises(ValueError):
+                install.flash_arguments(SERIAL, partition, f"{partition}.img")
+        for image in ("boot.img", "system.img", "../userdata.img", "userdata.img.sha256"):
+            with self.subTest(image=image), self.assertRaises(ValueError):
+                install.flash_arguments(SERIAL, "userdata", image)
+        self.assertEqual(install.flash_arguments(SERIAL, "system", "system.img"),
+                         ["-s", SERIAL, "flash", "system", "system.img"])
+
+    def test_another_fastboot_is_a_stop(self):
+        result = self.plan(version="34.0.5-10900879")
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertEqual(result["writes"], [])
+
+    def test_anything_else_in_the_folder_is_a_stop(self):
+        result = self.plan({"system.img": SYSTEM, "userdata.img": USERDATA, "boot.img": b"ANDROID!"})
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertIn("boot.img", result["stops"][0])
+
+    def test_each_image_must_match_its_hash(self):
+        tools, _ = self.unit()
+        folder = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
+        for text in (f"{'0' * 64}  system.img\n", f"{hashlib.sha256(SYSTEM).hexdigest()}  other.img\n",
+                     f"{hashlib.sha256(SYSTEM).hexdigest()}  system.img\n{'0' * 64}  system.img\n"):
+            with self.subTest(text=text):
+                (folder / "system.img.sha256").write_text(text)
+                self.assertEqual(install.make_plan(tools, folder, None)["verdict"], install.STOP)
+        (folder / "system.img.sha256").unlink()
+        self.assertEqual(install.make_plan(tools, folder, None)["verdict"], install.STOP)
+
+    def test_only_whole_ext4_images_are_read(self):
+        bad = {"an Android boot image": b"ANDROID!" + bytes(4096),
+               "a cut-off sparse image": sparse(32, cut=2),
+               "a sparse image with bytes after its last chunk": sparse(32, extra=b"\0"),
+               "a header that disagrees with its chunks": sparse(32, header_blocks=33),
+               "a file system other than ext4": sparse(32, magic=0x1234)}
+        folder = self.folder({}, hashes=False)
+        for what, data in bad.items():
+            with self.subTest(what):
+                (folder / "x.img").write_bytes(data)
+                with self.assertRaises(ValueError):
+                    install.image_layout(folder / "x.img")
+        result = self.plan({"system.img": sparse(32, file_system_blocks=40), "userdata.img": USERDATA})
+        self.assertEqual(result["verdict"], install.STOP)
+        raw = bytes(1024) + superblock(4) + bytes(4 * BLOCK - 2048)
+        (folder / "raw.img").write_bytes(raw)
+        self.assertEqual(install.image_layout(folder / "raw.img"),
+                         {"format": "raw", "unpackedBytes": 4 * BLOCK, "fileSystemBytes": 4 * BLOCK,
+                          "afterFileSystem": None})
+
+    def test_only_dm_verity_may_follow_the_system_file_system(self):
+        result = self.plan({"system.img": sparse(32, file_system_blocks=30, tail=VERITY), "userdata.img": USERDATA})
+        self.assertEqual(result["verdict"], install.READY, result)
+        self.assertEqual(result["images"]["system"]["afterFileSystem"], "verity")
+        self.assertTrue(any(f"{2 * BLOCK} bytes of dm-verity" in note for note in result["notes"]), result)
+        for tail in (b"ANDROID!", None):
+            with self.subTest(tail=tail):
+                image = sparse(32, file_system_blocks=30, tail=tail) if tail else sparse(32, file_system_blocks=30)
+                result = self.plan({"system.img": image, "userdata.img": USERDATA})
+                self.assertEqual(result["verdict"], install.STOP, result)
+        result = self.plan({"system.img": SYSTEM,
+                            "userdata.img": sparse(USERDATA_BLOCKS + 2, USERDATA_BLOCKS, tail=VERITY)})
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertIn("userdata.sh never writes", result["stops"][0])
+
+    def test_system_must_fit_its_partition(self):
+        result = self.plan(sizes={"system": "0x1f000", "userdata": f"{USERDATA_PARTITION:x}"})
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertIn("system partition", result["stops"][0])
+
+    def test_userdata_is_built_for_this_partition_with_the_footer_left_free(self):
+        result = self.plan(sizes={"system": "0x40000", "userdata": f"{2 * USERDATA_PARTITION:#x}"})
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertIn("another partition", result["stops"][0])
+        whole = self.plan({"system.img": SYSTEM, "userdata.img": sparse(USERDATA_PARTITION // BLOCK)})
+        self.assertEqual(whole["verdict"], install.STOP)
+
+    def test_without_userdata_it_gives_the_size_to_build_it_in_hex(self):
+        result = self.plan({"system.img": SYSTEM})
+        self.assertEqual(result["verdict"], install.INCOMPLETE)
+        self.assertEqual(result["writes"], [])
+        self.assertIn("./userdata.sh 0x40000000 adbkey.pub userdata.img", result["userdataCommand"])
+
+    def test_without_the_unit_in_fastboot_only_the_images_are_checked(self):
+        for unit in ({"fastboot": ""}, {"fastboot": "", "adb": f"{SERIAL}\tdevice\n"}):
+            with self.subTest(unit=unit):
+                result = self.plan(**unit)
+                self.assertEqual(result["verdict"], install.INCOMPLETE, result)
+                self.assertEqual(result["writes"], [])
+                self.assertEqual(set(result["images"]), {"system", "userdata"})
+
+    def test_a_size_the_bootloader_does_not_give_is_a_stop(self):
+        result = self.plan(sizes={"system": "0x40000"})
+        self.assertEqual(result["verdict"], install.STOP)
+        self.assertEqual(result["writes"], [])
 
 
 if __name__ == "__main__":

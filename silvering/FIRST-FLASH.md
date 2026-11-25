@@ -109,18 +109,23 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 3. The userdata image is built during the session, once fastboot has given the
    partition size, with the flashing computer's own public key
    (`%USERPROFILE%\.android\adbkey.pub`, the half of the key that this `adb`
-   uses) and the unit's own labels:
+   uses) and the unit's own labels. Give the size with `0x`, as
+   `install.py plan` prints it (CAF's bootloader may send it in hex without
+   `0x`, which `userdata.sh` would read as decimal); the script writes
+   `userdata.img.sha256` beside the image:
 
    ```sh
    FILE_CONTEXTS=~/silvering/units/<profile>/ramdisk/file_contexts \
-       ./userdata.sh <partition-size:userdata> adbkey.pub userdata.img
+       ./userdata.sh <partition-size:userdata, 0x...> adbkey.pub userdata.img
    ```
 
 4. Copy `system.img` and, in the session, the new `userdata.img` to the
-   flashing computer, each with its sha256, into an empty folder, and check
-   **both** hashes there before the first write. Their unpacked sizes come
-   from the images themselves (`simg2img`, or the sparse header's
-   `total_blks × blk_sz`).
+   flashing computer, each with its sha256 file, into an empty folder, and
+   check **both** hashes there before the first write:
+   `python tools\install.py plan --images <folder>` hashes each image,
+   walks every chunk of the sparse file (a cut-off copy is refused), checks
+   that each holds ext4 of the size it unpacks to, and refuses a folder that
+   holds anything else, so no other image can be written by mistake.
 
 ## In the session
 
@@ -185,9 +190,15 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    ```
 
    **Stop** if `system.img`, unpacked, is larger than the system partition.
+   `python tools\install.py plan --images <folder> --serial <serial>` asks
+   the bootloader exactly these two questions and nothing else, checks the
+   fastboot client's version and the images (Before the cable, step 4), and
+   prints the `userdata.sh` command with the size in hex.
 4. **userdata image** from the size just read; copy and check it (Before the
    cable, steps 3 and 4). Both images are on the flashing computer with
-   matching hashes before anything is written.
+   matching hashes before anything is written: `install.py plan` answers
+   `ready` (exit 0) only then, with a userdata file system that leaves the
+   partition's last 16 KiB free, and lists the two writes below.
 5. **Write, one command at a time, each only after the command as a whole has
    ended with `Finished` and no `FAILED`:**
 
@@ -215,7 +226,12 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    until it has succeeded. Then `fastboot -s <serial> reboot`.
 
    Never `flash boot`, `aboot`, `recovery`, `erase`, `format`, `-w` or `oem`.
-   Write down each command and its answer.
+   Write down each command and its answer. A unit whose `boot` has been
+   overwritten stays in fastboot: its locked bootloader starts only a boot
+   image signed for the board, which this project neither has nor hosts (an
+   owner who wrote `boot` while trying other builds has reported exactly
+   that). The installer builds no write but these two (`flash_arguments` in
+   `tools/install.py`).
 6. **First boot.** `adb -s <serial> wait-for-device`, `adb -s <serial>
    get-state` answers `device` (not `unauthorized`), and wait until
    `adb -s <serial> shell getprop sys.boot_completed` is `1` and
