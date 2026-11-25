@@ -6,6 +6,8 @@ import io
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -463,6 +465,50 @@ class CheckSignersTest(unittest.TestCase):
         code, _, err = self.check()
         self.assertEqual(code, 1)
         self.assertIn("names AOSP's public keys: testkey", err)
+
+
+@unittest.skipIf(os.name == "nt" or not shutil.which("bash"), "check-ext4.sh runs in a POSIX bash")
+class CheckExt4(unittest.TestCase):
+    """check-ext4.sh with a stand-in e2fsck that prints a given report (in Swedish unless LC_ALL=C)."""
+
+    HEAD = "e2fsck 1.47.0 (5-Feb-2023)\n" + "".join(
+        f"Pass {n}: Checking {what}\n" for n, what in enumerate(
+            ("inodes, blocks, and sizes", "directory structure", "directory connectivity", "reference counts",
+             "group summary information"), start=1))
+    PADDING = "Padding at end of inode bitmap is not set. Fix? no\n"
+    TAIL = ("\n\n/w/userdata.raw: ********** WARNING: Filesystem still has errors **********\n\n"
+            "/w/userdata.raw: 16/327680 files (0.0% non-contiguous), 43615/1310716 blocks\n")
+
+    def check(self, report, status):
+        folder = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        stub = folder / "e2fsck"
+        stub.write_text('#!/usr/bin/env bash\n'
+                        '[ "$LC_ALL" = C ] || { printf "Pass 5: Kontrollerar\\nFel? nej\\n"; exit 4; }\n'
+                        'cat "$REPORT"; exit "$STATUS"\n')
+        stub.chmod(0o755)
+        (folder / "report").write_text(report)
+        environment = {**os.environ, "E2FSCK": str(stub), "REPORT": str(folder / "report"), "STATUS": str(status),
+                       "LC_ALL": "sv_SE.UTF-8"}
+        return subprocess.run(["bash", str(REPO / "silvering" / "check-ext4.sh"), "/w/userdata.raw"],
+                              env=environment, capture_output=True, text=True).returncode
+
+    def test_a_clean_report_passes(self):
+        self.assertEqual(self.check(self.HEAD + "/w/userdata.raw: 16/327680 files (0.0% non-contiguous), "
+                                    "43615/1310716 blocks\n", 0), 0)
+
+    def test_the_bitmap_padding_alone_passes_in_any_locale(self):
+        self.assertEqual(self.check(self.HEAD + self.PADDING + self.TAIL, 4), 0)
+
+    def test_any_other_finding_fails(self):
+        other = "Free blocks count wrong for group #0 (31, counted=32).\nFix? no\n"
+        self.assertEqual(self.check(self.HEAD + self.PADDING + other + self.TAIL, 4), 1)
+        self.assertEqual(self.check(self.HEAD + other + self.TAIL, 4), 1)
+
+    def test_a_report_cut_short_or_another_status_fails(self):
+        self.assertEqual(self.check(self.HEAD.replace("Pass 5: Checking group summary information\n", "")
+                                    + self.PADDING + self.TAIL, 4), 1)
+        self.assertEqual(self.check(self.HEAD + self.PADDING + self.TAIL, 8), 1)
 
 
 if __name__ == "__main__":

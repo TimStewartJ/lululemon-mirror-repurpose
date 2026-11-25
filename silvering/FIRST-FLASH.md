@@ -124,10 +124,14 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    check **both** hashes there before the first write:
    `python tools\install.py plan --images <folder>` hashes each image and
    reads it through the same open file, walks every chunk of the sparse file
-   (a cut-off copy is refused), checks that each holds ext4 with a geometry a
-   kernel would mount (`system` may carry the build's dm-verity metadata and
-   hash tree after it, `userdata` nothing), and refuses a folder that holds
-   anything else, so no other image can be written by mistake.
+   (a cut-off copy is refused), checks that each is a whole ext4 image with a
+   consistent superblock (`system` may carry the build's dm-verity metadata
+   and hash tree after it, `userdata` nothing), and refuses a folder that
+   holds anything else, so no other image can be written by mistake. That
+   the file systems are sound was shown when they were built, before their
+   hashes were written (`stage-image.sh` reads every file of `system.img`
+   back with debugfs; `userdata.sh` runs `check-ext4.sh`, e2fsck -fn); the
+   hashes tie these copies to those images.
 
 ## In the session
 

@@ -639,15 +639,20 @@ class Plan(unittest.TestCase):
         powershell = shutil.which("pwsh") or shutil.which("powershell")
         if not powershell:
             self.skipTest("no PowerShell to parse the command with")
+        # PowerShell parses the line and compares what it would run with the path given (exit 0 when equal).
         script = ("$e = $null; $t = $null; $a = [System.Management.Automation.Language.Parser]::ParseInput("
                   "$env:RENDERED, [ref]$t, [ref]$e); if ($e.Count) { exit 3 }; "
-                  "$c = $a.EndBlock.Statements[0].PipelineElements[0]; "
-                  "$c.CommandElements | ForEach-Object { $_.Extent.Text }")
-        parsed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", script], text=True,
-                                capture_output=True, env={**os.environ, "RENDERED": rendered}, timeout=60)
-        self.assertEqual(parsed.returncode, 0, parsed.stderr)
-        self.assertEqual(parsed.stdout.split("\n")[:6],
-                         ["'C:\\Program Files\\it''s\\fastboot.exe'", "-s", "$serial", "flash", "system", "system.img"])
+                  "$c = $a.EndBlock.Statements[0].PipelineElements[0]; $x = $c.CommandElements; "
+                  "if ($c.InvocationOperator -ne 'Ampersand' -or $x.Count -ne 6 -or $x[0].Value -cne $env:EXPECTED "
+                  "-or (($x[1..5] | ForEach-Object { $_.Extent.Text }) -join ' ') -cne "
+                  "'-s $serial flash system system.img') { exit 4 }")
+        for path in (r"C:\Program Files\it's\fastboot.exe", "C:\\Users\\O\u2019Brien \u2018x\u201b\\fastboot.exe"):
+            with self.subTest(path=path):
+                rendered = install.render([path, *write[1:]], "powershell")
+                parsed = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", script], text=True,
+                                        capture_output=True, env={**os.environ, "RENDERED": rendered, "EXPECTED": path},
+                                        timeout=60)
+                self.assertEqual(parsed.returncode, 0, parsed.stderr)
 
     def test_a_folder_that_changes_before_ready_is_a_stop(self):
         tools, _ = self.unit()
