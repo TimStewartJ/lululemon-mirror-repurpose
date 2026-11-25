@@ -829,7 +829,8 @@ def render(arguments: list[str], shell: str) -> str:
         def word(argument: str) -> str:
             if argument == SERIAL_PLACEHOLDER:
                 return "$serial"
-            return argument if re.fullmatch(r"[A-Za-z0-9._-]+", argument) else "'" + argument.replace("'", "''") + "'"
+            return argument if re.fullmatch(r"[A-Za-z0-9._-]+", argument) \
+                else "'" + re.sub("(['\u2018\u2019\u201a\u201b])", r"\1\1", argument) + "'"
         return "& " + " ".join(word(argument) for argument in arguments)
     return " ".join('"$SERIAL"' if argument == SERIAL_PLACEHOLDER else shlex.quote(argument)
                     for argument in arguments)

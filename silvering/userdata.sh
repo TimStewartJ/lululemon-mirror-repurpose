@@ -55,8 +55,6 @@ product_out=$root/src/$(sed 's|^/src/||' "$out_marker")
 host_bin=$root/src/out/host/linux-x86/bin
 [ -x "$host_bin/make_ext4fs" ] || { echo "no make_ext4fs in $host_bin" >&2; exit 1; }
 [ -x "$host_bin/simg2img" ] || { echo "no simg2img in $host_bin" >&2; exit 1; }
-e2fsck=$(command -v e2fsck || command -v /sbin/e2fsck || command -v /usr/sbin/e2fsck) \
-    || { echo "e2fsck (e2fsprogs) is needed to check the image" >&2; exit 1; }
 contexts=${FILE_CONTEXTS:-$product_out/root/file_contexts}
 [ -f "$contexts" ] || { echo "no file_contexts at $contexts" >&2; exit 1; }
 grep -q '^/data/misc/adb(' "$contexts" || { echo "$contexts has no label for /data/misc/adb" >&2; exit 1; }
@@ -145,18 +143,9 @@ docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
         -S /work/file_contexts -C /work/fs_config /work/out/userdata.img /work/stage
 
 # Read the image back before it is hashed: the hash is what later vouches for it.
-# make_ext4fs leaves the padding after each group's inodes in the inode bitmap clear;
-# e2fsck reports that, which the kernel never reads, and nothing else on a sound image.
 docker run --rm -v "$root/src/out/host:/host:ro" -v "$work:/work" "$image" \
     /host/linux-x86/bin/simg2img /work/out/userdata.img /work/out/userdata.raw
-status=0
-"$e2fsck" -fn "$work/out/userdata.raw" > "$work/e2fsck.log" 2>&1 || status=$?
-problems=$(grep -E '\? no$' "$work/e2fsck.log" | grep -vxF 'Padding at end of inode bitmap is not set. Fix? no' || true)
-if [ "$status" -ne 0 ] && { [ "$status" -ne 4 ] || [ -n "$problems" ] || ! grep -q '^Pass 5: ' "$work/e2fsck.log"; }; then
-    echo "the new userdata image does not pass e2fsck -fn (exit $status):" >&2
-    tail -n 20 "$work/e2fsck.log" >&2
-    exit 1
-fi
+bash "$here/check-ext4.sh" "$work/out/userdata.raw"
 rm -f "$work/out/userdata.raw"
 
 mv "$work/out/userdata.img" "$out"
