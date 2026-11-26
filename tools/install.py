@@ -1219,9 +1219,13 @@ class Journal:
         self.state = UnitState()
         new_folder = not path.parent.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
-        hand_back(path.parent)
-        self.lock = path.with_name(path.name + ".lock").open("a+b")
-        hand_back(self.lock.name)
+        if new_folder:
+            hand_back(path.parent)
+        lock_path = path.with_name(path.name + ".lock")
+        new_lock = not lock_path.exists()
+        self.lock = lock_path.open("a+b")
+        if new_lock:
+            hand_back(self.lock.fileno())
         try:
             lock(self.lock)
         except OSError:
@@ -1238,9 +1242,13 @@ class Journal:
                 if isinstance(entry, dict) and isinstance(entry.get("event"), str):
                     self.state.apply(entry)
                 elif line.strip():
+                    # Whatever this line was, it may have been a write of system that did not finish:
+                    # count it as one, until a later installation completes.
                     self.damaged += 1
+                    self.state.apply({"event": "write", "partition": WRITABLE[0]})
             self.stream = path.open("a", encoding="utf-8")
-            hand_back(path)
+            if new_file:
+                hand_back(self.stream.fileno())
             if new_file:
                 # The file's name must survive a power cut as surely as its lines (Linux fsync(2)).
                 sync_folder(path.parent)
@@ -1312,14 +1320,24 @@ def invoking_home(environ=os.environ, euid: int | None = None, getpwnam=None) ->
     return pathlib.Path.home()
 
 
-def hand_back(path) -> None:
-    """Under sudo, gives a file the installer made back to the person who ran it, so that a later run
-    without sudo can still write the unit's journal."""
-    if hasattr(os, "geteuid") and os.geteuid() == 0 and os.environ.get("SUDO_UID"):
-        try:
-            os.chown(path, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", "-1")))
-        except (OSError, ValueError):
-            pass
+def hand_back(target) -> None:
+    """Under sudo, gives a file or folder this run has just made (an open descriptor, or a folder's
+    path) back to the person who ran sudo, so that a later run without sudo can still write the
+    unit's journal. Never used on anything that existed before."""
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0 and os.environ.get("SUDO_UID")):
+        return
+    try:
+        uid, gid = int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", "-1"))
+        if isinstance(target, int):
+            os.fchown(target, uid, gid)
+        else:
+            descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fchown(descriptor, uid, gid)
+            finally:
+                os.close(descriptor)
+    except (OSError, ValueError):
+        pass
 
 
 def sync_folder(folder: pathlib.Path) -> None:
@@ -1340,14 +1358,22 @@ def default_journal(serial: str) -> pathlib.Path:
     return invoking_home() / ".mirror-install" / f"flash-{hashlib.sha256(serial.encode()).hexdigest()[:16]}.jsonl"
 
 
-def fastboot_running() -> bool | None:
+def fastboot_running(posix: bool | None = None) -> bool | None:
     """Whether a fastboot program is running on this computer (any account), such as one left
-    running when an earlier run was stopped; None if that cannot be told."""
-    if os.name == "nt":
-        code, out, _ = identify.run_tool(["tasklist", "/FO", "CSV", "/NH", "/FI", "IMAGENAME eq fastboot.exe"])
-        return any(line.lower().startswith('"fastboot.exe"') for line in out.splitlines()) if code == 0 else None
-    code, _, _ = identify.run_tool(["pgrep", "-x", "fastboot"])
-    return {0: True, 1: False}.get(code)
+    running when an earlier run was stopped; None if that cannot be told (the lister is missing,
+    fails or times out). Only a lister that ran and found none answers False."""
+    posix = os.name != "nt" if posix is None else posix
+    command = ["pgrep", "-x", "fastboot"] if posix else \
+        ["tasklist", "/FO", "CSV", "/NH", "/FI", "IMAGENAME eq fastboot.exe"]
+    try:
+        done = subprocess.run(command, text=True, capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if posix:
+        return {0: True, 1: False}.get(done.returncode)
+    if done.returncode != 0:
+        return None
+    return any(line.lower().startswith('"fastboot.exe"') for line in done.stdout.splitlines())
 
 
 def journal_problem(journal: pathlib.Path, folder: pathlib.Path) -> str | None:
@@ -1465,29 +1491,20 @@ def report(journal: Journal, sent_write: bool, restart: str | None, error: str |
     stay = ("Keep the unit in fastboot and run this stage again (it writes system, then userdata). If the "
             "cable came out, plug it back in; if the unit has left fastboot, power it off and hold VOL- while "
             "powering it on, so that it comes back to fastboot without starting the unfinished system.")
-    damaged = (f"{journal.damaged} line(s) of the journal could not be read; they may have recorded a write "
-               "that did not finish, so the journal cannot show the unit unchanged") if journal.damaged else None
-    clean_text = None
     if all(state is None for state in held.values()) or (restarted and restart != RESTARTED
                                                          and held["system"] == held["userdata"] == WRITTEN):
-        if damaged:
-            code = WRITE_FAILED
-            text = (f"This run wrote nothing it can vouch for{why}.{said} {damaged}: {stay} If reading the journal "
-                    "shows that no write of this unit was cut off, move it aside before the next run.")
-        elif restarted:
-            code = EXIT_CODES[STOP]
+        code = EXIT_CODES[STOP]
+        if restarted:
             text = (f"This run wrote nothing{why}. The journal shows that the last installation wrote system and "
                     f"userdata and restarted the unit.{said}")
         elif sent_write:
-            code = EXIT_CODES[STOP]
             text = (f"Nothing was written: fastboot stopped before writing{why}.{said} The journal records no "
                     "unfinished write on this unit, so it is as it was (unless it was written outside this "
                     "installer). If the bootloader refused the write, this unit cannot be flashed this way: "
                     f"restart it with `{restart_command}` and Stop (silvering/FIRST-FLASH.md, In the session, "
                     "step 5). If the cable or the transfer failed, this stage may be run again.")
         else:
-            code, text = EXIT_CODES[STOP], f"Nothing was written{why}. The journal records no write on this unit."
-        clean_text = text
+            text = f"Nothing was written{why}. The journal records no write on this unit."
     elif UNKNOWN in held.values():
         partial = " and ".join(partition for partition in WRITABLE if held[partition] == UNKNOWN)
         code, text = WRITE_FAILED, f"{partial} may hold part of an image{why}.{said} {stay}"
@@ -1506,8 +1523,10 @@ def report(journal: Journal, sent_write: bool, restart: str | None, error: str |
                 f"Check the cable, then `fastboot devices`: if it lists the unit, restart it with `{restart_command}`. "
                 "If `adb devices` lists it instead, it is starting. If neither lists it, plug the cable in again "
                 "and look again before holding the power button.")
-    if damaged and clean_text is None:
-        text += f" {journal.damaged} line(s) of the journal could not be read and were passed over."
+    if journal.damaged:
+        text += (f" {journal.damaged} line(s) of the journal could not be read; each counts as a write of system "
+                 "that may not have finished, until a later installation completes. If reading the journal shows "
+                 "that no write of this unit was cut off there, move it aside before the next run.")
     if journal.failed:
         text += f" The journal could not be completed, so it lacks this run's last steps: {journal.path}."
         if code == 0:

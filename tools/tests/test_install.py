@@ -737,6 +737,7 @@ class Flash(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.running = False
+        self.fastboot_running = install.fastboot_running
         running = unittest.mock.patch.object(install, "fastboot_running", side_effect=lambda: self.running)
         running.start()
         self.addCleanup(running.stop)
@@ -1137,6 +1138,30 @@ class Flash(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.replay(text), (states, was_restarted, 0))
         self.assertEqual(self.replay("[1, 2]\n" + lines(write))[1:], (False, 1))
+        # Damage voids what came before it, and a later complete installation supersedes it.
+        self.assertEqual(self.replay(lines(*written) + "torn\n")[0],
+                         {"system": install.UNKNOWN, "userdata": None})
+        self.assertEqual(self.replay(lines(*written, *restarted) + "torn\n")[:2],
+                         ({"system": install.UNKNOWN, "userdata": None}, False))
+        self.assertEqual(self.replay("torn\n" + lines(*written, *restarted)),
+                         ({"system": install.WRITTEN, "userdata": install.WRITTEN}, True, 1))
+
+    def test_only_a_lister_that_ran_and_found_none_says_no_fastboot_is_running(self):
+        def run(result):
+            def fake(command, **options):
+                if isinstance(result, BaseException):
+                    raise result
+                return subprocess.CompletedProcess(command, result[0], result[1], "")
+            return unittest.mock.patch.object(install.subprocess, "run", fake)
+
+        cases = [(True, FileNotFoundError("pgrep"), None), (True, subprocess.TimeoutExpired("pgrep", 60), None),
+                 (True, (2, ""), None), (True, (1, ""), False), (True, (0, "4242\n"), True),
+                 (False, OSError("tasklist"), None), (False, (1, ""), None),
+                 (False, (0, "INFO: No tasks are running which match the specified criteria.\n"), False),
+                 (False, (0, '"fastboot.exe","4242","Console","1","9,000 K"\n'), True)]
+        for posix, result, expected in cases:
+            with self.subTest(posix=posix, result=result), run(result):
+                self.assertIs(self.fastboot_running(posix), expected)
 
     def test_the_default_journal_is_one_per_unit_and_does_not_show_its_serial(self):
         path = self.default_journal(SERIAL)
@@ -1288,7 +1313,8 @@ class Flash(unittest.TestCase):
         self.answers["system"] = (1, REFUSED, "")
         code, printed, _ = self.flash()
         self.assertEqual(code, install.WRITE_FAILED, printed)
-        self.assertIn("cannot show the unit unchanged", printed)
+        self.assertIn("could not be read", printed)
+        self.assertIn("system may hold part of an image", printed)
         self.assertNotIn("restart it with", printed)
 
     def test_another_fastboot_program_keeps_the_stage_from_starting_or_going_on(self):
