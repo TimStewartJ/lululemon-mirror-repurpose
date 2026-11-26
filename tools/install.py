@@ -1525,8 +1525,8 @@ def report(journal: Journal, sent_write: bool, restart: str | None, error: str |
                 "and look again before holding the power button.")
     if journal.damaged:
         text += (f" {journal.damaged} line(s) of the journal could not be read; each counts as a write of system "
-                 "that may not have finished, until a later installation completes. If reading the journal shows "
-                 "that no write of this unit was cut off there, move it aside before the next run.")
+                 "that may not have finished, until a later installation completes. Keep the journal: it is the "
+                 "only record of what earlier runs left on the unit.")
     if journal.failed:
         text += f" The journal could not be completed, so it lacks this run's last steps: {journal.path}."
         if code == 0:
