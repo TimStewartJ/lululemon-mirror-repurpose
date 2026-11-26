@@ -6,14 +6,16 @@
   --serial <serial>`) makes the runbook's two writes: it runs the plan again
   and needs `ready` with only this unit in fastboot, writes nothing until a
   person at the terminal types exactly `write system and userdata`, writes
-  `system` and then `userdata` from hashed private copies of the checked
-  images with the unit checked again before each, reads each result from
-  fastboot's own words (written, unchanged or unknown), restarts the unit
-  only after both are written, and keeps a journal of every command and
-  answer beside the images folder. Its advice after a failure follows what
-  is known of each partition, including earlier runs in the journal. Tried
-  with the real fastboot 35.0.1 client against a stand-in bootloader; it has
-  not yet written a real unit.
+  `system` and then `userdata` from hashed, read-back private copies of the
+  checked images with the unit checked again before each, reads each result
+  from fastboot's own words (written, unchanged or unknown), and restarts
+  the unit only after both are written. Ctrl-C never interrupts a write: it
+  stops the stage before its next step. Each unit has one journal on the
+  computer (`~/.mirror-install/`) of every command and answer; every run
+  replays it, so its advice and exit code account for what earlier runs
+  left on the unit, and a second run for the same unit is refused while one
+  is working. Tried with the real fastboot 35.0.1 client against a stand-in
+  bootloader; it has not yet written a real unit.
 
 - Tell before the first flash whether the kernel guards the chip against
   heat by itself, since Silvering has no `thermal-engine`. The device

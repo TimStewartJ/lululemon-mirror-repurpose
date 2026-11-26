@@ -726,13 +726,22 @@ RESTARTED = step("Rebooting", "OKAY [  0.003s]") + "Finished. Total time: 0.054s
 class Flash(unittest.TestCase):
     folder = Plan.folder
     unit = Plan.unit
+    STAY = "Keep the unit in fastboot"
 
     def setUp(self):
+        # Nothing here may touch the real per-unit journal in the home folder.
+        self.default_journal = install.default_journal
+        install.SILENCED.clear()
+        patcher = unittest.mock.patch.object(install, "default_journal",
+                                             side_effect=AssertionError("the home journal was used"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.images = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
         self.journal = self.images.parent / f"{self.images.name}-journal.jsonl"
-        self.addCleanup(lambda: self.journal.unlink(missing_ok=True))
+        self.addCleanup(lambda: [path.unlink(missing_ok=True)
+                                 for path in self.images.parent.glob(f"{self.images.name}-journal*")])
         self.tools, _ = self.unit()
-        self.listing = f"{SERIAL}\tfastboot\n"
+        self.listing = f"{SERIAL}\t fastboot\n"
         answer = self.tools.runner
         self.tools.runner = lambda arguments: (0, self.listing, "") \
             if arguments[0] == "fastboot" and arguments[1:] == ["devices"] else answer(arguments)
@@ -749,10 +758,10 @@ class Flash(unittest.TestCase):
         self.assertEqual(sorted(entry.name for entry in folder.iterdir()), ["system.img", "userdata.img"])
         self.assertEqual((folder / "system.img").read_bytes(), SYSTEM)
         name = arguments[4] if arguments[3] == "flash" else arguments[3]
-        self.during_write.get(name, lambda: None)()
+        self.during_write.pop(name, lambda: None)()
         return self.answers[name]
 
-    def flash(self, typed=install.CONFIRMATION):
+    def flash(self, typed=install.CONFIRMATION, interactive=True):
         prompts = []
 
         def confirm(prompt):
@@ -763,7 +772,7 @@ class Flash(unittest.TestCase):
 
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(printed):
-            code = install.flash(self.tools, self.writer, self.images, SERIAL, self.journal, confirm)
+            code = install.flash(self.tools, self.writer, self.images, SERIAL, self.journal, confirm, interactive)
         return code, printed.getvalue(), prompts
 
     def entries(self):
@@ -771,11 +780,29 @@ class Flash(unittest.TestCase):
             if self.journal.exists() else []
 
     def fresh_journal(self):
-        """A journal without earlier writes, so a scenario is judged on its own run."""
-        self.journal = self.images.parent / f"{self.images.name}-journal-{len(self.sent)}-{id(object())}.jsonl"
-        journal = self.journal
-        self.addCleanup(lambda: journal.unlink(missing_ok=True))
+        """A journal of a unit never flashed, so a scenario is judged on its own run."""
+        self.journal = self.images.parent / f"{self.images.name}-journal-{len(self.entries())}-{id(object())}.jsonl"
         self.sent.clear()
+
+    def replay(self, text):
+        path = self.images.parent / f"{self.images.name}-journal-replay.jsonl"
+        path.write_text(text, encoding="utf-8")
+        journal = install.Journal(path, SERIAL)
+        journal.release()
+        return journal.state.partitions, journal.state.restarted, journal.damaged
+
+    def interrupt_when_recording(self, event, partition=None):
+        """Ctrl-C right after the journal records ``event``."""
+        record = install.Journal.record
+
+        def recording_then_interrupted(journal, name, **fields):
+            record(journal, name, **fields)
+            if name == event and fields.get("partition") == partition:
+                signal.raise_signal(signal.SIGINT)
+
+        patcher = unittest.mock.patch.object(install.Journal, "record", recording_then_interrupted)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_system_then_userdata_then_a_restart_after_the_typed_words(self):
         code, printed, prompts = self.flash()
@@ -797,6 +824,7 @@ class Flash(unittest.TestCase):
         self.assertFalse(self.folders[0].exists(), "the private copies are removed afterwards")
         self.assertEqual(sorted(entry.name for entry in self.images.iterdir()),
                          ["system.img", "system.img.sha256", "userdata.img", "userdata.img.sha256"])
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
 
     def test_nothing_is_written_without_the_exact_words(self):
         for typed in ("", "yes", "write system", "WRITE SYSTEM AND USERDATA", f" {install.CONFIRMATION}",
@@ -817,18 +845,35 @@ class Flash(unittest.TestCase):
         self.assertEqual((prompts, self.sent), ([], []))
         self.assertNotIn("flash system", printed)
 
+    def test_without_fastboot_it_stops_and_still_says_how_to_restart(self):
+        self.tools.fastboot_path = None
+        code, printed, prompts = self.flash()
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+        self.assertEqual((prompts, self.sent), ([], []))
+
     def test_another_fastboot_unit_stops_it_before_the_question_and_before_each_write(self):
-        self.listing = f"{SERIAL}\tfastboot\nother42\tfastboot\n"
+        self.listing = f"{SERIAL}\t fastboot\nother42\t fastboot\n"
         code, printed, prompts = self.flash()
         self.assertEqual(code, install.EXIT_CODES[install.STOP])
         self.assertEqual((prompts, self.sent), ([], []))
         self.assertNotIn("other42", self.journal.read_text(encoding="utf-8"))
 
-        self.listing = f"{SERIAL}\tfastboot\n"
-        self.during_write["system"] = lambda: setattr(self, "listing", f"{SERIAL}\tfastboot\nother42\tfastboot\n")
+        self.fresh_journal()
+        self.listing = f"{SERIAL}\t fastboot\n"
+        self.during_write["system"] = lambda: setattr(self, "listing", f"{SERIAL}\t fastboot\nother42\t fastboot\n")
         code, printed, _ = self.flash()
         self.assertEqual(code, install.WRITE_FAILED, printed)
         self.assertEqual([arguments[4] for arguments in self.sent], ["system"])
+
+    def test_any_other_row_in_fastboots_list_counts_as_another_device(self):
+        for extra in ("no permissions (missing udev rules? user is in the plugdev group); see "
+                      "[http://developer.android.com/tools/device.html]\t fastboot",
+                      "other42\t Android Bootloader Interface"):
+            with self.subTest(extra=extra):
+                self.listing = f"{SERIAL}\t fastboot\n{extra}\n"
+                code, printed, prompts = self.flash()
+                self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+                self.assertEqual((prompts, self.sent), ([], []))
 
     def test_a_refused_first_write_leaves_the_unit_unchanged_and_is_not_restarted(self):
         self.answers["system"] = (1, REFUSED, "")
@@ -837,24 +882,16 @@ class Flash(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)
         self.assertIn("Nothing was written", printed)
         self.assertIn("Partition flashing is not allowed", printed)
-        self.assertIn("reboot", printed)
+        self.assertIn("restart it with", printed)
         self.assertEqual(self.entries()[-1]["outcome"], install.UNCHANGED)
-
-    def test_after_an_unfinished_write_a_later_refusal_does_not_say_restart(self):
-        self.answers["system"] = (1, CUT_OFF, "")
-        self.assertEqual(self.flash()[0], install.WRITE_FAILED)
-        self.answers["system"] = (1, REFUSED, "")
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.WRITE_FAILED, printed)
-        self.assertIn("do not restart", printed)
-        self.assertNotIn("restart it with", printed)
 
     def test_a_system_write_cut_off_after_a_piece_stays_in_fastboot(self):
         self.answers["system"] = (1, CUT_OFF, "")
         code, printed, _ = self.flash()
         self.assertEqual(code, install.WRITE_FAILED)
         self.assertEqual([arguments[3:5] for arguments in self.sent], [["flash", "system"]])
-        self.assertIn("do not restart", printed)
+        self.assertIn(self.STAY, printed)
+        self.assertNotIn("restart it with", printed)
 
     def test_a_failed_userdata_write_is_not_followed_by_a_restart(self):
         for answer in ((1, step("Sending 'userdata' (10652 KB)", "OKAY [  0.402s]")
@@ -862,12 +899,57 @@ class Flash(unittest.TestCase):
                        (1, step("Sending 'userdata' (10652 KB)", "FAILED (remote: 'data too large')")
                         + COMMAND_FAILED, "")):
             with self.subTest(answer=answer[1]):
-                self.sent.clear()
+                self.fresh_journal()
                 self.answers["userdata"] = answer
                 code, printed, _ = self.flash()
                 self.assertEqual(code, install.WRITE_FAILED, printed)
                 self.assertEqual([arguments[4] for arguments in self.sent], ["system", "userdata"])
-                self.assertIn("do not restart", printed)
+                self.assertIn(self.STAY, printed)
+
+    def test_after_an_unfinished_write_a_later_refusal_does_not_say_restart(self):
+        self.answers["system"] = (1, CUT_OFF, "")
+        self.assertEqual(self.flash()[0], install.WRITE_FAILED)
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertIn(self.STAY, printed)
+        self.assertNotIn("restart it with", printed)
+
+    def test_a_retry_from_another_folder_or_without_a_terminal_still_knows_the_unfinished_write(self):
+        self.answers["system"] = (1, CUT_OFF, "")
+        self.assertEqual(self.flash()[0], install.WRITE_FAILED)
+        self.images = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertNotIn("restart it with", printed)
+        (self.images / "userdata.img").unlink()
+        (self.images / "userdata.img.sha256").unlink()
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertIn(self.STAY, printed)
+        code, printed, prompts = self.flash(interactive=False)
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertEqual(prompts, [])
+        self.assertIn("terminal", printed)
+
+    def test_the_userdata_of_an_earlier_installation_does_not_count_for_a_new_one(self):
+        self.assertEqual(self.flash()[0], 0)
+        self.answers["userdata"] = (1, step("Sending 'userdata' (10652 KB)", "FAILED (remote: 'data too large')")
+                                    + COMMAND_FAILED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertIn("userdata is not", printed)
+
+    def test_a_retry_that_changes_nothing_keeps_what_the_last_installation_did(self):
+        self.assertEqual(self.flash()[0], 0)
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+        self.assertIn("restarted the unit", printed)
+        code, printed, _ = self.flash("no")
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+        self.assertIn("restarted the unit", printed)
 
     def test_the_bytes_written_are_the_bytes_checked(self):
         def change_after_the_check():
@@ -896,26 +978,60 @@ class Flash(unittest.TestCase):
         self.assertEqual(code, install.WRITE_FAILED, printed)
         self.assertEqual([arguments[4] for arguments in self.sent], ["system"])
 
-    def test_ctrl_c_during_a_write_stops_before_the_next_step(self):
+    def test_a_copy_that_does_not_read_back_as_written_is_never_sent(self):
+        chmod = pathlib.Path.chmod
+
+        def corrupting(path, mode, **options):
+            if path.name == "system.img" and path.parent != self.images:
+                with path.open("r+b") as image:
+                    image.write(b"\xff")
+            return chmod(path, mode, **options)
+
+        with unittest.mock.patch.object(pathlib.Path, "chmod", corrupting):
+            code, printed, prompts = self.flash()
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+        self.assertEqual(self.sent, [])
+        self.assertIn("read back", printed)
+        self.assertEqual(list(self.images.parent.glob(f".{self.images.name}-flashing-*")), [])
+
+    def test_ctrl_c_lets_the_step_under_way_finish_and_stops_before_the_next(self):
         self.during_write["system"] = lambda: signal.raise_signal(signal.SIGINT)
         code, printed, _ = self.flash()
         self.assertEqual(code, install.WRITE_FAILED, printed)
         self.assertEqual([arguments[4] for arguments in self.sent], ["system"])
+        self.assertIn("system is written and userdata is not (Ctrl-C)", printed)
 
         self.fresh_journal()
-        self.answers["system"] = (1, step("Sending sparse 'system' 1/2 (524284 KB)", "FAILED (interrupted)")
-                                  + COMMAND_FAILED, "")
+        self.answers["system"] = (1, REFUSED, "")
+        self.during_write["system"] = lambda: signal.raise_signal(signal.SIGINT)
         code, printed, _ = self.flash()
-        self.assertEqual(code, install.WRITE_FAILED, printed)  # never "unchanged" once interrupted
-        self.assertEqual(self.entries()[-1]["outcome"], install.UNKNOWN)
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)  # a whole refusal stays a refusal
 
         self.fresh_journal()
         self.answers["system"] = (0, SYSTEM_IN_PIECES, "")
-        self.during_write = {"userdata": lambda: signal.raise_signal(signal.SIGINT)}
+        self.during_write["userdata"] = lambda: signal.raise_signal(signal.SIGINT)
         code, printed, _ = self.flash()
         self.assertEqual(code, install.NOT_RESTARTED, printed)
         self.assertEqual([arguments[4] for arguments in self.sent], ["system", "userdata"])
         self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+
+    def test_ctrl_c_once_a_command_is_announced_lets_it_run_and_stops_after_it(self):
+        self.interrupt_when_recording("write", "userdata")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.NOT_RESTARTED, printed)
+        self.assertEqual([arguments[3:5] for arguments in self.sent], [["flash", "system"], ["flash", "userdata"]])
+
+    def test_fastboot_never_sees_ctrl_c(self):
+        popen = unittest.mock.MagicMock()
+        popen.return_value.stdout.read1.return_value = b""
+        popen.return_value.wait.return_value = 0
+        with unittest.mock.patch.object(install.subprocess, "Popen", popen):
+            install.stream_tool(["fastboot", "devices"], self.images)
+        options = popen.call_args.kwargs
+        if os.name == "nt":
+            self.assertTrue(options["creationflags"] & subprocess.CREATE_NEW_PROCESS_GROUP)
+        else:
+            self.assertTrue(options["start_new_session"])
 
     def test_whatever_goes_wrong_the_advice_follows_what_is_known(self):
         def fail():
@@ -937,22 +1053,144 @@ class Flash(unittest.TestCase):
         self.assertEqual(code, install.NOT_RESTARTED)
         self.assertIn("written", printed)
 
-    def test_the_journal_never_goes_in_the_images_folder(self):
+    def test_an_acknowledged_restart_is_checked_before_any_power_action(self):
+        self.answers["reboot"] = (1, step("Rebooting", "OKAY [  0.003s]") + "interrupted\n", "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.NOT_RESTARTED, printed)
+        self.assertIn("accepted the restart", printed)
+        self.assertIn("adb devices", printed)
+        self.assertEqual(install.restart_outcome(*self.answers["reboot"][:2]), install.ACKNOWLEDGED)
+
+    def test_a_unit_gone_from_fastboot_is_not_called_restarted(self):
+        self.during_write["userdata"] = lambda: setattr(self, "listing", "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.NOT_RESTARTED, printed)
+        self.assertEqual([arguments[3] for arguments in self.sent], ["flash", "flash"])
+        self.assertIn("Check the cable", printed)
+        self.assertNotIn("is already starting", printed)
+
+    def test_another_run_on_the_same_unit_is_refused(self):
+        held = install.Journal(self.journal, SERIAL)
+        try:
+            code, printed, prompts = self.flash()
+        finally:
+            held.release()
+        self.assertEqual(code, install.UNIT_HELD, printed)
+        self.assertEqual((prompts, self.sent), ([], []))
+        self.assertEqual(self.flash()[0], 0)
+
+    def test_the_journal_never_goes_in_the_images_folder_or_on_an_input(self):
         kept = self.journal
-        for journal in (self.images / "journal.jsonl", self.images):
+        os.link(self.images / "system.img.sha256", kept)
+        before = (self.images / "system.img.sha256").read_bytes()
+        for journal in (self.images / "journal.jsonl", self.images, kept):
             with self.subTest(journal=journal):
                 self.journal = journal
                 code, printed, prompts = self.flash()
-                self.assertEqual(code, install.EXIT_CODES[install.STOP])
+                self.assertEqual(code, install.UNIT_HELD)
                 self.assertEqual((prompts, self.sent), ([], []))
                 self.assertFalse((self.images / "journal.jsonl").exists())
+        self.assertEqual((self.images / "system.img.sha256").read_bytes(), before)
         self.journal = kept
 
-    def test_without_a_terminal_the_stage_refuses_to_run(self):
-        arguments = argparse.Namespace(images=str(self.images), serial=SERIAL, journal=None)
-        with contextlib.redirect_stderr(io.StringIO()), unittest.mock.patch("sys.stdin", io.StringIO("")):
-            self.assertEqual(install.command_flash(arguments), install.EXIT_CODES[install.STOP])
-        self.assertEqual(self.sent, [])
+    def test_a_journal_cut_off_mid_line_still_shows_the_unfinished_write(self):
+        self.journal.write_text(json.dumps({"event": "write", "partition": "system"}) + '\n{"event": "ans',
+                                encoding="utf-8")
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertIn("could not be read", printed)
+        lines = self.journal.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[1], '{"event": "ans')
+        self.assertTrue(all(json.loads(line) for line in lines[2:]))
+
+    def test_what_earlier_runs_left_is_read_from_the_journal(self):
+        def lines(*events):
+            return "\n".join(json.dumps(event) for event in events) + "\n"
+
+        write = {"event": "write", "partition": "system"}
+        written = [write, {"event": "answer", "partition": "system", "outcome": "written"},
+                   {"event": "write", "partition": "userdata"},
+                   {"event": "answer", "partition": "userdata", "outcome": "written"}]
+        restarted = [{"event": "restart"}, {"event": "answer", "outcome": "restarted"}]
+        cases = [
+            (lines(), {"system": None, "userdata": None}, False),
+            (lines(write), {"system": install.UNKNOWN, "userdata": None}, False),
+            (lines(write, {"event": "answer", "partition": "system", "outcome": "unchanged"}),
+             {"system": None, "userdata": None}, False),
+            (lines(write, {"event": "answer", "partition": "system", "outcome": "unknown"}, write,
+                   {"event": "answer", "partition": "system", "outcome": "unchanged"}),
+             {"system": install.UNKNOWN, "userdata": None}, False),
+            (lines(*written, *restarted), {"system": install.WRITTEN, "userdata": install.WRITTEN}, True),
+            (lines(*written, *restarted, write, {"event": "answer", "partition": "system", "outcome": "unchanged"}),
+             {"system": install.WRITTEN, "userdata": install.WRITTEN}, True),
+            (lines(*written, *restarted, write, {"event": "answer", "partition": "system", "outcome": "written"}),
+             {"system": install.WRITTEN, "userdata": None}, False),
+            (lines(*written, {"event": "restart"}, {"event": "answer", "outcome": "acknowledged"}),
+             {"system": install.WRITTEN, "userdata": install.WRITTEN}, False),
+        ]
+        for text, states, was_restarted in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.replay(text), (states, was_restarted, 0))
+        self.assertEqual(self.replay("[1, 2]\n" + lines(write))[1:], (False, 1))
+
+    def test_the_default_journal_is_one_per_unit_and_does_not_show_its_serial(self):
+        path = self.default_journal(SERIAL)
+        self.assertNotIn(SERIAL, str(path))
+        self.assertEqual(path, self.default_journal(SERIAL))
+        self.assertNotEqual(path, self.default_journal("other42"))
+
+    def test_without_a_terminal_the_stage_never_asks(self):
+        flash = unittest.mock.MagicMock(return_value=3)
+        arguments = argparse.Namespace(images=str(self.images), serial=SERIAL)
+        with unittest.mock.patch.object(install, "flash", flash), \
+                unittest.mock.patch.object(install, "default_journal", return_value=self.journal), \
+                unittest.mock.patch("sys.stdin", io.StringIO("")):
+            self.assertEqual(install.command_flash(arguments), 3)
+        self.assertFalse(flash.call_args.kwargs["interactive"])
+
+    def test_the_advice_is_given_even_when_the_window_cannot_show_it(self):
+        self.answers["system"] = (1, CUT_OFF, "")
+
+        class Closing(io.StringIO):
+            closed_now = False
+
+            def write(self, text):
+                if self.closed_now:
+                    raise BrokenPipeError("closed")
+                return super().write(text)
+
+        window, fallback = Closing(), io.StringIO()
+        self.during_write["system"] = lambda: setattr(window, "closed_now", True)
+        with contextlib.redirect_stdout(window), contextlib.redirect_stderr(fallback):
+            code = install.flash(self.tools, self.writer, self.images, SERIAL, self.journal,
+                                 lambda prompt: install.CONFIRMATION)
+        self.assertEqual(code, install.WRITE_FAILED)
+        self.assertIn(self.STAY, fallback.getvalue())
+
+    def test_a_closed_output_pipe_does_not_change_the_exit_code(self):
+        script = ("import sys, time; sys.path.insert(0, sys.argv[1]); import install; time.sleep(0.5); "
+                  "install.say('x' * 100000); install.say('advice'); sys.exit(6)")
+        child = subprocess.Popen([sys.executable, "-c", script, str(TOOLS)], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)
+        child.stdout.close()
+        error = child.stderr.read()
+        child.stderr.close()
+        self.assertEqual(child.wait(timeout=60), 6, error)
+        self.assertIn(b"advice", error)
+
+    def test_a_journal_that_cannot_record_the_last_answer_is_not_a_clean_success(self):
+        fsync = os.fsync
+
+        def failing(descriptor):
+            if self.entries() and self.entries()[-1].get("outcome") == install.RESTARTED:
+                raise OSError("disk full")
+            return fsync(descriptor)
+
+        with unittest.mock.patch.object(install.os, "fsync", failing):
+            code, printed, _ = self.flash()
+        self.assertEqual(code, install.JOURNAL_INCOMPLETE, printed)
+        self.assertIn("could not be completed", printed)
 
     def test_what_each_flash_did_is_read_from_fastboots_own_words(self):
         whole = step("Sending 'system' (4 KB)", "OKAY [  0.001s]") + step("Writing 'system'", "OKAY [  0.002s]")
@@ -1020,165 +1258,6 @@ class Flash(unittest.TestCase):
         with contextlib.redirect_stdout(Closed()):
             code, output, _ = install.stream_tool([sys.executable, "-c", script], self.images)
         self.assertEqual((code, output), (4, "Sending "))
-
-    def test_a_copy_that_does_not_read_back_as_written_is_never_sent(self):
-        chmod = pathlib.Path.chmod
-
-        def corrupting(path, mode, **options):
-            if path.name == "system.img" and path.parent != self.images:
-                with path.open("r+b") as image:
-                    image.write(b"\xff")
-            return chmod(path, mode, **options)
-
-        with unittest.mock.patch.object(pathlib.Path, "chmod", corrupting):
-            code, printed, prompts = self.flash()
-        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
-        self.assertEqual(self.sent, [])
-        self.assertIn("read back", printed)
-        self.assertEqual(list(self.images.parent.glob(f".{self.images.name}-flashing-*")), [])
-
-    def interrupt_when_recording(self, event, partition=None):
-        """Ctrl-C right after the journal records ``event``, before the command could be sent."""
-        record = install.Journal.record
-
-        def recording_then_interrupted(journal, name, **fields):
-            record(journal, name, **fields)
-            if name == event and fields.get("partition") == partition:
-                signal.raise_signal(signal.SIGINT)
-
-        patcher = unittest.mock.patch.object(install.Journal, "record", recording_then_interrupted)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_ctrl_c_after_a_command_is_recorded_keeps_it_from_being_sent(self):
-        self.interrupt_when_recording("write", "userdata")
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.WRITE_FAILED, printed)
-        self.assertEqual([arguments[4] for arguments in self.sent], ["system"])
-        self.assertEqual(install.unit_history(self.journal.read_text(encoding="utf-8"))[0],
-                         {"system": install.WRITTEN, "userdata": None})
-
-    def test_ctrl_c_after_the_restart_is_recorded_keeps_it_from_being_sent(self):
-        self.interrupt_when_recording("restart")
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.NOT_RESTARTED, printed)
-        self.assertEqual([arguments[3] for arguments in self.sent], ["flash", "flash"])
-
-    def test_a_retry_from_another_folder_still_knows_the_unfinished_write(self):
-        self.answers["system"] = (1, CUT_OFF, "")
-        self.assertEqual(self.flash()[0], install.WRITE_FAILED)
-        self.images = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
-        self.answers["system"] = (1, REFUSED, "")
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.WRITE_FAILED, printed)
-        self.assertNotIn("restart it with", printed)
-        (self.images / "userdata.img").unlink()
-        (self.images / "userdata.img.sha256").unlink()
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.WRITE_FAILED, printed)
-        self.assertIn("Stay in fastboot", printed)
-
-    def test_a_complete_earlier_run_is_not_mistaken_for_an_unfinished_one(self):
-        self.assertEqual(self.flash()[0], 0)
-        (self.images / "userdata.img").unlink()
-        (self.images / "userdata.img.sha256").unlink()
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
-
-    def test_the_advice_is_given_even_when_the_window_cannot_show_it(self):
-        self.answers["system"] = (1, CUT_OFF, "")
-
-        class Closing(io.StringIO):
-            closed_now = False
-
-            def write(self, text):
-                if self.closed_now:
-                    raise BrokenPipeError("closed")
-                return super().write(text)
-
-        window, fallback = Closing(), io.StringIO()
-        self.during_write["system"] = lambda: setattr(window, "closed_now", True)
-        with contextlib.redirect_stdout(window), contextlib.redirect_stderr(fallback):
-            code = install.flash(self.tools, self.writer, self.images, SERIAL, self.journal,
-                                 lambda prompt: install.CONFIRMATION)
-        self.assertEqual(code, install.WRITE_FAILED)
-        self.assertIn("Stay in fastboot", fallback.getvalue())
-
-    def test_any_other_row_in_fastboots_list_counts_as_another_device(self):
-        for extra in ("no permissions (missing udev rules? user is in the plugdev group); see "
-                      "[http://developer.android.com/tools/device.html]\t fastboot",
-                      "other42\t Android Bootloader Interface"):
-            with self.subTest(extra=extra):
-                self.listing = f"{SERIAL}\t fastboot\n{extra}\n"
-                code, printed, prompts = self.flash()
-                self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
-                self.assertEqual((prompts, self.sent), ([], []))
-
-    def test_an_acknowledged_restart_is_not_called_a_failure(self):
-        self.answers["reboot"] = (1, step("Rebooting", "OKAY [  0.003s]") + "interrupted\n", "")
-        code, printed, _ = self.flash()
-        self.assertEqual(code, install.NOT_RESTARTED, printed)
-        self.assertIn("fastboot devices", printed)
-        self.assertNotIn("power button", printed)
-        self.assertEqual(install.restart_outcome(*self.answers["reboot"][:2]), install.ACKNOWLEDGED)
-
-    def test_a_journal_that_cannot_record_the_last_answer_is_not_a_clean_success(self):
-        record = install.Journal.record
-
-        def failing(journal, name, **fields):
-            if name == "answer" and fields.get("outcome") == install.RESTARTED:
-                journal.failed = True
-                raise OSError("disk full")
-            record(journal, name, **fields)
-
-        with unittest.mock.patch.object(install.Journal, "record", failing):
-            code, printed, _ = self.flash()
-        self.assertEqual(code, install.JOURNAL_INCOMPLETE, printed)
-        self.assertIn("could not be completed", printed)
-
-    def test_a_journal_that_is_not_one_is_never_appended_to(self):
-        os.link(self.images / "system.img.sha256", self.journal)
-        before = (self.images / "system.img.sha256").read_bytes()
-        code, printed, prompts = self.flash()
-        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
-        self.assertEqual((prompts, self.sent), ([], []))
-        self.assertEqual((self.images / "system.img.sha256").read_bytes(), before)
-        self.journal.unlink()
-        self.journal.write_text("not a journal\n")
-        self.assertEqual(self.flash()[0], install.EXIT_CODES[install.STOP])
-        self.assertEqual(self.journal.read_text(), "not a journal\n")
-
-    def test_what_earlier_runs_left_is_read_from_the_journal(self):
-        def lines(*events):
-            return "\n".join(json.dumps(event) for event in events)
-
-        write = {"event": "write", "partition": "system"}
-        cases = [
-            (lines(), {"system": None, "userdata": None}, False),
-            (lines(write), {"system": install.UNKNOWN, "userdata": None}, False),
-            (lines(write, {"event": "not sent", "partition": "system"}), {"system": None, "userdata": None}, False),
-            (lines(write, {"event": "answer", "partition": "system", "outcome": "unchanged"}),
-             {"system": None, "userdata": None}, False),
-            (lines(write, {"event": "answer", "partition": "system", "outcome": "unknown"}, write,
-                   {"event": "answer", "partition": "system", "outcome": "unchanged"}),
-             {"system": install.UNKNOWN, "userdata": None}, False),
-            (lines(write, {"event": "answer", "partition": "system", "outcome": "written"},
-                   {"event": "write", "partition": "userdata"},
-                   {"event": "answer", "partition": "userdata", "outcome": "written"},
-                   {"event": "restart"}, {"event": "answer", "outcome": "restarted"}),
-             {"system": install.WRITTEN, "userdata": install.WRITTEN}, True),
-        ]
-        for text, states, restarted in cases:
-            with self.subTest(text=text):
-                self.assertEqual(install.unit_history(text), (states, restarted))
-        with self.assertRaises(ValueError):
-            install.unit_history("[1, 2]\n")
-
-    def test_the_default_journal_is_one_per_unit_and_does_not_show_its_serial(self):
-        path = install.default_journal(SERIAL)
-        self.assertNotIn(SERIAL, str(path))
-        self.assertEqual(path, install.default_journal(SERIAL))
-        self.assertNotEqual(path, install.default_journal("other42"))
 
 
 if __name__ == "__main__":

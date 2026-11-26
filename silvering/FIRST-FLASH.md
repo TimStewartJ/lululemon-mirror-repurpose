@@ -214,12 +214,15 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    ```
 
    - Refused by the bootloader's policy before any data is written (CAF LK
-     answers `FAILED (remote: 'Partition flashing is not allowed')` and
-     similar `not allowed` messages), and no earlier flash succeeded: the unit
-     is unchanged; `fastboot reboot` and **Stop**. The same holds when
-     fastboot stops before it prints its first `Writing 'system'` (a failed
+     answers exactly `FAILED (remote: 'Partition flashing is not allowed')`
+     or `FAILED (remote: 'Critical partition flashing is not allowed')`),
+     and no earlier write on this unit may be unfinished (no earlier flash
+     was cut off or failed once it had begun writing): the unit is
+     unchanged; `fastboot reboot` and **Stop**. The same holds when fastboot
+     stops before it prints its first `Writing 'system'` (a failed
      `Sending`, a file it cannot load): sending only fills the bootloader's
-     memory.
+     memory. If an earlier write may be unfinished, a refusal changes
+     nothing about it: stay in fastboot.
    - Any other failure, a cut-off transfer, or an answer that is not clear:
      `system` is in an unknown state, because the bootloader writes the image
      chunk by chunk. Stay in fastboot, do not reboot, and flash a corrected
@@ -232,8 +235,8 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    ```
 
    If this fails for any reason, the unit is no longer unchanged: stay in
-   fastboot and flash `userdata` again (or a corrected one); do not reboot
-   until it has succeeded. Then `fastboot -s <serial> reboot`.
+   fastboot and flash `system` and `userdata` again (or corrected ones); do
+   not reboot until both have succeeded. Then `fastboot -s <serial> reboot`.
 
    `python tools\install.py flash --images <folder> --serial <serial>` does
    this step: it runs the plan again and goes on only on `ready` with this
@@ -241,23 +244,34 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    image's sha256, lists what it cannot check itself (the last gate over ADB,
    the thermal review, the way back by hand, the approved unread list), and
    writes nothing until a person at the terminal types exactly `write system
-   and userdata`. It then copies both images into a new folder beside the
-   images folder, hashing each copy, and fastboot writes from those copies,
-   so the bytes written are the bytes checked. Before each write it checks
-   again that the unit is still the only fastboot unit and the copies are
-   unchanged. It reads each answer from fastboot's own words (every piece
-   sent and written, `Finished`, no `FAILED` outside the bootloader's INFO
-   lines; a refusal only as the bootloader's own `not allowed` to the first
-   write) and restarts the unit only after both writes succeeded. Ctrl-C
-   reaches fastboot; the stage then stops before its next step and says what
-   each partition may hold. Every command sent to the unit and every answer
-   goes to a journal beside the folder (`<folder>-flash-journal.jsonl`,
-   synced after each line, this unit's serial written as `<unit>` and others
-   as `<other>`). If an earlier run in that journal began a write, a run
-   that writes nothing does not advise restarting. Exit 0: written and
-   restarting; 3: nothing was written, whatever stopped it; 6: a write did
-   not finish (stay in fastboot, do not restart, run it again: it writes
-   `system`, then `userdata`); 7: both written, the unit not restarted.
+   and userdata` (without a terminal it never asks). It then copies both
+   images into a new folder beside the images folder, hashing each copy and
+   reading it back, and fastboot writes from those copies, so the bytes sent
+   are the bytes checked. Before each write it checks again that the unit is
+   still the only fastboot unit and the copies are unchanged. It reads each
+   answer from fastboot's own words (every piece sent and written,
+   `Finished`, no `FAILED` outside the bootloader's INFO lines; a refusal
+   only as one of the two exact answers above to the first write) and
+   restarts the unit only after both writes succeeded. fastboot runs in a
+   process group of its own, so Ctrl-C never stops a write under way: the
+   stage lets the step finish and stops before the next one.
+
+   Every command sent to the unit and every answer goes to the unit's
+   journal on this computer, `~/.mirror-install/flash-<hash of the
+   serial>.jsonl` (synced after each line; this unit's serial written as
+   `<unit>`, others as `<other>`), whichever folder the images come from.
+   Each run first replays it, so its advice and exit code account for what
+   every earlier run left on the unit; a line cut off when a run was killed
+   is passed over, which can only leave a write looking unfinished. A second
+   run for the same unit on this computer is refused while one is working.
+   Exit 0: written and restarting; 1: the journal could not be used or
+   another run holds the unit (nothing sent); 3: nothing is written and the
+   journal records no unfinished write; 6: a partition may hold part of an
+   image, or only `system` is written (keep the unit in fastboot and run the
+   stage again: it writes `system`, then `userdata`); 7: both written, but
+   the restart was not seen (check the cable, `fastboot devices` and `adb
+   devices` before any power action); 8: written and restarting, but the
+   journal could not be completed.
 
    Never `flash boot`, `aboot`, `recovery`, `erase`, `format`, `-w` or `oem`.
    Write down each command and its answer. A unit whose `boot` has been
