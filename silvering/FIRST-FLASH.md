@@ -216,13 +216,14 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    - Refused by the bootloader's policy before any data is written (CAF LK
      answers exactly `FAILED (remote: 'Partition flashing is not allowed')`
      or `FAILED (remote: 'Critical partition flashing is not allowed')`),
-     and no earlier write on this unit may be unfinished (no earlier flash
-     was cut off or failed once it had begun writing): the unit is
+     and no earlier attempt left an installation incomplete (no earlier
+     flash was cut off or failed once it had begun writing, and `system` was
+     not written without a successful `userdata` after it): the unit is
      unchanged; `fastboot reboot` and **Stop**. The same holds when fastboot
      stops before it prints its first `Writing 'system'` (a failed
      `Sending`, a file it cannot load): sending only fills the bootloader's
-     memory. If an earlier write may be unfinished, a refusal changes
-     nothing about it: stay in fastboot.
+     memory. If an earlier attempt left an installation incomplete, a
+     refusal changes nothing about it: stay in fastboot.
    - Any other failure, a cut-off transfer, or an answer that is not clear:
      `system` is in an unknown state, because the bootloader writes the image
      chunk by chunk. Stay in fastboot, do not reboot, and flash a corrected
@@ -258,12 +259,18 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
    Every command sent to the unit and every answer goes to the unit's
    journal on this computer, `~/.mirror-install/flash-<hash of the
-   serial>.jsonl` (synced after each line; this unit's serial written as
-   `<unit>`, others as `<other>`), whichever folder the images come from.
-   Each run first replays it, so its advice and exit code account for what
-   every earlier run left on the unit; a line cut off when a run was killed
-   is passed over, which can only leave a write looking unfinished. A second
-   run for the same unit on this computer is refused while one is working.
+   serial>.jsonl` in the home folder of the person running it (under
+   `sudo`, the person who ran `sudo`), whichever folder the images come
+   from; run every attempt on a unit from the same account. Each line is
+   synced, and a new journal's name too, before anything is sent; this
+   unit's serial is written as `<unit>`, others as `<other>`. Each run first
+   replays the journal, so its advice and exit code account for what every
+   earlier run left on the unit; if a line cannot be read (one cut off when
+   a run was killed), the stage never calls the unit unchanged. A second run
+   for the same unit is refused while one is working, and every step waits
+   for no other fastboot program to be running on the computer (one left by
+   a run that was killed, say). Ctrl-C is honoured after the checks before
+   each step, so a step is either not announced at all or runs to its end.
    Exit 0: written and restarting; 1: the journal could not be used or
    another run holds the unit (nothing sent); 3: nothing is written and the
    journal records no unfinished write; 6: a partition may hold part of an

@@ -736,6 +736,10 @@ class Flash(unittest.TestCase):
                                              side_effect=AssertionError("the home journal was used"))
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.running = False
+        running = unittest.mock.patch.object(install, "fastboot_running", side_effect=lambda: self.running)
+        running.start()
+        self.addCleanup(running.stop)
         self.images = self.folder({"system.img": SYSTEM, "userdata.img": USERDATA})
         self.journal = self.images.parent / f"{self.images.name}-journal.jsonl"
         self.addCleanup(lambda: [path.unlink(missing_ok=True)
@@ -1258,6 +1262,82 @@ class Flash(unittest.TestCase):
         with contextlib.redirect_stdout(Closed()):
             code, output, _ = install.stream_tool([sys.executable, "-c", script], self.images)
         self.assertEqual((code, output), (4, "Sending "))
+
+    def test_hiding_the_serial_never_changes_what_the_replay_reads(self):
+        for serial in ("e", "system", "unknown"):
+            with self.subTest(serial=serial):
+                path = self.images.parent / f"{self.images.name}-journal-serial-{serial}.jsonl"
+                journal = install.Journal(path, serial)
+                journal.record("write", partition="system", command=["fastboot", "-s", serial, "flash", "system"])
+                journal.record("answer", partition="system", outcome=install.UNKNOWN, output=f"{serial} failed")
+                journal.release()
+                self.assertEqual(journal.state.partitions["system"], install.UNKNOWN)
+                self.assertEqual(self.replay(path.read_text(encoding="utf-8"))[0]["system"], install.UNKNOWN)
+                self.assertNotIn(f'"-s", "{serial}"', path.read_text(encoding="utf-8"))
+
+    def test_an_answer_whose_write_line_was_lost_still_counts(self):
+        unknown = json.dumps({"event": "answer", "partition": "system", "outcome": "unknown"})
+        self.assertEqual(self.replay('{"event": "wri\n' + unknown + "\n")[0]["system"], install.UNKNOWN)
+        self.journal.write_text('{"event": "wri\n' + unknown + "\n", encoding="utf-8")
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+
+    def test_a_damaged_journal_never_calls_the_unit_unchanged(self):
+        self.journal.write_text("not a journal line\n", encoding="utf-8")
+        self.answers["system"] = (1, REFUSED, "")
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertIn("cannot show the unit unchanged", printed)
+        self.assertNotIn("restart it with", printed)
+
+    def test_another_fastboot_program_keeps_the_stage_from_starting_or_going_on(self):
+        for running in (True, None):
+            with self.subTest(running=running):
+                self.fresh_journal()
+                self.running = running
+                code, printed, prompts = self.flash()
+                self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+                self.assertEqual((prompts, self.sent), ([], []))
+                self.assertIn("fastboot program", printed)
+        self.fresh_journal()
+        self.running = False
+        self.during_write["system"] = lambda: setattr(self, "running", True)
+        code, printed, _ = self.flash()
+        self.assertEqual(code, install.WRITE_FAILED, printed)
+        self.assertEqual([arguments[4] for arguments in self.sent], ["system"])
+
+    def test_ctrl_c_during_the_checks_before_a_step_keeps_it_from_being_sent(self):
+        answer = self.tools.runner
+        armed = []
+
+        def runner(arguments):
+            if armed and arguments[1:] == ["devices"]:
+                armed.clear()
+                signal.raise_signal(signal.SIGINT)
+            return answer(arguments)
+
+        self.tools.runner = runner
+        code, printed, _ = self.flash(lambda: armed.append(True) or install.CONFIRMATION)
+        self.assertEqual(code, install.EXIT_CODES[install.STOP], printed)
+        self.assertEqual(self.sent, [])
+
+    def test_a_new_journal_is_synced_into_its_folder(self):
+        folder = self.images.parent / f"{self.images.name}-journal-new"
+        self.addCleanup(shutil.rmtree, folder, True)
+        with unittest.mock.patch.object(install, "sync_folder") as sync:
+            install.Journal(folder / "unit.jsonl", SERIAL).release()
+        self.assertEqual([call.args[0] for call in sync.call_args_list], [folder, folder.parent])
+        with unittest.mock.patch.object(install, "sync_folder") as sync:
+            install.Journal(folder / "unit.jsonl", SERIAL).release()
+        self.assertEqual(sync.call_args_list, [])
+
+    def test_under_sudo_the_journal_is_the_invoking_persons(self):
+        owner = unittest.mock.Mock(pw_dir="/home/owner")
+        self.assertEqual(install.invoking_home({"SUDO_USER": "owner"}, 0, lambda name: owner),
+                         pathlib.Path("/home/owner"))
+        self.assertEqual(install.invoking_home({"SUDO_USER": "owner"}, 1000, lambda name: owner), pathlib.Path.home())
+        self.assertEqual(install.invoking_home({}, 0, lambda name: owner), pathlib.Path.home())
 
 
 if __name__ == "__main__":
