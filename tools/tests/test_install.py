@@ -1316,6 +1316,7 @@ class Flash(unittest.TestCase):
         self.assertIn("could not be read", printed)
         self.assertIn("system may hold part of an image", printed)
         self.assertNotIn("restart it with", printed)
+        self.assertNotIn("move it aside", printed)
 
     def test_another_fastboot_program_keeps_the_stage_from_starting_or_going_on(self):
         for running in (True, None):
