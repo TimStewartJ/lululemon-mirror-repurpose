@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The installer's `flash` stage (`tools/install.py flash --images <folder>
+  --serial <serial>`) makes the runbook's two writes: it runs the plan again
+  and needs `ready`, writes nothing until a person at the terminal types
+  `write system and userdata`, writes `system` and then `userdata` with the
+  folder and the unit checked again before each, reads each result from
+  fastboot's own words (written, unchanged or unknown), restarts the unit
+  only after both are written, and keeps a journal of every command and
+  answer beside the images folder. Tried with the real fastboot 35.0.1
+  client against a stand-in bootloader; it has not yet written a real unit.
+
 - Tell before the first flash whether the kernel guards the chip against
   heat by itself, since Silvering has no `thermal-engine`. The device
   inventory now has a `thermal` section: the `msm_thermal` driver's

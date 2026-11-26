@@ -216,7 +216,10 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    - Refused by the bootloader's policy before any data is written (CAF LK
      answers `FAILED (remote: 'Partition flashing is not allowed')` and
      similar `not allowed` messages), and no earlier flash succeeded: the unit
-     is unchanged; `fastboot reboot` and **Stop**.
+     is unchanged; `fastboot reboot` and **Stop**. The same holds when
+     fastboot stops before it prints its first `Writing 'system'` (a failed
+     `Sending`, a file it cannot load): sending only fills the bootloader's
+     memory.
    - Any other failure, a cut-off transfer, or an answer that is not clear:
      `system` is in an unknown state, because the bootloader writes the image
      chunk by chunk. Stay in fastboot, do not reboot, and flash a corrected
@@ -232,13 +235,30 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    fastboot and flash `userdata` again (or a corrected one); do not reboot
    until it has succeeded. Then `fastboot -s <serial> reboot`.
 
+   `python tools\install.py flash --images <folder> --serial <serial>` does
+   this step: it runs the plan again and goes on only on `ready`, shows the
+   two writes with each image's sha256, lists what it cannot check itself
+   (the last gate over ADB, the thermal review, the way back by hand, the
+   approved unread list), and writes nothing until a person at the terminal
+   types `write system and userdata`. Before each write it checks again that
+   the unit is the one fastboot unit and the folder holds exactly what was
+   checked. It reads each answer from fastboot's own words (every piece sent
+   and written, `Finished`, no `FAILED`) and restarts the unit only after
+   both writes succeeded. Every command and answer goes to a journal beside
+   the folder (`<folder>-flash-journal.jsonl`, the serial written as
+   `<unit>`). Exit 0: written and restarting; 3: nothing written (the plan
+   was not ready, no confirmation, or the bootloader refused before
+   writing); 6: a write did not finish (stay in fastboot, do not restart,
+   run it again: it writes `system`, then `userdata`); 7: both written, the
+   restart failed.
+
    Never `flash boot`, `aboot`, `recovery`, `erase`, `format`, `-w` or `oem`.
    Write down each command and its answer. A unit whose `boot` has been
    overwritten stays in fastboot: its locked bootloader starts only a boot
    image signed for the board, which this project neither has nor hosts (an
    owner who wrote `boot` while trying other builds has reported exactly
    that). The installer builds no write but these two (`flash_arguments` in
-   `tools/install.py`).
+   `tools/install.py`) and the restart after them.
 6. **First boot.** `adb -s <serial> wait-for-device`, `adb -s <serial>
    get-state` answers `device` (not `unauthorized`), and wait until
    `adb -s <serial> shell getprop sys.boot_completed` is `1` and
