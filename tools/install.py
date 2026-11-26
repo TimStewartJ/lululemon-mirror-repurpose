@@ -14,11 +14,12 @@ Stages arrive one at a time; each says whether it reads or changes the unit.
               the unit in fastboot, the partitions' sizes. Prints the only
               writes the installer ever makes: system, then userdata. Never
               restarts the unit and never sends it anything but getvar.
-    flash     CHANGES THE UNIT: the plan again, which must answer ready; then,
-              once a person at the terminal types the confirmation, the
-              plan's two writes one at a time (the folder and the unit checked
-              again before each) and a restart once both are written. Every
-              command and answer goes to a journal beside the images folder.
+    flash     CHANGES THE UNIT: the plan again, which must answer ready with
+              this unit the only one fastboot lists; then, once a person at the
+              terminal types the confirmation exactly, the plan's two writes one
+              at a time from private copies of the checked images (hashed while
+              copied) and a restart once both are written. Every command sent
+              and every answer goes to a journal beside the images folder.
 
 The thermal stage never answers a plain pass yet: which kernel messages prove
 that the limits were registered is not known for this board, so its best
@@ -46,9 +47,13 @@ import os
 import pathlib
 import re
 import shlex
+import shutil
+import signal
+import stat
 import struct
 import subprocess
 import sys
+import tempfile
 from typing import Callable
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -973,22 +978,29 @@ def command_plan(arguments: argparse.Namespace) -> int:
 CONFIRMATION = "write system and userdata"
 # What one fastboot flash did to its partition.
 WRITTEN, UNCHANGED, UNKNOWN = "written", "unchanged", "unknown"
-# The flash stage's own exit codes: 6 a write failed once data may have reached the unit (stay in
-# fastboot, do not restart, run the stage again); 7 both partitions written but the restart failed.
+# The flash stage's own exit codes. For flash, 3 means nothing was written, whatever stopped it;
+# 6 a write did not finish once data may have reached the unit (stay in fastboot, do not restart,
+# run the stage again); 7 both partitions written, but the unit was not restarted.
 WRITE_FAILED, NOT_RESTARTED = 6, 7
-MAX_JOURNAL_OUTPUT = 1 << 16
 # fastboot 35.0.1 prints each step as "%-50s " and then "OKAY [%7.3fs]" or "FAILED (<error>)"; a
 # bootloader's INFO line ("(bootloader) ...") may come between the two. A sparse image larger than the
 # bootloader's max-download-size goes in pieces, each sent and then written.
 STEP = re.compile(r"Sending sparse '([^'\n]*)' (\d+)/(\d+) \(\d+ KB\)|Sending '([^'\n]*)' \(\d+ KB\)"
                   r"|Writing '([^'\n]*)'|Rebooting(?= )|(OKAY \[ *\d+\.\d+s\])|FAILED \(([^\n]*)\)$", re.MULTILINE)
 BOOTLOADER_INFO = re.compile(r"\(bootloader\) [^\n]*\n")
-NOT_ALLOWED = re.compile(r"\bnot allowed\b", re.IGNORECASE)
+# How CAF's bootloader refuses a write by policy, before it writes anything; fastboot reports a
+# bootloader's FAIL as remote: '<its message>'.
+POLICY_REFUSAL = re.compile(r"remote: '[^'\n]*\bnot allowed\b[^'\n]*'", re.IGNORECASE)
+FINISHED = re.compile(r"^Finished\. Total time: \d+\.\d+s$", re.MULTILINE)
 
 
-def fastboot_steps(output: str) -> list[dict] | None:
-    """The steps fastboot printed, each with its answer; None if an answer has no step before it."""
-    text = BOOTLOADER_INFO.sub("", output.replace("\r\n", "\n"))
+def fastboot_words(output: str) -> str:
+    """fastboot's own words: line ends made plain, the bootloader's INFO lines taken out."""
+    return BOOTLOADER_INFO.sub("", output.replace("\r\n", "\n"))
+
+
+def fastboot_steps(text: str) -> list[dict] | None:
+    """The steps in fastboot's words, each with its answer; None if an answer has no step before it."""
     steps: list[dict] = []
     for match in STEP.finditer(text):
         sparse_name, piece, pieces, name, written, okay, failed = match.groups()
@@ -1012,46 +1024,42 @@ def classify_write(partition: str, code: int, output: str) -> tuple[str, str | N
 
     ``written`` only when fastboot finished with status 0, nothing failed, and the image went as one
     send and one write, or as sparse pieces 1/N to N/N each sent and written, all to this partition.
-    ``unchanged`` when fastboot failed before it began any write (sending only fills the bootloader's
-    memory), or the bootloader refused the first write as not allowed: CAF's bootloader checks that
-    policy before it writes anything. Anything else is ``unknown``: the bootloader writes chunk by
-    chunk, so the partition may hold part of the image.
+    ``unchanged`` when fastboot failed before it began any write (it prints a step before sending its
+    command, and sending only fills the bootloader's memory), or the bootloader refused the first write
+    as not allowed: CAF's bootloader checks that policy before it writes anything. Anything else is
+    ``unknown``: the bootloader writes chunk by chunk, so the partition may hold part of the image.
     """
-    steps = fastboot_steps(output)
-    text = output.replace("\r\n", "\n")
-    if steps is None or any(step["partition"] not in (None, partition) for step in steps):
+    text = fastboot_words(output)
+    steps = fastboot_steps(text)
+    if steps is None or any(step["partition"] != partition for step in steps):
         return UNKNOWN, None
     failed = next((step for step in steps if step["answer"] == "FAILED"), None)
     writes = [step for step in steps if step["kind"] == "write"]
-    if code == 0 and failed is None and "FAILED" not in text and re.search(r"^Finished\. Total time: ", text,
-                                                                         re.MULTILINE):
-        kinds = [step["kind"] for step in steps]
+    if code == 0:
         sends = [step for step in steps if step["kind"] == "send"]
         pieces = [step["piece"] for step in sends]
         whole = len(steps) == 2 and pieces == [None]
         in_pieces = (len(sends) == len(writes) >= 1 and pieces[0] is not None
                      and pieces == [(number, len(sends)) for number in range(1, len(sends) + 1)])
-        if (all(step["answer"] == "OKAY" for step in steps) and kinds == ["send", "write"] * len(writes)
-                and (whole or in_pieces)):
+        if (failed is None and "FAILED" not in text and FINISHED.search(text)
+                and all(step["answer"] == "OKAY" for step in steps)
+                and [step["kind"] for step in steps] == ["send", "write"] * len(writes) and (whole or in_pieces)):
             return WRITTEN, None
-        return UNKNOWN, None
-    if code == 0:
         return UNKNOWN, None
     if not writes:
         return UNCHANGED, failed["error"] if failed else None
-    first_send = steps[0] if steps and steps[0]["kind"] == "send" else None
-    if (len(writes) == 1 and len(steps) == 2 and first_send and first_send["answer"] == "OKAY"
-            and (first_send["piece"] is None or first_send["piece"][0] == 1)
-            and writes[0]["answer"] == "FAILED" and NOT_ALLOWED.search(writes[0]["error"] or "")):
+    if (len(steps) == 2 and steps[0]["kind"] == "send" and steps[0]["answer"] == "OKAY"
+            and (steps[0]["piece"] is None or steps[0]["piece"][0] == 1)
+            and writes[0]["answer"] == "FAILED" and POLICY_REFUSAL.fullmatch(writes[0]["error"] or "")):
         return UNCHANGED, writes[0]["error"]
     return UNKNOWN, failed["error"] if failed else None
 
 
 def restarted(code: int, output: str) -> bool:
-    steps = fastboot_steps(output)
+    text = fastboot_words(output)
+    steps = fastboot_steps(text)
     return (code == 0 and steps is not None and [(step["kind"], step["answer"]) for step in steps]
-            == [("reboot", "OKAY")] and "FAILED" not in output
-            and re.search(r"^Finished\. Total time: ", output.replace("\r\n", "\n"), re.MULTILINE) is not None)
+            == [("reboot", "OKAY")] and "FAILED" not in text and FINISHED.search(text) is not None)
 
 
 def reboot_arguments(serial: str) -> list[str]:
@@ -1059,46 +1067,57 @@ def reboot_arguments(serial: str) -> list[str]:
 
 
 def stream_tool(arguments: list[str], folder: pathlib.Path) -> identify.Result:
-    """Runs one fastboot command from the images folder with no time limit (stopping fastboot halfway
-    through a write is worse than waiting), showing what it prints as it prints it and keeping it.
+    """Runs one fastboot command from ``folder`` with no time limit (stopping fastboot halfway through
+    a write is worse than waiting), showing what it prints as it prints it and keeping all of it.
 
-    Ctrl-C reaches fastboot through the console; this keeps reading until fastboot itself has ended,
-    so its last words are kept, and says it was interrupted."""
+    Never returns while fastboot is still running, even if showing its words fails."""
     try:
         process = subprocess.Popen(arguments, cwd=folder, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT)
     except OSError as error:
         return 1, "", f"fastboot did not start: {error}"
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    kept, interrupted = [], False
-    while True:
-        try:
-            chunk = process.stdout.read1(4096)
-        except KeyboardInterrupt:
-            interrupted = True
-            continue
-        text = decoder.decode(chunk, final=not chunk)
-        kept.append(text)
-        sys.stdout.write(text)
-        sys.stdout.flush()
-        if not chunk:
-            break
-    while True:
-        try:
-            code = process.wait()
-            break
-        except KeyboardInterrupt:
-            interrupted = True
-    process.stdout.close()
-    return code, "".join(kept), "interrupted with Ctrl-C" if interrupted else ""
+    kept, showing = bytearray(), True
+    try:
+        while chunk := process.stdout.read1(4096):
+            kept += chunk
+            if showing:
+                try:
+                    sys.stdout.write(decoder.decode(chunk))
+                    sys.stdout.flush()
+                except (OSError, ValueError):
+                    showing = False
+    finally:
+        code = process.wait()
+        process.stdout.close()
+    return code, kept.decode("utf-8", errors="replace"), ""
+
+
+def hide_devices(output: str, serial: str) -> str:
+    """A ``devices`` listing with each serial written as <unit> (this one) or <other>."""
+    lines = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and not line.startswith(("List of", "*")):
+            line = " ".join(["<unit>" if fields[0] == serial else "<other>", *fields[1:]])
+        lines.append(line)
+    return "\n".join(lines)
 
 
 class Journal:
-    """Every command the flash stage sends to the unit and every answer, one JSON line each, flushed
-    to disk before the next step. The unit's serial is written as <unit>, so the journal can be shared."""
+    """Every command the flash stage sends and every answer, one JSON line each, flushed to disk
+    before the next step. The unit's serial is written as <unit>, so the journal can be shared.
+    ``earlier_write`` says whether an earlier run in this journal began a write."""
 
     def __init__(self, path: pathlib.Path, serial: str):
         self.path, self.serial = path, serial
+        self.earlier_write = False
+        if path.exists():
+            try:
+                self.earlier_write = any(json.loads(line).get("event") == "write"
+                                         for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+            except (ValueError, AttributeError):
+                self.earlier_write = True
         self.stream = path.open("a", encoding="utf-8")
 
     def hide(self, value):
@@ -1118,12 +1137,76 @@ class Journal:
         os.fsync(self.stream.fileno())
 
     def close(self) -> None:
-        self.stream.close()
+        try:
+            self.stream.close()
+        except OSError:
+            pass  # every entry was already flushed and synced
+
+
+def recording(tools: identify.Tools, journal: Journal, serial: str) -> identify.Tools:
+    """The same tools, with every command and its answer recorded before the answer is used."""
+    def runner(arguments: list[str]) -> identify.Result:
+        code, out, err = tools.runner(arguments)
+        listing = arguments[-1:] == ["devices"]
+        journal.record("read", command=arguments, exitCode=code,
+                       output=hide_devices(out, serial) if listing else out,
+                       error=hide_devices(err, serial) if listing else err)
+        return code, out, err
+    return identify.Tools(tools.adb_path, tools.fastboot_path, runner)
 
 
 def default_journal(folder: pathlib.Path) -> pathlib.Path:
     folder = folder.resolve()
     return folder.parent / f"{folder.name}-flash-journal.jsonl"
+
+
+def the_only_fastboot_unit(tools: identify.Tools, serial: str) -> bool:
+    """Whether ``fastboot devices`` lists exactly one unit, and it is this one."""
+    code, out, _ = tools.fastboot("devices")
+    return code == 0 and identify.parse_fastboot_devices(out) == [serial]
+
+
+def remove_copies(folder: pathlib.Path) -> None:
+    def writable(function, path, _):
+        os.chmod(path, 0o600)
+        function(path)
+    shutil.rmtree(folder, **({"onexc": writable} if sys.version_info >= (3, 12) else {"onerror": writable}))
+
+
+def private_copies(folder: pathlib.Path, images: dict) -> pathlib.Path:
+    """The checked images copied into a new folder that only this run uses (beside the images folder,
+    on the disk that already holds them), each hashed while it is copied and made read-only. fastboot
+    writes from these copies, so the bytes it sends are the bytes that were checked, whatever happens
+    to the images folder meanwhile."""
+    copies = pathlib.Path(tempfile.mkdtemp(prefix=f".{folder.name}-flashing-", dir=folder.parent))
+    try:
+        for partition, image in images.items():
+            copy = copies / f"{partition}.img"
+            digest = hashlib.sha256()
+            with (folder / f"{partition}.img").open("rb") as source, copy.open("xb") as target:
+                if identity(os.fstat(source.fileno())) != image["identity"]:
+                    raise ValueError(f"{partition}.img changed after it was checked")
+                while chunk := source.read(1 << 20):
+                    digest.update(chunk)
+                    target.write(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+            if digest.hexdigest() != image["sha256"]:
+                raise ValueError(f"{partition}.img changed after it was checked")
+            copy.chmod(stat.S_IREAD)
+            image["copy"] = identity(copy.stat())
+    except BaseException:
+        remove_copies(copies)
+        raise
+    return copies
+
+
+def copies_unchanged(copies: pathlib.Path, images: dict) -> bool:
+    try:
+        return (sorted(entry.name for entry in copies.iterdir()) == sorted(f"{p}.img" for p in images)
+                and all(identity((copies / f"{p}.img").stat()) == image["copy"] for p, image in images.items()))
+    except OSError:
+        return False
 
 
 Writer = Callable[[list[str], pathlib.Path], identify.Result]
@@ -1151,122 +1234,159 @@ def confirmation_text(result: dict) -> str:
     return "\n".join(lines)
 
 
+def report(states: dict, restart: bool | None, earlier_write: bool, refusal: str | None, restart_command: str,
+           journal: pathlib.Path) -> int:
+    """What the unit holds now, from what is known of each partition, and what to do; the exit code.
+
+    ``states`` maps each partition to None (not tried), written, unchanged or unknown; ``restart`` is
+    None if the restart was not tried."""
+    system, userdata = states["system"], states["userdata"]
+    answered = f" fastboot reported: {safe(refusal)}." if refusal else ""
+    if system in (None, UNCHANGED) and userdata is None:
+        if earlier_write:
+            print(f"\nThis run wrote nothing.{answered} But an earlier run in the journal began writing this "
+                  "unit, so system or userdata may hold part of an image: stay in fastboot, do not restart the "
+                  f"unit, and run this stage again. Journal: {journal}")
+            return WRITE_FAILED
+        print(f"\nNothing was written: the unit is as it was.{answered} If the bootloader refused a write, this "
+              f"unit cannot be flashed this way: restart it with `{restart_command}` and Stop "
+              "(silvering/FIRST-FLASH.md, In the session, step 5). If the cable or the transfer failed, this "
+              f"stage may be run again. Journal: {journal}")
+        return EXIT_CODES[STOP]
+    if system != WRITTEN:
+        print(f"\nsystem did not finish: it may hold part of system.img.{answered} Stay in fastboot, do not "
+              f"restart the unit, and run this stage again (it writes system, then userdata). Journal: {journal}")
+        return WRITE_FAILED
+    if userdata != WRITTEN:
+        what = "may hold part of userdata.img" if userdata == UNKNOWN or earlier_write else "is not written"
+        print(f"\nsystem is written; userdata {what}.{answered} Stay in fastboot, do not restart the unit, and "
+              f"run this stage again (it writes system, then userdata). Journal: {journal}")
+        return WRITE_FAILED
+    if not restart:
+        print(f"\nsystem and userdata are written, but the unit was not restarted: run `{restart_command}`, or "
+              f"hold the power button. Journal: {journal}")
+        return NOT_RESTARTED
+    print("\nsystem and userdata are written and the unit is restarting into Silvering. Next "
+          "(silvering/FIRST-FLASH.md, In the session, step 6): `adb -s <serial> wait-for-device`, then wait for "
+          f"sys.boot_completed. Journal: {journal}")
+    return 0
+
+
 def flash(tools: identify.Tools, writer: Writer, folder: pathlib.Path, serial: str, journal_path: pathlib.Path,
           confirm: Confirm) -> int:
     """The plan, checked again; then, once a person types the confirmation, the plan's two writes and a
-    restart. Returns the exit code."""
+    restart. Returns the exit code; every way out before the first write returns 3."""
     folder = folder.resolve()
-    if folder in journal_path.resolve().parents:
+    if folder == journal_path.resolve() or folder in journal_path.resolve().parents:
         print("The journal cannot go in the images folder: the folder may hold only the images and their "
-              "hashes", file=sys.stderr)
+              "hashes. Nothing was written.", file=sys.stderr)
         return EXIT_CODES[STOP]
-    result, names, images = checked_plan(tools, folder, serial)
-    print_plan(result, show_writes=False)
-    if result["verdict"] != READY:
-        print("Nothing was written: the plan is not ready.")
-        return EXIT_CODES[result["verdict"]]
     try:
-        answer = confirm(confirmation_text(result))
-    except (EOFError, KeyboardInterrupt):
-        answer = ""
-    if answer.strip() != CONFIRMATION:
-        print("Nothing was written.")
+        journal = Journal(journal_path, serial)
+    except OSError as error:
+        print(f"The journal cannot be written ({error}). Nothing was written.", file=sys.stderr)
         return EXIT_CODES[STOP]
-    journal = Journal(journal_path, serial)
-    shell = "powershell" if os.name == "nt" else "posix"
-    restart = render([tools.fastboot_path, *reboot_arguments(SERIAL_PLACEHOLDER)], shell)
-    written: list[str] = []
-    started = None
+    copies = None
     try:
-        journal.record("plan", fastboot=result["fastboot"], fastbootPath=result["fastbootPath"],
+        journal.record("flash stage", fastbootVersionRequired=FASTBOOT_VERSION, folder=str(folder))
+        tools = recording(tools, journal, serial)
+        result, names, images = checked_plan(tools, folder, serial)
+        print_plan(result, show_writes=False)
+        journal.record("plan", verdict=result["verdict"], stops=result["stops"], unresolved=result["unresolved"],
                        images=result["images"], partitionBytes=result["partitionBytes"])
+        if result["verdict"] != READY:
+            print(f"Nothing was written: the plan is {result['verdict']}, not ready.")
+            return EXIT_CODES[STOP]
+        if not the_only_fastboot_unit(tools, serial):
+            print("fastboot must list this unit and no other. Nothing was written.")
+            return EXIT_CODES[STOP]
+        try:
+            answer = confirm(confirmation_text(result))
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer != CONFIRMATION:
+            journal.record("not confirmed")
+            print("Nothing was written.")
+            return EXIT_CODES[STOP]
         journal.record("confirmed", typed=CONFIRMATION)
+        copies = private_copies(folder, images)
+    except (OSError, RuntimeError, ValueError, KeyboardInterrupt) as error:
+        reason = str(error).replace(serial, "<unit>") or "interrupted"
+        print(f"Stopped before any write: {safe(reason)}. Nothing was written.", file=sys.stderr)
+        return EXIT_CODES[STOP]
+    finally:
+        if copies is None:
+            journal.close()
+    # From here on Ctrl-C does not stop this program between steps: it reaches fastboot through the
+    # console, and this program then reports what is known of each partition.
+    interrupted: list[bool] = []
+    previous, installed = None, False
+    states: dict = {partition: None for partition in WRITABLE}
+    refusal, restart = None, None
+    restart_command = render([tools.fastboot_path, *reboot_arguments(SERIAL_PLACEHOLDER)],
+                             "powershell" if os.name == "nt" else "posix")
+    try:
+        previous = signal.signal(signal.SIGINT, lambda *_: interrupted.append(True))
+        installed = True
         for partition in WRITABLE:
-            try:
-                state, found = find_one_unit(tools, serial)
-            except RuntimeError:
-                state, found = "more than one", None
-            if (state, found) != ("fastboot", serial):
-                problem = "The unit is no longer the one fastboot unit it was"
-            elif not unchanged(folder, names, images):
-                problem = "The images folder changed after it was checked"
-            else:
-                problem = None
-            if problem:
-                journal.record("refused", partition=partition, reason=problem)
-                print(f"{problem}; {partition} was not written.")
+            if interrupted:
+                journal.record("stopped", reason="Ctrl-C")
+                break
+            if not the_only_fastboot_unit(tools, serial):
+                journal.record("refused", partition=partition, reason="the unit is not the only fastboot unit")
+                print(f"fastboot no longer lists this unit alone; {partition} was not written.")
+                break
+            if not copies_unchanged(copies, images):
+                journal.record("refused", partition=partition, reason="the checked copies changed")
+                print(f"The checked copies of the images changed; {partition} was not written.")
                 break
             arguments = [tools.fastboot_path, *flash_arguments(serial, partition, f"{partition}.img")]
             journal.record("write", partition=partition, command=arguments)
-            started = partition
+            states[partition] = UNKNOWN
             print(f"\nWriting {partition} (do not unplug the unit or close this window):")
-            code, output, note = writer(arguments, folder)
+            code, output, note = writer(arguments, copies)
             outcome, refusal = classify_write(partition, code, output)
-            journal.record("answer", partition=partition, exitCode=code, outcome=outcome, note=note,
-                           output=output[-MAX_JOURNAL_OUTPUT:])
-            started = None
+            if interrupted and outcome == UNCHANGED:
+                outcome = UNKNOWN
+            states[partition] = outcome
+            journal.record("answer", partition=partition, exitCode=code, outcome=outcome, output=output,
+                           note=note, interrupted=bool(interrupted))
             if outcome != WRITTEN:
-                answered = f" The bootloader answered: {safe(refusal.replace(serial, '<unit>'))}." if refusal else ""
-                if outcome == UNCHANGED and not written:
-                    print(f"\nNothing was written: fastboot stopped before writing {partition}.{answered} The unit "
-                          "is as it was. If the bootloader refused, this unit cannot be flashed this way: restart "
-                          f"it with `{restart}` and Stop (silvering/FIRST-FLASH.md, In the session, step 5). If "
-                          f"the cable or the transfer failed, this stage may be run again. Journal: {journal_path}")
-                    return EXIT_CODES[STOP]
-                if outcome == UNCHANGED:
-                    print(f"\n{partition} was not written: fastboot stopped before writing it.{answered} "
-                          f"{', '.join(written)} is written.")
-                else:
-                    print(f"\n{partition} did not finish: it may hold part of {partition}.img.{answered}")
-                print("Stay in fastboot and do not restart the unit; run this stage again (it writes system, then "
-                      f"userdata). Journal: {journal_path}")
-                return WRITE_FAILED
-            written.append(partition)
+                break
         else:
-            arguments = [tools.fastboot_path, *reboot_arguments(serial)]
-            journal.record("restart", command=arguments)
-            code, output, note = writer(arguments, folder)
-            ok = restarted(code, output)
-            journal.record("answer", exitCode=code, outcome="restarted" if ok else "not restarted", note=note,
-                           output=output[-MAX_JOURNAL_OUTPUT:])
-            if not ok:
-                print(f"\nsystem and userdata are written, but the restart did not go through: run `{restart}`, "
-                      f"or hold the power button. Journal: {journal_path}")
-                return NOT_RESTARTED
-            print("\nsystem and userdata are written and the unit is restarting into Silvering. Next "
-                  "(silvering/FIRST-FLASH.md, In the session, step 6): `adb -s <serial> wait-for-device`, then "
-                  f"wait for sys.boot_completed. Journal: {journal_path}")
-            return 0
-    except (OSError, KeyboardInterrupt) as error:
-        print(f"\nStopped: {error or 'interrupted'}", file=sys.stderr)
-        if not written and started is None:
-            print("Nothing was written.")
-            return EXIT_CODES[STOP]
-        print("A write may have begun. Stay in fastboot and do not restart the unit; run this stage again.")
-        return WRITE_FAILED
+            if interrupted:
+                journal.record("stopped", reason="Ctrl-C")
+            elif the_only_fastboot_unit(tools, serial):
+                arguments = [tools.fastboot_path, *reboot_arguments(serial)]
+                journal.record("restart", command=arguments)
+                restart = False
+                code, output, note = writer(arguments, copies)
+                restart = restarted(code, output)
+                journal.record("answer", exitCode=code, outcome="restarted" if restart else "not restarted",
+                               output=output, note=note)
+    except BaseException as error:  # anything at all: report from what is known, never guess
+        print(f"\nStopped: {error!r}", file=sys.stderr)
     finally:
+        if installed and previous is not None:
+            signal.signal(signal.SIGINT, previous)
         journal.close()
-    if not written:
-        print(f"Nothing was written. Journal: {journal_path}")
-        return EXIT_CODES[STOP]
-    print(f"system is written and userdata is not. Stay in fastboot and do not restart the unit; run this stage "
-          f"again. Journal: {journal_path}")
-    return WRITE_FAILED
+        try:
+            remove_copies(copies)
+        except OSError:
+            print(f"The private copies in {copies} could not be removed; remove them by hand.", file=sys.stderr)
+    return report(states, restart, journal.earlier_write, refusal and refusal.replace(serial, "<unit>"),
+                  restart_command, journal_path)
 
 
 def command_flash(arguments: argparse.Namespace) -> int:
     if not sys.stdin.isatty():
-        print("This stage writes the unit: run it in a terminal, where a person types the confirmation",
-              file=sys.stderr)
+        print("This stage writes the unit: run it in a terminal, where a person types the confirmation. "
+              "Nothing was written.", file=sys.stderr)
         return EXIT_CODES[STOP]
     tools = identify.Tools(identify.find_tool("adb"), absolute_tool(identify.find_tool("fastboot")))
     folder = pathlib.Path(arguments.images)
     journal = pathlib.Path(arguments.journal) if arguments.journal else default_journal(folder)
-    try:
-        return flash(tools, stream_tool, folder, arguments.serial, journal, input)
-    except (RuntimeError, OSError) as error:
-        print(f"Could not read the unit or the images; nothing was written: {error}", file=sys.stderr)
-        return 1
+    return flash(tools, stream_tool, folder, arguments.serial, journal, input)
 
 
 def main(argv: list[str] | None = None) -> int:
