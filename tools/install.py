@@ -2054,24 +2054,27 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
     if disk is None or statuses["kernel"] != 0 or before is None:
         seen["limits"].append("the kernel log, or which device /system is, could not be read: a read error while "
                               "listing a folder, which find and ls take for its end, is not ruled out")
+    # Each snapshot that was read counts on its own. Without the device, every ext4 message is shown.
+    pattern = re.compile(EXT4_MESSAGE.format(device=re.escape(disk) if disk else r"[^)]+"))
+    log = kernel[split + 1:] if split is not None and statuses["kernel"] == 0 else None
+    if before is not None:
+        seen["kernelHistory"] = [line for line in before if pattern.search(line)]
+    if log is None:
         return seen
-    log = kernel[split + 1:]
-    pattern = re.compile(EXT4_MESSAGE.format(device=re.escape(disk)))
-    # What the log held before the walks is history, read from that snapshot itself. The walks' own
-    # messages follow the snapshot's last line, which must appear exactly once in the later log (its time
-    # makes it unique); otherwise which period a message belongs to is not known.
-    seen["kernelHistory"] = [line for line in before if pattern.search(line)]
-    anchor = next((line for line in reversed(before) if line.strip()), None)
-    if anchor is None:
-        start = 0
-    elif log.count(anchor) == 1:
-        start = log.index(anchor) + 1
+    # The walks' own messages follow the before-snapshot's last line, which must appear exactly once in the
+    # later log (its time makes it unique); anything else in the later log that the snapshot did not hold
+    # cannot be placed in either period and is listed for review.
+    anchor = None if before is None else next((line for line in reversed(before) if line.strip()), "")
+    if disk is not None and anchor is not None and (anchor == "" or log.count(anchor) == 1):
+        start = log.index(anchor) + 1 if anchor else 0
+        seen["kernelErrors"] = [line for line in log[start:] if pattern.search(line)]
+        earlier = log[:start]
     else:
-        seen["limits"].append("the kernel log turned over during the walks, so which of its ext4 messages the "
-                              "walks met is not known; those not logged before them are listed for review")
-        seen["kernelUnplaced"] = [line for line in log if pattern.search(line) and line not in before]
-        return seen
-    seen["kernelErrors"] = [line for line in log[start:] if pattern.search(line)]
+        if disk is not None and before is not None:
+            seen["limits"].append("the kernel log turned over during the walks, so which of its ext4 messages "
+                                  "the walks met is not known; those not logged before them are listed for review")
+        earlier = log
+    seen["kernelUnplaced"] = [line for line in earlier if pattern.search(line) and line not in (before or [])]
     return seen
 
 
@@ -2189,6 +2192,8 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
         differences.append({"path": SYSTEM_MOUNT, "what": "the kernel logged ext4 errors for its device during the "
                             "walks: " + " | ".join(shown_text(line) for line in seen["kernelErrors"][:5])})
         evidence["<kernel>"] = sorted({kernel_event(line) for line in seen["kernelErrors"]})
+        # ext4 logs a failed block read the same way as damage it found: on its own, no proof of a bad write.
+        storage.append("<kernel>")
     noted = seen["limits"] or seen["kernelHistory"] or seen["kernelUnplaced"]
     verdict = STOP if differences else REVIEW if unread or noted else VERIFIED
     return {"verdict": verdict, "entries": len(expected), "fullyChecked": full, "differences": differences,
@@ -2318,10 +2323,10 @@ def stop_advice(images: dict, journal: tuple[dict | None, str], compared: dict) 
     last, state = journal
     keep = "Keep this output (with --json) as the record of what differed."
     if len(compared["storage"]) == len(compared["differences"]):
-        return ["Stop: every difference is a read that fails (an I/O error, or a stop without a reason), in two "
-                "readings, and the kernel logged no ext4 error for them during the walks. Failing storage gives "
-                "the same as a bad write, so a rewrite may not help. Write nothing yet: run this stage again. "
-                f"{keep}"]
+        return ["Stop: every difference is a read that fails (an I/O error, a stop without a reason, or an ext4 "
+                "error the kernel logged), in two readings, with no content or metadata seen to differ. Failing "
+                "storage gives the same as a bad write, so a rewrite may not help. Write nothing yet: run this stage "
+                f"again; if it stays the same, whether to write again is the owner's call. {keep}"]
     if last == images:
         return [f"Stop: the unit's /system differs from system.img, in two readings, and this computer's journal "
                 f"for the unit records the system.img and userdata.img in this folder as the last complete "

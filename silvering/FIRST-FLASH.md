@@ -316,19 +316,24 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    what is listed was not compared: go on only if the entries are what the
    factory policy keeps from adb's shell (daemons such as `wpa_supplicant`,
    folders such as `lost+found`) and not anything Mirror Home or the
-   supervisor needs. A read that fails with an I/O error, `Structure needs
-   cleaning` or `Not a data message` is a difference; one that fails for
-   any other reason but `Permission denied` concludes nothing. 3 (Stop):
-   `/system` differs in two readings that rest on the same evidence; only
-   if a difference is established (not only a read that stops without a
-   reason, which points at the unit's storage) and this computer's journal
-   for the unit records the `system.img` and `userdata.img` in this folder
-   as its last complete installation, `adb -s <serial> reboot bootloader`,
-   run `install.py flash` again with the same folder, and verify again;
-   otherwise write nothing until verify has been run with the folder that
-   was written to the unit. 4: nothing was compared (no unit runs Android
-   with ADB authorized; in fastboot, follow what `flash` said last: its
-   exits 0, 7 and 8 mean both partitions are written). 1: nothing
+   supervisor needs. A read that fails with `Structure needs cleaning` or
+   `Not a data message`, or with an I/O error, is a difference; one that
+   fails for any other reason but `Permission denied` concludes nothing. 3
+   (Stop) means stop the session, not necessarily write again: `/system`
+   differs in two readings that rest on the same evidence. Do what the
+   stage advises. It advises writing again (`adb -s <serial> reboot
+   bootloader`, `install.py flash` with the same folder, verify again) only
+   when content or metadata differ, an entry is missing or extra, or ext4
+   reports damage itself (`Structure needs cleaning`, `Not a data
+   message`), and this computer's journal for the unit records the
+   `system.img` and `userdata.img` in this folder as its last complete
+   installation. A named I/O error, a read that stops without a reason, or
+   an ext4 error in the kernel log, alone, calls for no write: failing
+   storage gives the same. Otherwise write nothing until verify has been
+   run with the folder that was written to the unit. 4: nothing was
+   compared (no unit runs Android with ADB authorized; in fastboot, follow
+   what `flash` said last: its exits 0, 7 and 8 mean both partitions are
+   written). 1: nothing
    concluded (an answer could not be accounted for, a read failed for a
    reason unrelated to the partition, or two readings disagreed): run it
    again. `userdata` is not checked this way: Android writes to it from the
