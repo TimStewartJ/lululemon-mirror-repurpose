@@ -1748,46 +1748,40 @@ class Verify(unittest.TestCase):
         userdata = "1" * 64
         (self.folder / "userdata.img.sha256").write_text(f"{userdata}  userdata.img\n")
         self.write_journal({"system": self.image_hash, "userdata": userdata})
-        # ext4 skips a folder block it cannot read and logs it: find and ls both miss the names in it.
+        # ext4 skips a folder block it cannot read: find and ls both miss the names in it. No kernel log proves
+        # it did not (dmesg skips records overwritten while it copies), so an absence alone never asks for a
+        # write, whatever the log shows.
         del self.unit["/system/bin/sh"], self.unit["/system/bin/ls"]
-        self.kernel_new = ["[   40.1] EXT4-fs error (device vda): ext4_readdir:177: inode #12: comm find: "
-                           "directory contains a hole at lblock 0"]
-        for kernel_readable in (True, False):
-            with self.subTest(kernel_readable=kernel_readable):
-                self.kernel_status = self.kernel_before_status = 0 if kernel_readable else 1
+        readdir = ("[   40.1] EXT4-fs error (device vda): ext4_readdir:177: inode #12: comm find: directory contains "
+                   "a hole at lblock 0")
+        for kernel_new, kernel_status in (([readdir], 0), ([readdir], 1), ([], 0)):
+            with self.subTest(kernel_new=kernel_new, kernel_status=kernel_status):
+                self.kernel_new, self.kernel_status = kernel_new, kernel_status
+                self.kernel_before_status = kernel_status
                 result, code = self.verify()
                 self.assertEqual(code, 3, result)
-                self.assertIn("may have a block the kernel could not read", str(result["differences"]))
+                self.assertIn({"path": "/system/bin/sh", "what": install.MISSING}, result["differences"])
                 self.assertIn("storage", " ".join(result["advice"]))
                 self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
-        # With the walks covered by a clean kernel log, a missing name is what was written.
-        self.kernel_status = self.kernel_before_status = 0
-        self.kernel_new = []
+        # A log readable in one reading and not in the other changes nothing about the judgement.
+        self.kernel_new, self.kernel_status, self.kernel_before_status = [], 0, 0
+        self.kernel_status_by_reading, self.readings = {1: 0, 2: 1}, 0
         result, code = self.verify()
         self.assertEqual(code, 3, result)
-        self.assertIn({"path": "/system/bin/sh", "what": "missing on the unit"}, result["differences"])
-        self.assertIn("reboot bootloader", " ".join(result["advice"]))
-        # One reading covered and the other not reach different judgements: nothing is concluded, either way.
-        for first, second in ((0, 1), (1, 0)):
-            with self.subTest(first=first, second=second):
-                self.kernel_status_by_reading, self.readings = {1: first, 2: second}, 0
-                result, code = self.verify()
-                self.assertEqual(code, 1, result)
         self.kernel_status_by_reading = {}
-        # An ext4 error the later log holds but cannot place leaves an absence unconfirmed.
-        original_answer = self.answer
-        self.answer = lambda name: original_answer(name)[:5] + [
-            "[    5.5] EXT4-fs error (device vda): ext4_readdir:177: inode #12: comm find: directory contains a hole "
-            "at lblock 0", *self.kernel_history] if name == "kernel" else original_answer(name)
+        # With content seen to differ as well, the journal's binding allows writing again.
+        self.unit["/system/holey"]["sha1"] = "c" * 40
         result, code = self.verify()
-        self.answer = original_answer
         self.assertEqual(code, 3, result)
-        self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
-        # So does a log that held nothing before the walks: it cannot show that none of theirs rolled out.
+        self.assertIn("reboot bootloader", " ".join(result["advice"]))
+
+    def test_a_kernel_log_that_held_nothing_before_the_walks_gives_them_every_message(self):
         self.kernel_history = []
+        self.kernel_new = ["[   40.1] EXT4-fs error (device vda): ext4_lookup:1590: inode #2: comm find: deleted inode "
+                           "referenced: 99"]
         result, code = self.verify()
         self.assertEqual(code, 3, result)
-        self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        self.assertEqual([item["path"] for item in result["differences"]], ["/system"])
 
     def test_a_stop_advises_another_write_only_for_both_images_the_journal_binds(self):
         self.unit["/system/build.prop"]["sha1"] = "f" * 40
@@ -1852,7 +1846,7 @@ class Verify(unittest.TestCase):
                 self.unit[odd] = {**self.unit.pop("/system/build.prop"), "path": odd}
                 result, code = self.verify()
                 self.assertEqual(code, 3, result)
-                self.assertIn({"path": "/system/build.prop", "what": "missing on the unit"}, result["differences"])
+                self.assertIn({"path": "/system/build.prop", "what": install.MISSING}, result["differences"])
                 self.assertIn({"path": install.shown_text(odd), "what": "on the unit, not in system.img"},
                               result["differences"])
         self.unit = {entry["path"]: dict(entry) for entry in self.expected}
@@ -1974,7 +1968,7 @@ class Verify(unittest.TestCase):
                 "stat": {"/system/link": {key: entry[key] for key in install.STAT_FIELDS}},
                 "labels": {"/system/link": {"label": entry["label"], "target": entry["target"][:252] + "..."}},
                 "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [],
-                "kernelUnplaced": [], "kernelCovered": True, "limits": []}
+                "kernelUnplaced": [], "limits": []}
         result = install.compare_system([entry], seen)
         self.assertEqual(result["verdict"], install.REVIEW)
         self.assertEqual(result["unread"][0]["reason"], "the link target's end not read")

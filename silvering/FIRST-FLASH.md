@@ -323,13 +323,14 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    differs in two readings that rest on the same evidence. Do what the
    stage advises. It advises writing again (`adb -s <serial> reboot
    bootloader`, `install.py flash` with the same folder, verify again) only
-   when content or metadata differ, an entry is missing or extra, or ext4
-   reports damage itself (`Structure needs cleaning`, `Not a data
-   message`), and this computer's journal for the unit records the
-   `system.img` and `userdata.img` in this folder as its last complete
-   installation. A named I/O error, a read that stops without a reason, or
-   an ext4 error in the kernel log, alone, calls for no write: failing
-   storage gives the same. Otherwise write nothing until verify has been
+   when content or metadata differ, an entry is extra, or ext4 reports
+   damage itself (`Structure needs cleaning`, `Not a data message`), and
+   this computer's journal for the unit records the `system.img` and
+   `userdata.img` in this folder as its last complete installation. A
+   named I/O error, a read that stops without a reason, a missing entry (a
+   folder block ext4 cannot read hides names the same way), or an ext4
+   error in the kernel log, alone, calls for no write: failing storage
+   gives the same. Otherwise write nothing until verify has been
    run with the folder that was written to the unit. 4: nothing was
    compared (no unit runs Android with ADB authorized; in fastboot, follow
    what `flash` said last: its exits 0, 7 and 8 mean both partitions are

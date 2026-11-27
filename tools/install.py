@@ -1710,6 +1710,7 @@ DAMAGED = ("I/O error", "Structure needs cleaning", "Not a data message")
 # adb on Android 6 takes a command of at most 4 KiB; the follow-ups' paths stay well within it.
 FOLLOW_UP_BYTES = 3000
 STAT_FIELDS = ("inode", "mode", "uid", "gid", "links", "size", "mtime")
+MISSING = "missing on the unit (a folder block ext4 cannot read hides names the same way)"
 # toolbox ls reads a link into 256 bytes and shows a longer target as its first 252 and "...".
 LS_LINK_BYTES = 255
 # Each pass runs through `adb exec-out` (the unit's bytes as they are, no terminal turning line ends
@@ -1869,7 +1870,7 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
 
     seen: dict = {"names": set(), "broken": [], "lstatErrors": {}, "openErrors": {}, "stat": {}, "labels": {},
                   "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [],
-                  "kernelUnplaced": [], "kernelCovered": False, "limits": [ATTRIBUTES_LIMIT]}
+                  "kernelUnplaced": [], "limits": [ATTRIBUTES_LIMIT]}
     before = lines("kernel before", KERNEL_BEFORE)
     if statuses.pop("kernel before") != 0:
         before = None
@@ -2063,21 +2064,21 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
         return seen
     # The walks' own messages follow the before-snapshot's last line, which must appear exactly once in the
     # later log (its time makes it unique); anything else in the later log that the snapshot did not hold
-    # cannot be placed in either period and is listed for review.
+    # cannot be placed in either period and is listed for review. Even then the log is no proof that
+    # nothing was lost: dmesg skips records overwritten while it copies (kernel/printk.c, syslog_print_all).
     anchor = None if before is None else next((line for line in reversed(before) if line.strip()), "")
-    if disk is not None and anchor and log.count(anchor) == 1:
+    if disk is not None and anchor == "":
+        # Nothing was logged before the walks, so every message is theirs.
+        seen["kernelErrors"] = [line for line in log if pattern.search(line)]
+        earlier = []
+    elif disk is not None and anchor and log.count(anchor) == 1:
         start = log.index(anchor) + 1
         seen["kernelErrors"] = [line for line in log[start:] if pattern.search(line)]
-        # The later log still holds the line logged just before the walks, so it holds all they caused: a
-        # folder block ext4 could not read (fs/ext4/dir.c skips it and logs "directory contains a hole")
-        # would show here.
-        seen["kernelCovered"] = True
         earlier = log[:start]
     else:
         if disk is not None and before is not None:
-            seen["limits"].append("the kernel log turned over during the walks, or held nothing before them, so "
-                                  "which of its ext4 messages the walks met is not known; those not logged before "
-                                  "them are listed for review")
+            seen["limits"].append("the kernel log turned over during the walks, so which of its ext4 messages the "
+                                  "walks met is not known; those not logged before them are listed for review")
         earlier = log
     seen["kernelUnplaced"] = [line for line in earlier if pattern.search(line) and line not in (before or [])]
     return seen
@@ -2129,13 +2130,10 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
                            else f"in a folder find could not read ({reason})"})
             continue
         if path not in seen["names"] and path not in seen["lstatErrors"]:
-            # ext4 skips a folder block it cannot read, so find and ls both miss its names: an absence counts
-            # as more than a failed read only when the kernel log covered the walks and logged nothing.
-            trusted = seen["kernelCovered"] and not seen["kernelErrors"] and not seen["kernelUnplaced"]
-            differ(path, "missing on the unit" if trusted else "missing on the unit (its folder may have a "
-                         "block the kernel could not read; the kernel log does not rule it out)")
-            if not trusted:
-                storage.append(path)
+            # ext4 skips a folder block it cannot read (fs/ext4/dir.c), so find and ls both miss its names, and
+            # no kernel log proves it did not: an absence alone is storage evidence, never a reason to write.
+            differ(path, MISSING)
+            storage.append(path)
             continue
         if path in seen["lstatErrors"]:
             reason = seen["lstatErrors"][path]
