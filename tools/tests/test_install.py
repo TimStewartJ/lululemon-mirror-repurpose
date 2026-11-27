@@ -1385,7 +1385,7 @@ class Verify(unittest.TestCase):
         self.statuses: dict[str, int] = {}
         self.kernel_history = ["[    1.02] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: (null)"]
         self.kernel_new: list[str] = []
-        self.kernel_status = 0
+        self.kernel_status = self.kernel_before_status = 0
         self.drop_errors: set[str] = set()
         self.per_reading: dict[int, dict] = {}
         self.state, self.readings, self.calls = "device", 0, []
@@ -1475,7 +1475,7 @@ class Verify(unittest.TestCase):
         if command == "getprop ro.build.fingerprint":
             return 0, "test/silvering:6.0.1/MMB29M/1:userdebug/dev-keys\n", ""
         if command == install.KERNEL_BEFORE:
-            return 0, "".join(f"{line}\n" for line in self.kernel_history) + f"{end}{self.kernel_status}\n", ""
+            return 0, "".join(f"{line}\n" for line in self.kernel_history) + f"{end}{self.kernel_before_status}\n", ""
         if command.startswith("for f in "):
             paths = shlex.split(command[len("for f in "):command.index("; do ")])
             lines = []
@@ -1696,10 +1696,51 @@ class Verify(unittest.TestCase):
         self.assertIn("turned over", result["limits"][1])
         self.assertEqual(result["kernelUnplaced"], [f"[   99.0] {fault.format('ls')}"])
         self.kernel_history, self.kernel_status = ["dmesg: klogctl: Operation not permitted"], 1
+        self.kernel_before_status = 1
         result, code = self.verify()
         self.assertEqual(code, 5, result)
         self.assertEqual(len(result["limits"]), 2)
         self.assertIn("kernel log", result["limits"][1])
+        # Each snapshot that was read counts on its own: an error in either is shown for review.
+        self.kernel_history, self.kernel_before_status = [f"[    5.0] {fault.format('init')}", "[    6.0] booted"], 0
+        result, code = self.verify()
+        self.assertEqual((code, result["kernelHistory"]), (5, [f"[    5.0] {fault.format('init')}"]), result)
+        self.kernel_history, self.kernel_before_status, self.kernel_status = ["[    6.0] booted"], 1, 0
+        self.kernel_new = [f"[   40.1] {fault.format('ls')}"]
+        result, code = self.verify()
+        self.assertEqual((code, result["kernelUnplaced"]), (5, [f"[   40.1] {fault.format('ls')}"]), result)
+        # An error the later log holds before the anchor, which the earlier snapshot did not, cannot be placed.
+        self.kernel_before_status, self.kernel_new = 0, []
+        self.answer = lambda name: original_answer(name)[:5] + [f"[    5.5] {fault.format('ls')}", "[    6.0] booted"] \
+            if name == "kernel" else original_answer(name)
+        result, code = self.verify()
+        self.answer = original_answer
+        self.assertEqual((code, result["kernelUnplaced"]), (5, [f"[    5.5] {fault.format('ls')}"]), result)
+        # When /system's device cannot be told, every ext4 message the later log adds is shown.
+        self.answer = lambda name: [line for line in original_answer(name) if "vda" not in line or "EXT4" in line] \
+            if name == "kernel" else original_answer(name)
+        self.kernel_new = [f"[   40.1] {fault.format('ls')}"]
+        result, code = self.verify()
+        self.answer, self.kernel_new = original_answer, []
+        self.assertEqual((code, result["kernelUnplaced"]), (5, [f"[   40.1] {fault.format('ls')}"]), result)
+
+    def test_a_stop_that_rests_on_failed_reads_alone_advises_no_write(self):
+        userdata = "1" * 64
+        (self.folder / "userdata.img.sha256").write_text(f"{userdata}  userdata.img\n")
+        self.write_journal({"system": self.image_hash, "userdata": userdata})
+        # An I/O error and the kernel's own message about the same failed read: still only storage evidence.
+        self.denied, self.reasons = {"/system/build.prop"}, {"/system/build.prop": "I/O error"}
+        self.kernel_new = ["[   40.1] EXT4-fs error (device vda): __ext4_get_inode_loc:4027: inode #15: block 4: "
+                           "comm find: unable to read itable block"]
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertIn("storage", " ".join(result["advice"]))
+        self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        # With content seen to differ, the journal's binding allows writing again.
+        self.unit["/system/holey"]["sha1"] = "c" * 40
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertIn("reboot bootloader", " ".join(result["advice"]))
 
     def test_a_stop_advises_another_write_only_for_both_images_the_journal_binds(self):
         self.unit["/system/build.prop"]["sha1"] = "f" * 40
