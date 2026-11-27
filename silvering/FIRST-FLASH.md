@@ -308,27 +308,31 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    unit so only digests cross the cable. It reads only, through `adb
    exec-out`, and needs ADB, not a finished boot. Every answer must account
    for the same names (find, and toolbox `ls -a` a second way), and the
-   kernel log must show no ext4 error on `/system`'s device, since find and
-   ls take a read error while listing a folder for its end. Exit 0: every
-   entry is as written. 5 (review): no difference, but what is listed was
-   not read: go on only if the entries are what the factory policy keeps
-   from adb's shell (daemons such as `wpa_supplicant`, folders such as
-   `lost+found`) and not anything Mirror Home or the supervisor needs; file
-   capabilities (`run-as`'s) are never read, since no tool on the unit
-   prints them. A read that fails with an I/O error or `Structure needs
-   cleaning` is a difference; one that fails for any other reason but
-   `Permission denied` concludes nothing. 3 (Stop): `/system` differs in two
-   readings that rest on the same evidence; only if this computer's journal
+   kernel log must show no ext4 error on `/system`'s device during the walks
+   (one logged before them is shown for review), since find and ls take a
+   read error while listing a folder for its end. Exit 0: every entry is as
+   written; no unit reaches it today, because no tool on it prints file
+   capabilities, so 5 is the best answer. 5 (review): no difference, but
+   what is listed was not compared: go on only if the entries are what the
+   factory policy keeps from adb's shell (daemons such as `wpa_supplicant`,
+   folders such as `lost+found`) and not anything Mirror Home or the
+   supervisor needs. A read that fails with an I/O error, `Structure needs
+   cleaning` or `Not a data message` is a difference; one that fails for
+   any other reason but `Permission denied` concludes nothing. 3 (Stop):
+   `/system` differs in two readings that rest on the same evidence; only
+   if a difference is established (not only a read that stops without a
+   reason, which points at the unit's storage) and this computer's journal
    for the unit records the `system.img` and `userdata.img` in this folder
    as its last complete installation, `adb -s <serial> reboot bootloader`,
    run `install.py flash` again with the same folder, and verify again;
    otherwise write nothing until verify has been run with the folder that
    was written to the unit. 4: nothing was compared (no unit runs Android
-   with ADB authorized; in fastboot, follow what `flash` said last, not this
-   stage). 1: nothing concluded (an answer could not be accounted for, a
-   read failed for a reason unrelated to the partition, or two readings
-   disagreed): run it again. `userdata` is not checked this way: Android
-   writes to it from the first boot.
+   with ADB authorized; in fastboot, follow what `flash` said last: its
+   exits 0, 7 and 8 mean both partitions are written). 1: nothing
+   concluded (an answer could not be accounted for, a read failed for a
+   reason unrelated to the partition, or two readings disagreed): run it
+   again. `userdata` is not checked this way: Android writes to it from the
+   first boot.
 7. **Device owner:** `adb -s <serial> shell dpm set-device-owner
    dev.mirror.repurpose.updater/.OtaDeviceAdminReceiver` (as in
    [OTA updates](../docs/ota-updates.md) step 4).
