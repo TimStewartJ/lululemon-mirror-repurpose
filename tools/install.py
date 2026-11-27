@@ -1744,6 +1744,10 @@ EXT4_MESSAGE = r"EXT4-fs (?:error|warning)[^(]*\(device {device}\)"
 # Always true of this check: no tool on the unit prints extended attributes but the SELinux label.
 ATTRIBUTES_LIMIT = ("extended attributes other than SELinux labels (file capabilities such as run-as's) are "
                     "not read anywhere on the unit: no tool there prints them")
+# Always true as well: ext4 skips a folder block it cannot read (fs/ext4/dir.c), find and ls take that for
+# the folder's end, and dmesg may drop the kernel's word of it (kernel/printk.c, syslog_print_all).
+FOLDERS_LIMIT = ("a folder's listing can match the image while a block of that folder could not be read: find "
+                 "and ls take such a block for the folder's end, and the kernel log may not hold its error")
 
 
 def verify_runner(arguments: list[str]) -> identify.Result:
@@ -1870,7 +1874,7 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
 
     seen: dict = {"names": set(), "broken": [], "lstatErrors": {}, "openErrors": {}, "stat": {}, "labels": {},
                   "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [],
-                  "kernelUnplaced": [], "limits": [ATTRIBUTES_LIMIT]}
+                  "kernelUnplaced": [], "limits": [ATTRIBUTES_LIMIT, FOLDERS_LIMIT]}
     before = lines("kernel before", KERNEL_BEFORE)
     if statuses.pop("kernel before") != 0:
         before = None
@@ -2334,10 +2338,11 @@ def stop_advice(images: dict, journal: tuple[dict | None, str], compared: dict) 
     last, state = journal
     keep = "Keep this output (with --json) as the record of what differed."
     if len(compared["storage"]) == len(compared["differences"]):
-        return ["Stop: every difference is a read that fails (an I/O error, a stop without a reason, or an ext4 "
-                "error the kernel logged), in two readings, with no content or metadata seen to differ. Failing "
-                "storage gives the same as a bad write, so a rewrite may not help. Write nothing yet: run this stage "
-                f"again; if it stays the same, whether to write again is the owner's call. {keep}"]
+        return ["Stop: every difference is an entry not seen on the unit or a read that fails (an I/O error, a stop "
+                "without a reason, or an ext4 error the kernel logged), in two readings, with no content or metadata "
+                "seen to differ. Neither establishes a bad write: a folder block ext4 cannot read hides names, and "
+                "failing storage gives the same failed reads, so a rewrite may not help. Write nothing yet: run this "
+                f"stage again; if it stays the same, whether to write again is the owner's call. {keep}"]
     if last == images:
         return [f"Stop: the unit's /system differs from system.img, in two readings, and this computer's journal "
                 f"for the unit records the system.img and userdata.img in this folder as the last complete "
