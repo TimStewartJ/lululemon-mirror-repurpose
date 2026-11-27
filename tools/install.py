@@ -29,8 +29,10 @@ Stages arrive one at a time; each says whether it reads or changes the unit.
               only digests cross the cable. The board's boot image keeps
               ro.debuggable=0 and its own SELinux policy, so adb's shell can read
               neither the partition itself nor the files that policy keeps from
-              it; those are listed as not read. A difference counts only if a
-              second reading of both sides finds the same.
+              it; those, and file capabilities (no tool on the unit prints them),
+              are listed as not read. Any other read failure is a difference, and
+              a difference counts only if a second reading of both sides finds
+              the same.
 
 The thermal stage never answers a plain pass yet: which kernel messages prove
 that the limits were registered is not known for this board, so its best
@@ -1688,28 +1690,44 @@ EXIT_CODES[VERIFIED] = 0
 SYSTEM_MOUNT = "/system"
 VERIFY_TIMEOUT = 1800
 VERIFY_MARKER = "__mirror_verify_end="
-# What make_ext4fs images hold; only such names can be told apart without doubt in the unit's answers.
+# What make_ext4fs images hold; only such names can be told apart without doubt in a line of the unit's answers.
 COMPARABLE_NAME = re.compile(r"[A-Za-z0-9._+@,=~-]{1,255}")
 COMPARABLE_TARGET = re.compile(r"[A-Za-z0-9._+@,=~/-]{1,1023}")
+# toybox's %Y prints the seconds as an unsigned 64-bit number.
 STAT_FORMAT = "%i %f %u %g %h %s %Y %n"
-STAT_LINE = re.compile(r"(\d+) ([0-9a-f]+) (\d+) (\d+) (\d+) (\d+) (-?\d+) (/.+)")
+STAT_LINE = re.compile(r"(\d+) ([0-9a-f]+) (\d+) (\d+) (\d+) (\d+) (\d+) (/.+)")
 LABEL_LINE = re.compile(r"([-dlcbps][-rwxsStT]{9}) +\S+ +\S+ +(\S+) (.+)")
 HASH_LINE = re.compile(r"([0-9a-f]{40})  (/.+)")
-FIND_ERROR = re.compile(r"find: (?:No )?(/.+?): ([^:]+)")
+HASH_FAILURE = re.compile(r"sha1sum: (/.+?): ([^:]+)")
+# toybox's dirtree (lib/dirtree.c): "<path>: why" when lstat or readlink fails, "No <path>: why" when a
+# folder it could lstat cannot be opened.
+FIND_ERROR = re.compile(r"find: (No )?(/.+?): ([^:]+)")
+# The only reason a read may fail on a sound file system: the board's policy or permissions refuse it.
+# Any other (an I/O error, "Structure needs cleaning") is a difference.
+REFUSED = "Permission denied"
+# adb on Android 6 takes a command of at most 4 KiB; the follow-up's paths stay well within it.
+FOLLOW_UP_BYTES = 3000
 STAT_FIELDS = ("inode", "mode", "uid", "gid", "links", "size", "mtime")
 # toolbox ls reads a link into 256 bytes and shows a longer target as its first 252 and "...".
 LS_LINK_BYTES = 255
-# Each pass prints only standard output: a buffered output and an unbuffered error stream would mix
-# inside lines. This toybox (c96e424, Silvering's and the API 23 emulator's) never runs the command of
-# `find -exec ... {} +`, hence xargs -0, and its `stat %N` prints a link target without ending it, so
-# targets come from toolbox ls.
+# Each pass runs through `adb exec-out` (the unit's bytes as they are, no terminal turning line ends
+# into CR LF) and prints only standard output: a buffered output and an unbuffered error stream would
+# mix inside lines. It ends with find's own exit status, which must be 0 or 1 and the same in every
+# pass. This toybox (c96e424, Silvering's and the API 23 emulator's) never runs the command of
+# `find -exec ... {} +`, hence xargs -0, whose own status says nothing (it is 0 even when its command
+# is missing or killed): every pass must instead cover exactly the names the first pass lists. Its
+# `stat %N` prints a link target without ending it, so targets come from toolbox ls.
+FIND_STATUS = "${PIPESTATUS[0]}"
 VERIFY_PASSES = {
-    "names": f"find {SYSTEM_MOUNT} -xdev 2>/dev/null",
-    "errors": f"find {SYSTEM_MOUNT} -xdev 2>&1 >/dev/null",
-    "stat": f"find {SYSTEM_MOUNT} -xdev -print0 2>/dev/null | xargs -0 stat -c '{STAT_FORMAT}' 2>/dev/null",
+    "names": f"find {SYSTEM_MOUNT} -xdev -print0 2>/dev/null; echo {VERIFY_MARKER}$?",
+    "errors": f"find {SYSTEM_MOUNT} -xdev 2>&1 >/dev/null; echo {VERIFY_MARKER}$?",
+    "stat": f"find {SYSTEM_MOUNT} -xdev -print0 2>/dev/null | xargs -0 stat -c '{STAT_FORMAT}' 2>/dev/null; "
+            f"echo {VERIFY_MARKER}{FIND_STATUS}",
     "labels": f"echo '@@ /'; ls -dZ {SYSTEM_MOUNT} 2>/dev/null; find {SYSTEM_MOUNT} -xdev -type d -print0 "
-              "2>/dev/null | xargs -0 sh -c 'for d; do echo \"@@ $d\"; ls -aZ \"$d\" 2>/dev/null; done' sh",
-    "hashes": f"find {SYSTEM_MOUNT} -xdev -type f -print0 2>/dev/null | xargs -0 sha1sum 2>/dev/null",
+              "2>/dev/null | xargs -0 sh -c 'for d; do echo \"@@ $d\"; ls -aZ \"$d\" 2>/dev/null; done' sh; "
+              f"echo {VERIFY_MARKER}{FIND_STATUS}",
+    "hashes": f"find {SYSTEM_MOUNT} -xdev -type f -print0 2>/dev/null | xargs -0 sha1sum 2>/dev/null; "
+              f"echo {VERIFY_MARKER}{FIND_STATUS}",
 }
 
 
@@ -1722,6 +1740,19 @@ def verify_runner(arguments: list[str]) -> identify.Result:
         return 1, "", str(error)
     return (completed.returncode, completed.stdout.decode("utf-8", "replace"),
             completed.stderr.decode("utf-8", "replace"))
+
+
+def shown_text(text: str | None, limit: int = 200) -> str | None:
+    """Text from the unit as it may be printed: control characters escaped, cut short."""
+    if text is None:
+        return None
+    escaped = "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+    return escaped if len(escaped) <= limit else escaped[:limit] + "..."
+
+
+def comparable_path(path: str) -> bool:
+    return path == SYSTEM_MOUNT or all(COMPARABLE_NAME.fullmatch(name)
+                                       for name in path[len(SYSTEM_MOUNT) + 1:].split("/"))
 
 
 def expected_system(folder: pathlib.Path) -> tuple[list[dict], str, str | None]:
@@ -1752,79 +1783,149 @@ def expected_system(folder: pathlib.Path) -> tuple[list[dict], str, str | None]:
 
 
 def read_system_over_adb(tools: identify.Tools, serial: str) -> dict:
-    """What adb's shell sees under /system: names, what find could not read, each entry's lstat, each
-    entry's SELinux label and each regular file's sha1, hashed on the unit so that only digests cross
-    the cable. Raises RuntimeError if a pass did not run to its end or printed a line it should not."""
-    def run(name: str) -> list[str]:
-        code, out, err = tools.adb("-s", serial, "shell", f"{VERIFY_PASSES[name]}; echo {VERIFY_MARKER}$?")
+    """What adb's shell sees under /system: every name (exactly, as find -print0 gives it), what find
+    could not lstat or open and why, each entry's lstat, SELinux label and link target, and each
+    regular file's sha1, hashed on the unit so that only digests cross the cable, or why sha1sum could
+    not read it. Raises RuntimeError unless every pass ran to its end over the same walk and accounted
+    for every name; a name that cannot be told apart in a line (``odd``) is itself a difference, so
+    lines it garbles are then passed over rather than refused."""
+    statuses: dict = {}
+
+    def run(command: str, name: str) -> str:
+        code, out, err = tools.adb("-s", serial, "exec-out", command)
         body, marker, status = out.rpartition(VERIFY_MARKER)
-        if code != 0 or not marker or not status.strip().isdigit():
-            shown = safe((out + err).replace(serial, "<unit>")[-300:])
+        match = re.fullmatch(r"(\d{1,3})\n", status)
+        if code != 0 or err.strip() or not marker or not match:
+            shown = safe((out[-200:] + " " + err).replace(serial, "<unit>"))
             raise RuntimeError(f"adb did not finish the {name} pass: {shown}")
-        return [line.rstrip("\r") for line in body.split("\n") if line.rstrip("\r")]
+        statuses[name] = int(match.group(1))
+        return body
 
-    def strange(name: str, line: str) -> RuntimeError:
-        return RuntimeError(f"the {name} pass printed a line this stage does not read: {safe(line)}")
+    seen: dict = {"names": set(), "odd": [], "lstatErrors": {}, "openErrors": {}, "stat": {}, "labels": {},
+                  "hashes": {}, "hashErrors": {}}
+    body = run(VERIFY_PASSES["names"], "names")
+    if body and not body.endswith("\0"):
+        raise RuntimeError(f"the names pass ended inside a name: {safe(shown_text(body[-80:]))}")
+    for path in body.split("\0")[:-1]:
+        if path != SYSTEM_MOUNT and not path.startswith(SYSTEM_MOUNT + "/") or path in seen["names"]:
+            raise RuntimeError(f"the names pass printed {safe(shown_text(path))} twice or outside {SYSTEM_MOUNT}")
+        seen["names"].add(path)
+        if not comparable_path(path):
+            seen["odd"].append(path)
+    if SYSTEM_MOUNT not in seen["names"]:
+        raise RuntimeError(f"adb's shell did not list {SYSTEM_MOUNT} itself, so find did not run as this stage "
+                           "expects")
+    tolerant = bool(seen["odd"])
 
-    def under_mount(path: str) -> bool:
-        return path == SYSTEM_MOUNT or path.startswith(SYSTEM_MOUNT + "/")
+    def lines(name: str, command: str | None = None) -> list[str]:
+        text = run(command or VERIFY_PASSES[name], name)
+        if not text:
+            return []
+        if not text.endswith("\n") and not tolerant:
+            raise RuntimeError(f"the {name} pass ended inside a line: {safe(shown_text(text[-80:]))}")
+        return text.split("\n")[:-1] if text.endswith("\n") else text.split("\n")
 
-    def add(found: dict, name: str, path: str, value) -> None:
-        if not under_mount(path) or path in found:
-            raise RuntimeError(f"the {name} pass named {safe(path)} {'twice' if path in found else 'outside /system'}")
-        found[path] = value
+    def strange(name: str, line: str) -> None:
+        if not tolerant:
+            raise RuntimeError(f"the {name} pass printed a line this stage does not read: {safe(shown_text(line))}")
 
-    seen: dict = {"names": {}, "errors": {}, "stat": {}, "labels": {}, "hashes": {}}
-    for line in run("names"):
-        add(seen["names"], "names", line, True)
-    for line in run("errors"):
+    for line in lines("errors"):
         match = FIND_ERROR.fullmatch(line)
         if not match:
-            raise strange("errors", line)
-        add(seen["errors"], "errors", match.group(1), match.group(2).strip())
-    for line in run("stat"):
+            strange("errors", line)
+            continue
+        unopened, path, reason = match.groups()
+        listed = path in seen["names"]
+        target = seen["openErrors"] if unopened else seen["lstatErrors"]
+        if bool(unopened) != listed or path in target or (not unopened and path.rpartition("/")[0] not in seen["names"]):
+            strange("errors", line)
+            continue
+        target[path] = reason.strip()
+    for line in lines("stat"):
         match = STAT_LINE.fullmatch(line)
-        if not match:
-            raise strange("stat", line)
-        inode, mode, uid, gid, links, size, mtime, path = match.groups()
-        add(seen["stat"], "stat", path, {"inode": int(inode), "mode": int(mode, 16), "uid": int(uid), "gid": int(gid),
-                                         "links": int(links), "size": int(size), "mtime": int(mtime)})
+        path = match.group(8) if match else None
+        if not match or path not in seen["names"] or path in seen["stat"]:
+            strange("stat", line)
+            continue
+        inode, mode, uid, gid, links, size, mtime = (int(value, 16 if index == 1 else 10)
+                                                     for index, value in enumerate(match.groups()[:7]))
+        seen["stat"][path] = {"inode": inode, "mode": mode, "uid": uid, "gid": gid, "links": links, "size": size,
+                              "mtime": mtime - (1 << 64) if mtime >= 1 << 63 else mtime}
     folder = None
-    for line in run("labels"):
+    for line in lines("labels"):
         if line.startswith("@@ "):
-            folder = line[3:]
+            folder = line[3:] if line[3:] == "/" or line[3:] in seen["names"] else None
+            if folder is None:
+                strange("labels", line)
             continue
         match = LABEL_LINE.fullmatch(line)
         if not match or folder is None:
-            raise strange("labels", line)
+            strange("labels", line)
+            continue
         name, target = match.group(3), None
         if match.group(1).startswith("l"):
             name, arrow, target = name.partition(" -> ")
             if not arrow:
-                raise strange("labels", line)
-        add(seen["labels"], "labels", f"{folder.rstrip('/')}/{name}", {"label": match.group(2), "target": target})
-    for line in run("hashes"):
+                strange("labels", line)
+                continue
+        path = f"{folder.rstrip('/')}/{name}"
+        if path not in seen["names"] or path in seen["labels"] or (folder == "/") != (path == SYSTEM_MOUNT):
+            strange("labels", line)
+            continue
+        seen["labels"][path] = {"label": match.group(2), "target": target}
+    for line in lines("hashes"):
         match = HASH_LINE.fullmatch(line)
-        if not match:
-            raise strange("hashes", line)
-        add(seen["hashes"], "hashes", match.group(2), match.group(1))
-    if SYSTEM_MOUNT not in seen["names"] or SYSTEM_MOUNT not in seen["stat"] \
-            or SYSTEM_MOUNT not in seen["labels"]:
-        raise RuntimeError(f"adb's shell did not list, stat and label {SYSTEM_MOUNT} itself, so its tools did "
-                           "not run as this stage expects")
+        path = match.group(2) if match else None
+        if not match or path not in seen["stat"] or path in seen["hashes"] \
+                or not stat.S_ISREG(seen["stat"][path]["mode"]):
+            strange("hashes", line)
+            continue
+        seen["hashes"][path] = match.group(1)
+    if any(status not in (0, 1) for status in statuses.values()) or len(set(statuses.values())) != 1 \
+            or (statuses["errors"] == 1) != bool(seen["lstatErrors"] or seen["openErrors"]):
+        raise RuntimeError(f"find did not walk {SYSTEM_MOUNT} to its end the same way in every pass "
+                           f"(exit statuses {statuses})")
+    if not tolerant:
+        for name, found in (("stat", seen["stat"]), ("labels", seen["labels"])):
+            if set(found) != seen["names"]:
+                left = sorted(seen["names"] - set(found))
+                raise RuntimeError(f"the {name} pass printed nothing for {len(left)} of the names find listed, "
+                                   f"such as {safe(left[0])}")
+    # The hash pass drops sha1sum's errors; ask once more, one file at a time, for those it did not hash.
+    unhashed = sorted(path for path, found in seen["stat"].items()
+                      if stat.S_ISREG(found["mode"]) and path not in seen["hashes"] and comparable_path(path))
+    while unhashed:
+        batch, length = [], 0
+        while unhashed and (not batch or length + len(shlex.quote(unhashed[0])) < FOLLOW_UP_BYTES):
+            batch.append(unhashed.pop(0))
+            length += len(shlex.quote(batch[-1])) + 1
+        command = (f"for f in {' '.join(shlex.quote(path) for path in batch)}; do sha1sum \"$f\" 2>&1; done; "
+                   f"echo {VERIFY_MARKER}$?")
+        for line in lines("hash follow-up", command):
+            hashed, failed = HASH_LINE.fullmatch(line), HASH_FAILURE.fullmatch(line)
+            path = hashed.group(2) if hashed else failed.group(1) if failed else None
+            if path not in batch or path in seen["hashes"] or path in seen["hashErrors"]:
+                strange("hash follow-up", line)
+                continue
+            if hashed:
+                seen["hashes"][path] = hashed.group(1)
+            else:
+                seen["hashErrors"][path] = failed.group(2).strip()
+        statuses.pop("hash follow-up")
+        if not tolerant and any(path not in seen["hashes"] and path not in seen["hashErrors"] for path in batch):
+            raise RuntimeError("sha1sum printed neither a sha1 nor an error for a file it was asked to hash again")
     return seen
 
 
 def comparable(entry: dict) -> bool:
     """Whether every name on the entry's path, and its link target, can be told apart in the unit's answers."""
-    names = entry["path"][len(SYSTEM_MOUNT):].split("/")[1:]
-    return all(COMPARABLE_NAME.fullmatch(name) for name in names) \
+    return comparable_path(entry["path"]) \
         and ("target" not in entry or bool(COMPARABLE_TARGET.fullmatch(entry["target"])))
 
 
 def compare_system(expected: list[dict], seen: dict) -> dict:
-    """The unit's answers against the image: each entry that differs, and each that adb's shell could
-    not read in full (with what was left unread)."""
+    """The unit's answers against the image, field by field: each entry with any field that differs,
+    and each that adb's shell could not read in full (with what was left unread)."""
     differences, unread = [], []
     hashed_bytes = file_bytes = full = 0
     paths = {entry["path"] for entry in expected}
@@ -1833,57 +1934,115 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
         regular = stat.S_ISREG(entry["mode"])
         file_bytes += entry["size"] if regular else 0
         what = {"path": path, "label": entry["label"], "size": entry["size"]}
-        if not comparable(entry):
-            unread.append({**what, "reason": "its name or link target holds characters this check cannot compare"})
-            continue
-        found = seen["stat"].get(path)
-        if found is None:
-            ancestors = [path[:index] for index in range(len(path)) if path[index] == "/"]
-            if path in seen["errors"]:
-                unread.append({**what, "reason": f"find: {seen['errors'][path]}"})
-            elif path in seen["names"]:
-                unread.append({**what, "reason": "listed, but stat printed nothing"})
-            elif any(ancestor in seen["errors"] for ancestor in ancestors):
-                unread.append({**what, "reason": "in a folder adb's shell may not open"})
+        closed = [path[:index] for index in range(1, len(path)) if path[index] == "/"
+                  and path[:index] in seen["openErrors"]]
+        if path not in seen["names"] and path not in seen["lstatErrors"]:
+            if closed:
+                reason = seen["openErrors"][closed[-1]]
+                unread.append({**what, "reason": "in a folder adb's shell may not open" if reason == REFUSED
+                               else f"in a folder find could not read ({reason})"})
             else:
                 differences.append({"path": path, "what": "missing on the unit"})
             continue
-        changed = [f"{field} {entry[field]!r} in the image, {found[field]!r} on the unit"
-                   for field in STAT_FIELDS if entry[field] != found[field]]
-        missing = []
+        if path in seen["lstatErrors"]:
+            reason = seen["lstatErrors"][path]
+            if reason == REFUSED:
+                unread.append({**what, "reason": f"find: {REFUSED}"})
+            else:
+                differences.append({"path": path, "what": f"find could not read it: {reason}"})
+            continue
+        if not comparable(entry):
+            unread.append({**what, "reason": "its name or link target holds characters this check cannot compare"})
+            continue
+        changed, missing = [], []
+        found = seen["stat"].get(path)
+        if found is None:
+            missing.append("its stat")
+        else:
+            changed += [f"{field} {entry[field]!r} in the image, {found[field]!r} on the unit"
+                        for field in STAT_FIELDS if entry[field] != found[field]]
+        if path in seen["openErrors"]:
+            reason = seen["openErrors"][path]
+            if reason == REFUSED:
+                missing.append(f"its listing ({REFUSED})")
+            else:
+                changed.append(f"find could not open it: {reason}")
         listed = seen["labels"].get(path)
-        if listed is not None:
+        if listed is None:
+            missing.append("label" + (" and link target" if "target" in entry else ""))
+        else:
             if listed["label"] != entry["label"]:
                 changed.append(f"label {entry['label']!r} in the image, {listed['label']!r} on the unit")
             target = entry.get("target")
             shown = target if target is None or len(target) <= LS_LINK_BYTES else target[:LS_LINK_BYTES - 3] + "..."
             if listed["target"] != shown:
-                changed.append(f"target {target!r} in the image, {listed['target']!r} on the unit")
+                changed.append(f"target {target!r} in the image, {shown_text(listed['target'])!r} on the unit")
             elif shown != target:
                 missing.append("the link target's end")
-        else:
-            missing.append("label" + (" and link target" if "target" in entry else ""))
         if regular:
+            failure = seen["hashErrors"].get(path)
             if path in seen["hashes"]:
                 if seen["hashes"][path] != entry["sha1"]:
                     changed.append(f"sha1 {entry['sha1']} in the image, {seen['hashes'][path]} on the unit")
                 else:
                     hashed_bytes += entry["size"]
+            elif failure is not None and failure != REFUSED:
+                changed.append(f"sha1sum could not read it: {failure}")
             else:
-                missing.append("content")
+                missing.append("content" + (f" ({failure})" if failure else ""))
+        if entry.get("attributes"):
+            # No tool on the unit prints file capabilities (security.capability) or other attributes.
+            missing.append(", ".join(entry["attributes"]))
         if changed:
             differences.append({"path": path, "what": "; ".join(changed)})
         elif missing:
             unread.append({**what, "reason": f"{' and '.join(missing)} not read"})
         else:
             full += 1
-    for source in ("names", "errors", "stat", "labels", "hashes"):
-        for path in seen[source]:
-            if path not in paths and not any(item["path"] == path for item in differences):
-                differences.append({"path": path, "what": "on the unit, not in system.img"})
+    for path in sorted(seen["names"] | set(seen["lstatErrors"])):
+        if path not in paths:
+            differences.append({"path": shown_text(path), "what": "on the unit, not in system.img"})
     verdict = STOP if differences else REVIEW if unread else VERIFIED
     return {"verdict": verdict, "entries": len(expected), "fullyChecked": full, "differences": differences,
             "unread": unread, "hashedBytes": hashed_bytes, "fileBytes": file_bytes}
+
+
+def journal_system(serial: str) -> tuple[str | None, str]:
+    """The sha256 of the system.img this computer's journal for the unit records as written last, and
+    how sure that is: ``written``, ``unfinished`` (a later write of system did not finish), ``none``
+    (no complete write of system), ``damaged`` (lines that cannot be read) or ``no journal``."""
+    path = default_journal(serial)
+    try:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return None, "no journal"
+    plan = written = None
+    state, damaged = "none", 0
+    before: tuple = (None, "none")
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            damaged += bool(line.strip())
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("event") == "plan":
+            images = entry.get("images")
+            system = images.get(WRITABLE[0]) if isinstance(images, dict) else None
+            plan = system.get("sha256") if isinstance(system, dict) else None
+        elif entry.get("event") == "write" and entry.get("partition") == WRITABLE[0]:
+            before, written, state = (written, state), None, "unfinished"
+        elif entry.get("event") in ("answer", "not sent") and entry.get("partition") == WRITABLE[0]:
+            if entry.get("outcome") == WRITTEN and isinstance(plan, str):
+                written, state = plan, "written"
+            elif entry.get("event") == "not sent" or entry.get("outcome") == UNCHANGED:
+                written, state = before
+            else:
+                written, state = None, "unfinished"
+    if damaged:
+        return None, "damaged"
+    return (written, state) if state == "written" else (None, state)
 
 
 def print_verification(result: dict) -> None:
@@ -1912,18 +2071,34 @@ def print_verification(result: dict) -> None:
 
 VERIFY_ADVICE = {
     VERIFIED: ["Every entry of system.img is on the unit as written. Go on with the session."],
-    REVIEW: ["Every entry adb's shell could read is as written. Those listed were not read in full: go on only "
-             "if they are entries the board's own SELinux policy keeps from adb's shell (on the project's unit, "
-             "daemons whose labels the factory policy grants no reader), not a folder or file Mirror Home or "
-             "the supervisor needs."],
-    STOP: ["Stop: the unit's /system differs from system.img, in two readings. Do not go on with the session: "
-           "restart it into fastboot (`adb reboot bootloader`), run `install.py flash` again with the same "
-           "folder (it writes system, then userdata), and verify again after the first boot."],
+    REVIEW: ["No entry differs. Those listed were not read in full: go on only if they are what the board's "
+             "own SELinux policy keeps from adb's shell (on the project's unit, daemons whose labels the factory "
+             "policy grants no reader) or attributes no tool on the unit prints (security.capability), not a "
+             "folder or file Mirror Home or the supervisor needs."],
 }
 
 
+def stop_advice(image_hash: str, journal: tuple[str | None, str]) -> list[str]:
+    written, state = journal
+    keep = "Keep this output (with --json) as the record of what differed."
+    if written == image_hash:
+        return [f"Stop: the unit's /system differs from system.img, in two readings, and this computer's journal "
+                f"for the unit records this very system.img as the one written. Do not go on with the session: "
+                f"`adb -s <serial> reboot bootloader`, run `install.py flash` again with the same folder (it "
+                f"writes system, then userdata), and verify again after the first boot. {keep}"]
+    record = {"written": f"records another system.img as written last (sha256 {written})",
+              "unfinished": "records a write of system that did not finish",
+              "none": "records no complete write of system",
+              "damaged": "has lines that cannot be read",
+              "no journal": "cannot be found (the unit may have been flashed from another account or computer, "
+                            "or adb and fastboot may name it differently)"}[state]
+    return [f"Stop: the unit's /system differs from this folder's system.img, in two readings, but this "
+            f"computer's journal for the unit {record}. Write nothing yet: run this stage with the folder that "
+            f"was written to the unit, and flash again only if /system still differs from that one. {keep}"]
+
+
 def verify(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> tuple[dict, int]:
-    """The whole stage; the result and the exit code. Sends the unit only `adb shell` reads."""
+    """The whole stage; the result and the exit code. Sends the unit only reads through `adb exec-out`."""
     try:
         expected, image_hash, fingerprint = expected_system(folder)
     except (OSError, ValueError) as error:
@@ -1936,32 +2111,39 @@ def verify(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> t
     if state != "android" or not found:
         advice = {
             "fastboot": "The unit is in fastboot: `fastboot reboot`, wait for Android, and run this stage again.",
-            "android-unauthorized": "ADB does not accept this computer's key: the key in userdata.img is not "
-                                    "this computer's (%USERPROFILE%\\.android\\adbkey.pub), or userdata was not "
-                                    "written as built. Build userdata.img with this computer's key and flash again.",
-        }.get(state, "No unit runs Android with ADB: connect the cable and wait for the first boot to bring up ADB.")
+            "android-unauthorized": "The unit does not accept this computer's ADB key. Nothing was compared. Wait "
+                                    "until it has finished starting and run this stage again; if it stays "
+                                    "unauthorized, check that userdata.img was built with the key this adb uses "
+                                    "(%USERPROFILE%\\.android\\adbkey.pub) before anything else.",
+        }.get(state, "No unit runs Android with ADB, so nothing was compared: connect the cable and wait for the "
+                     "first boot to bring up ADB.")
         return {**result, "verdict": INCOMPLETE, "advice": [advice]}, EXIT_CODES[INCOMPLETE]
     try:
         compared = compare_system(expected, read_system_over_adb(tools, found))
         if compared["verdict"] == STOP:
             # This computer's memory has flipped bits before: a difference counts only if a second
-            # reading of both sides finds exactly the same.
+            # reading of both sides, the image included, finds exactly the same.
             again = compare_system(expected_system(folder)[0], read_system_over_adb(tools, found))
             if again["differences"] != compared["differences"]:
                 raise RuntimeError("two readings found different differences, so either this computer or the unit "
                                    "did not read the same bytes twice; nothing is concluded. Run this stage again; "
                                    "if it happens again, test this computer's memory")
-        code, out, _ = tools.adb("-s", found, "shell", "getprop ro.build.fingerprint")
-        unit_fingerprint = safe(out.strip()) if code == 0 and out.strip() else None
+        code, out, _ = tools.adb("-s", found, "exec-out", "getprop ro.build.fingerprint")
+        unit_fingerprint = out.strip() if code == 0 and out.strip() else None
     except (RuntimeError, OSError, ValueError) as error:
         return {**result, "verdict": "unverified", "error": str(error).replace(found, "<unit>")}, 1
     result.update(compared)
-    result["unitFingerprint"] = unit_fingerprint
+    result["unitFingerprint"] = shown_text(unit_fingerprint)
     result["advice"] = []
     if fingerprint and unit_fingerprint and unit_fingerprint != fingerprint:
         result["advice"].append("The unit reports another build fingerprint than system.img's build.prop: first "
                                 "check that --images names the folder that was written to this unit.")
-    result["advice"] += VERIFY_ADVICE[compared["verdict"]]
+    if compared["verdict"] == STOP:
+        journal = journal_system(found)
+        result["journal"] = {"system": journal[0], "state": journal[1]}
+        result["advice"] += stop_advice(image_hash, journal)
+    else:
+        result["advice"] += VERIFY_ADVICE[compared["verdict"]]
     return result, EXIT_CODES[compared["verdict"]]
 
 

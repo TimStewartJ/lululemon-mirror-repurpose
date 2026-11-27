@@ -65,18 +65,20 @@ class Builder:
         return struct.pack("<HHHHI", ext4image.EXTENT_MAGIC, 1, 4, 1, 0) + struct.pack("<IIHH", 0, block, 0, 0)
 
     def inode(self, number, mode, size=0, iblock=b"", flags=ext4image.EXTENTS_FL, uid=0, gid=0, links=1,
-              mtime=1700000000, epoch=0, label=SYSTEM_LABEL, block_label=False):
+              mtime=1700000000, epoch=0, label=SYSTEM_LABEL, block_label=False, sectors=0, extra_attributes=None,
+              size_high=0):
         raw = bytearray(INODE_SIZE)
         struct.pack_into("<HHI", raw, 0, mode, uid & 0xFFFF, size & 0xFFFFFFFF)
         struct.pack_into("<I", raw, 16, mtime & 0xFFFFFFFF)
-        struct.pack_into("<HH", raw, 24, gid & 0xFFFF, links)
+        struct.pack_into("<HHI", raw, 24, gid & 0xFFFF, links, sectors)
         struct.pack_into("<I", raw, 32, flags)
         raw[40:40 + len(iblock)] = iblock
-        struct.pack_into("<I", raw, 108, size >> 32)
+        struct.pack_into("<I", raw, 108, (size >> 32) | size_high)
         struct.pack_into("<HH", raw, 120, uid >> 16, gid >> 16)
         struct.pack_into("<H", raw, 128, EXTRA)
         struct.pack_into("<I", raw, 0x88, epoch)
         attributes = {} if label is None else {(ext4image.SELINUX_INDEX, ext4image.SELINUX_NAME): label.encode() + b"\0"}
+        attributes.update(extra_attributes or {})
         if block_label:
             block = bytearray(BS)
             struct.pack_into("<III", block, 0, ext4image.XATTR_MAGIC, 1, 1)
@@ -95,7 +97,8 @@ class Builder:
 
     def file(self, number, content: bytes, mode=0o100644, **options):
         first, count = self.allocate(content)
-        self.inode(number, mode, len(content), self.extent_root([(0, count, first, False)]), **options)
+        self.inode(number, mode, len(content), self.extent_root([(0, count, first, False)]), sectors=8 * count,
+                   **options)
 
     def directory(self, number, own, parent, children, mode=0o40755, **options):
         block = bytearray()
@@ -106,7 +109,7 @@ class Builder:
                 record = BS - len(block)
             block += struct.pack("<IHBB", child, record, len(name), 0) + name + bytes(record - 8 - len(name))
         first, _ = self.allocate(bytes(block))
-        self.inode(number, mode, BS, self.extent_root([(0, 1, first, False)]), **options)
+        self.inode(number, mode, BS, self.extent_root([(0, 1, first, False)]), sectors=8, **options)
 
     def image(self) -> bytes:
         return bytes(self.data)
@@ -114,7 +117,8 @@ class Builder:
 
 SH = bytes(range(256)) * 20  # 5120 bytes: two blocks, the second partly used
 PROPERTIES = b"ro.build.fingerprint=test/silvering:6.0.1/MMB29M/1:userdebug/dev-keys\nro.other=1\n"
-LONG_TARGET = "/system/" + "x" * 90
+LONG_TARGET = "/system/" + "x" * 90  # make_ext4fs gives a target of 60 bytes or more a block of its own
+CAPABILITY = bytes.fromhex("01000002c0000000000000000000000000000000")
 
 
 def sample(depth=0) -> tuple[Builder, dict]:
@@ -130,10 +134,11 @@ def sample(depth=0) -> tuple[Builder, dict]:
     data, _ = image.allocate(b"D" * BS)
     holey_size = 4 * BS + 10
     image.inode(16, 0o100644, holey_size,
-                image.extent_root([(1, 1, data, False), (2, 1, data, True)], depth=depth))
+                image.extent_root([(1, 1, data, False), (2, 1, data, True)], depth=depth), sectors=16)
     first, _ = image.allocate(LONG_TARGET.encode())
-    image.inode(17, 0o120777, len(LONG_TARGET), image.extent_root([(0, 1, first, False)]))
-    image.file(18, b"other\n", uid=70000, gid=70001, epoch=1, mtime=-5, block_label=True)
+    image.inode(17, 0o120777, len(LONG_TARGET), struct.pack("<I", first), flags=0, sectors=8)
+    image.file(18, b"other\n", uid=70000, gid=70001, epoch=1, mtime=1234, block_label=True,
+               extra_attributes={(6, b"capability"): CAPABILITY})
     holey = bytes(BS) + b"D" * BS + bytes(2 * BS + 10)
     return image, {"holey": holey}
 
@@ -180,10 +185,38 @@ class Reader(unittest.TestCase):
         # A hole and an uninitialised extent read as zeros, and so does the end past the last extent.
         self.assertEqual(found["/system/holey"]["sha1"], sha1(contents["holey"]))
         other = found["/system/other"]
-        self.assertEqual((other["uid"], other["gid"], other["mtime"], other["label"]),
-                         (70000, 70001, (1 << 32) - 5, SYSTEM_LABEL))
+        # Kernel 3.10 ORs the epoch bits above the seconds; the capability is reported, the label apart.
+        self.assertEqual((other["uid"], other["gid"], other["mtime"], other["label"], other["attributes"]),
+                         (70000, 70001, (1 << 32) + 1234, SYSTEM_LABEL, {"security.capability": CAPABILITY.hex()}))
+        self.assertNotIn("attributes", found["/system/bin/sh"])
         self.assertEqual(found["/system/lost+found"]["mode"], 0o40700)
         self.assertNotIn("sha1", entries(image.image(), hash_files=False)[3])
+
+    def test_times_sizes_and_links_as_kernel_3_10_reads_them(self):
+        image, _ = sample()
+        # A negative time keeps its sign when epoch bits are ORed in (fs/ext4/ext4.h, ext4_decode_extra_time).
+        image.file(18, b"other\n", epoch=1, mtime=-5, block_label=True)
+        # i_size_high counts for regular files only (ext4_isize).
+        image.directory(11, 11, 2, [], mode=0o40700, size_high=1)
+        found = {entry["path"]: entry for entry in entries(image.image())}
+        self.assertEqual(found["/system/other"]["mtime"], -5)
+        self.assertEqual(found["/system/lost+found"]["size"], BS)
+        # A link is short (in i_block) only if it has no blocks of its own; 59 bytes fit, 60 never do.
+        for length, short in ((59, True), (59, False), (60, False), (60, True)):
+            with self.subTest(length=length, short=short):
+                target = "/" + "t" * (length - 1)
+                image, _ = sample()
+                if short:
+                    image.inode(17, 0o120777, length, target.encode()[:60], flags=0)
+                else:
+                    block, _ = image.allocate(target.encode())
+                    image.inode(17, 0o120777, length, struct.pack("<I", block), flags=0, sectors=8)
+                if short and length == 60:
+                    with self.assertRaises(ValueError):
+                        entries(image.image())
+                    continue
+                link = [entry for entry in entries(image.image()) if entry["path"] == "/system/long-link"][0]
+                self.assertEqual(link["target"], target)
 
     def test_an_index_node_leads_to_the_same_bytes(self):
         image, contents = sample(depth=1)
@@ -200,6 +233,18 @@ class Reader(unittest.TestCase):
         sh_block = [block for block in range(8, used) if raw[block * BS:block * BS + 256] == SH[:256]][0]
         with self.assertRaises(ext4image.Unknown):
             entries(to_sparse(raw, {**free, sh_block: ext4image.CHUNK_DONT_CARE}))
+
+    def test_a_fill_chunk_reads_its_pattern_from_any_offset(self):
+        raw = bytearray(4 * BS)
+        raw[0:BS] = bytes(range(256)) * 16
+        raw[BS:3 * BS] = b"\x01\x02\x03\x04" * (2 * BS // 4)
+        raw[3 * BS:] = b"\xff" * BS
+        unpacked = ext4image.Unpacked(io.BytesIO(sparse := to_sparse(bytes(raw), {1: ext4image.CHUNK_FILL,
+                                                                                    2: ext4image.CHUNK_FILL})),
+                                      len(sparse))
+        for offset, length in ((BS - 3, 10), (BS + 1, 7), (2 * BS - 2, 5), (3 * BS - 1, 3), (0, 4 * BS)):
+            with self.subTest(offset=offset):
+                self.assertEqual(unpacked.read(offset, length), bytes(raw[offset:offset + length]))
 
     def test_layouts_it_does_not_read_are_refused(self):
         cases = {}
@@ -223,8 +268,24 @@ class Reader(unittest.TestCase):
         image, _ = sample()
         image.data[TABLE * BS + 15 * INODE_SIZE:TABLE * BS + 15 * INODE_SIZE + 2] = struct.pack("<H", 0o170000)
         cases["an invalid type"] = image
-        for name, image in cases.items():
-            with self.subTest(name), self.assertRaises(ValueError):
+        image, _ = sample()
+        data, _ = image.allocate(b"D" * BS)
+        first_leaf, _ = image.allocate(struct.pack("<HHHHI", ext4image.EXTENT_MAGIC, 1, (BS - 12) // 12, 0, 0)
+                                       + image.leaves([(0, 1, data, False)]))
+        second_leaf, _ = image.allocate(struct.pack("<HHHHI", ext4image.EXTENT_MAGIC, 1, (BS - 12) // 12, 0, 0)
+                                        + image.leaves([(1, 1, data, False)]))
+        # Keys 0 and 3 route block 1 to the first child, which has no extent for it: the kernel reads a
+        # hole there, so a second child holding block 1 is refused, not read.
+        image.inode(16, 0o100644, 3 * BS, struct.pack("<HHHHI", ext4image.EXTENT_MAGIC, 2, 4, 1, 0)
+                    + struct.pack("<IIHH", 0, first_leaf, 0, 0) + struct.pack("<IIHH", 3, second_leaf, 0, 0))
+        cases["an extent outside its index key"] = (image, "index's range")
+        image, _ = sample()
+        image.directory(11, 11, 2, [], mode=0o40700)
+        struct.pack_into("<I", image.data, TABLE * BS + 10 * INODE_SIZE + 4, ext4image.MAX_DIRECTORY + BS)
+        cases["a directory too large to be one"] = (image, "claims")
+        for name, case in cases.items():
+            image, message = case if isinstance(case, tuple) else (case, "")
+            with self.subTest(name), self.assertRaisesRegex(ValueError, message):
                 entries(image.image())
 
     def test_a_cut_off_sparse_image_is_refused(self):

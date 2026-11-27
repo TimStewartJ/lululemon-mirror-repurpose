@@ -35,11 +35,15 @@ ROOT_INODE = 2
 INCOMPAT_READ = {0x2: "filetype", 0x40: "extents", 0x200: "flex_bg"}
 RO_COMPAT_READ = {0x1: "sparse_super", 0x2: "large_file", 0x8: "huge_file", 0x10: "gdt_csum",
                   0x20: "dir_nlink", 0x40: "extra_isize"}
-EXTENTS_FL, INLINE_DATA_FL, ENCRYPT_FL = 0x80000, 0x10000000, 0x800
+EXTENTS_FL, INLINE_DATA_FL, ENCRYPT_FL, HUGE_FILE_FL = 0x80000, 0x10000000, 0x800, 0x40000
 MAX_DEPTH = 5
 MAX_ENTRIES = 1_000_000
+MAX_DIRECTORY = 64 << 20
+MAX_LINK = 4095
 READ_PIECE = 1 << 20
 SELINUX_INDEX, SELINUX_NAME = 6, b"selinux"
+XATTR_PREFIXES = {1: "user.", 2: "system.posix_acl_access", 3: "system.posix_acl_default", 4: "trusted.",
+                  6: "security.", 7: "system.", 8: "system.richacl"}
 
 
 class Unknown(ValueError):
@@ -152,6 +156,7 @@ class Ext4:
                    if ro_compat & (1 << bit) and (1 << bit) not in RO_COMPAT_READ]
         if unread:
             raise ValueError(f"it uses ext4 features this tool does not read ({', '.join(unread)})")
+        self.huge_file = bool(ro_compat & 0x8)
         if log_block_size > 6:
             raise ValueError("its ext4 block size is not valid")
         self.block_size = 1024 << log_block_size
@@ -183,46 +188,61 @@ class Ext4:
         raw = self.image.read(self.inode_tables[group] * self.block_size + index * self.inode_size, self.inode_size)
         mode, uid_low, size_low = struct.unpack_from("<HHI", raw, 0)
         mtime = struct.unpack_from("<I", raw, 16)[0]
-        gid_low, links = struct.unpack_from("<HH", raw, 24)
+        gid_low, links, blocks_low = struct.unpack_from("<HHI", raw, 24)
         flags = struct.unpack_from("<I", raw, 32)[0]
         file_acl, size_high = struct.unpack_from("<II", raw, 104)
-        acl_high, uid_high, gid_high = struct.unpack_from("<HHH", raw, 118)
+        blocks_high, acl_high, uid_high, gid_high = struct.unpack_from("<HHHH", raw, 116)
         extra = struct.unpack_from("<H", raw, 128)[0] if self.inode_size > 128 else 0
         if extra and (extra % 4 or 128 + extra > self.inode_size):
             raise ValueError(f"inode {number} has an invalid extra size")
+        # As kernel 3.10 decodes them (fs/ext4/ext4.h): the seconds sign-extended, then the two epoch
+        # bits of i_mtime_extra (inode bytes 136-139) ORed in above them; i_size_high only for files.
         seconds = signed32(mtime)
-        if extra >= 12:  # i_mtime_extra (inode bytes 136-139): two epoch bits above the 32-bit seconds
-            seconds += (struct.unpack_from("<I", raw, 0x88)[0] & 3) << 32
+        if extra >= 12:
+            seconds |= (struct.unpack_from("<I", raw, 0x88)[0] & 3) << 32
+        sectors = blocks_low | (blocks_high << 32 if self.huge_file else 0)
+        if self.huge_file and flags & HUGE_FILE_FL:
+            sectors *= self.block_size >> 9
         return {"number": number, "mode": mode, "uid": uid_low | uid_high << 16, "gid": gid_low | gid_high << 16,
-                "links": links, "size": size_low | size_high << 32, "mtime": seconds, "flags": flags,
-                "fileAcl": file_acl | acl_high << 32, "iblock": raw[40:100], "extra": extra, "raw": raw}
+                "links": links, "size": size_low | (size_high << 32 if stat.S_ISREG(mode) else 0),
+                "mtime": seconds, "flags": flags, "sectors": sectors, "fileAcl": file_acl | acl_high << 32,
+                "iblock": raw[40:100], "extra": extra, "raw": raw}
 
     # -- data ---------------------------------------------------------------
 
     def extents(self, inode: dict) -> list[tuple[int, int, int, bool]]:
-        """(first logical block, length, first physical block, uninitialised) of every extent, in order."""
+        """(first logical block, length, first physical block, uninitialised) of every extent, in order.
+
+        An index node's keys route each logical block to one child, as the kernel's lookup does, so
+        every extent must lie in the range its keys give it."""
         found: list[tuple[int, int, int, bool]] = []
 
-        def walk(node: bytes, level: int, expected_depth: int | None) -> None:
+        def walk(node: bytes, low: int, high: int, expected_depth: int | None) -> None:
             magic, entries, maximum, depth = struct.unpack_from("<HHHH", node, 0)
             if magic != EXTENT_MAGIC or entries > maximum or 12 + 12 * maximum > len(node) or depth > MAX_DEPTH \
                     or (expected_depth is not None and depth != expected_depth):
                 raise ValueError(f"inode {inode['number']} has an invalid extent tree")
-            for entry in range(entries):
-                offset = 12 + 12 * entry
-                if depth:
+            if depth:
+                keys = [struct.unpack_from("<I", node, 12 + 12 * entry)[0] for entry in range(entries)]
+                if any(key < low or key >= high for key in keys) or keys != sorted(set(keys)):
+                    raise ValueError(f"inode {inode['number']} has an extent index out of order")
+                for entry, key in enumerate(keys):
+                    offset = 12 + 12 * entry
                     child = struct.unpack_from("<I", node, offset + 4)[0] | struct.unpack_from("<H", node, offset + 8)[0] << 32
-                    walk(self.block(child), level + 1, depth - 1)
-                else:
-                    logical, length, start_high, start_low = struct.unpack_from("<IHHI", node, offset)
-                    uninitialised = length > 32768
-                    length -= 32768 if uninitialised else 0
-                    physical = start_low | start_high << 32
-                    if not length or physical + length > self.blocks_count:
-                        raise ValueError(f"inode {inode['number']} has an extent outside the file system")
-                    found.append((logical, length, physical, uninitialised))
+                    walk(self.block(child), key, keys[entry + 1] if entry + 1 < entries else high, depth - 1)
+                return
+            for entry in range(entries):
+                logical, length, start_high, start_low = struct.unpack_from("<IHHI", node, 12 + 12 * entry)
+                uninitialised = length > 32768
+                length -= 32768 if uninitialised else 0
+                physical = start_low | start_high << 32
+                if not length or physical + length > self.blocks_count:
+                    raise ValueError(f"inode {inode['number']} has an extent outside the file system")
+                if logical < low or logical + length > high:
+                    raise ValueError(f"inode {inode['number']} has an extent outside its index's range")
+                found.append((logical, length, physical, uninitialised))
 
-        walk(inode["iblock"], 0, None)
+        walk(inode["iblock"], 0, 1 << 32, None)
         for before, after in zip(found, found[1:]):
             if before[0] + before[1] > after[0]:
                 raise ValueError(f"inode {inode['number']} has extents out of order or overlapping")
@@ -257,12 +277,27 @@ class Ext4:
             yield bytes(min(READ_PIECE, remaining - piece))
 
     def symlink_target(self, inode: dict) -> bytes:
-        if not inode["flags"] & EXTENTS_FL and inode["size"] < 60:
-            return inode["iblock"][:inode["size"]]
-        return b"".join(self.data(inode))
+        """As kernel 3.10 reads it: a link with no blocks of its own (but its attribute block) keeps its
+        target in i_block; make_ext4fs gives a longer one a single block through i_block[0]."""
+        size = inode["size"]
+        if not 0 < size <= MAX_LINK:
+            raise ValueError(f"inode {inode['number']} is a link of {size} bytes")
+        if inode["sectors"] - (self.block_size >> 9 if inode["fileAcl"] else 0) == 0:
+            if inode["flags"] & EXTENTS_FL or size >= 60:
+                raise ValueError(f"inode {inode['number']} is a short link that does not fit i_block")
+            return inode["iblock"][:size]
+        if inode["flags"] & EXTENTS_FL:
+            return b"".join(self.data(inode))
+        pointers = struct.unpack_from("<12I", inode["iblock"])
+        needed = -(-size // self.block_size)
+        if any(not pointer for pointer in pointers[:needed]):
+            raise ValueError(f"inode {inode['number']} is a link without its block")
+        return b"".join(self.block(pointer) for pointer in pointers[:needed])[:size]
 
     def directory(self, inode: dict) -> list[tuple[bytes, int]]:
         """(name, inode) of every entry but . and .."""
+        if inode["size"] > MAX_DIRECTORY:
+            raise ValueError(f"directory inode {inode['number']} claims {inode['size']} bytes")
         content = b"".join(self.data(inode))
         names: list[tuple[bytes, int]] = []
         for block_start in range(0, len(content), self.block_size):
@@ -312,18 +347,20 @@ class Ext4:
             entries(block, 32, 0)
         return found
 
-    def label(self, inode: dict) -> str | None:
-        value = self.attributes(inode).get((SELINUX_INDEX, SELINUX_NAME))
-        if value is None:
-            return None
-        return value.rstrip(b"\0").decode("utf-8", "surrogateescape")
-
     # -- the tree -------------------------------------------------------------
 
     def entry(self, path: str, inode: dict, hash_files: bool) -> dict:
         mode = inode["mode"]
+        attributes = self.attributes(inode)
+        label = attributes.pop((SELINUX_INDEX, SELINUX_NAME), None)
         found = {"path": path, "inode": inode["number"], "mode": mode, "uid": inode["uid"], "gid": inode["gid"],
-                 "links": inode["links"], "size": inode["size"], "mtime": inode["mtime"], "label": self.label(inode)}
+                 "links": inode["links"], "size": inode["size"], "mtime": inode["mtime"],
+                 "label": None if label is None else label.rstrip(b"\0").decode("utf-8", "surrogateescape")}
+        if attributes:
+            # Any other attribute (security.capability, say) as getfattr names it, its value in hex.
+            found["attributes"] = {
+                XATTR_PREFIXES.get(index, f"<index {index}>") + name.decode("utf-8", "surrogateescape"): value.hex()
+                for (index, name), value in sorted(attributes.items())}
         if stat.S_ISLNK(mode):
             found["target"] = self.symlink_target(inode).decode("utf-8", "surrogateescape")
         elif stat.S_ISREG(mode):
