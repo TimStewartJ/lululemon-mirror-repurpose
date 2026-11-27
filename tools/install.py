@@ -1869,7 +1869,7 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
 
     seen: dict = {"names": set(), "broken": [], "lstatErrors": {}, "openErrors": {}, "stat": {}, "labels": {},
                   "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [],
-                  "kernelUnplaced": [], "limits": [ATTRIBUTES_LIMIT]}
+                  "kernelUnplaced": [], "kernelCovered": False, "limits": [ATTRIBUTES_LIMIT]}
     before = lines("kernel before", KERNEL_BEFORE)
     if statuses.pop("kernel before") != 0:
         before = None
@@ -2068,6 +2068,9 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
     if disk is not None and anchor is not None and (anchor == "" or log.count(anchor) == 1):
         start = log.index(anchor) + 1 if anchor else 0
         seen["kernelErrors"] = [line for line in log[start:] if pattern.search(line)]
+        # The log covered the walks: a folder block ext4 could not read (fs/ext4/dir.c skips it and logs
+        # "directory contains a hole") would show here.
+        seen["kernelCovered"] = True
         earlier = log[:start]
     else:
         if disk is not None and before is not None:
@@ -2122,7 +2125,13 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
                            else f"in a folder find could not read ({reason})"})
             continue
         if path not in seen["names"] and path not in seen["lstatErrors"]:
-            differ(path, "missing on the unit")
+            # ext4 skips a folder block it cannot read, so find and ls both miss its names: an absence counts
+            # as more than a failed read only when the kernel log covered the walks and logged nothing.
+            trusted = seen["kernelCovered"] and not seen["kernelErrors"]
+            differ(path, "missing on the unit" if trusted else "missing on the unit (its folder may have a "
+                         "block the kernel could not read; the kernel log does not rule it out)")
+            if not trusted:
+                storage.append(path)
             continue
         if path in seen["lstatErrors"]:
             reason = seen["lstatErrors"][path]
@@ -2407,6 +2416,10 @@ def verify(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> t
         result["advice"] += stop_advice({"system": image_hash, "userdata": userdata}, journal, compared)
     else:
         result["advice"] += VERIFY_ADVICE[compared["verdict"]]
+        if compared["kernelUnplaced"]:
+            result["advice"].append("The kernel logged an ext4 error for /system that this check cannot place before "
+                                    "or during its walks: run this stage again before going on, and write nothing on "
+                                    "that message alone.")
     return result, EXIT_CODES[compared["verdict"]]
 
 

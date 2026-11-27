@@ -1709,6 +1709,7 @@ class Verify(unittest.TestCase):
         self.kernel_new = [f"[   40.1] {fault.format('ls')}"]
         result, code = self.verify()
         self.assertEqual((code, result["kernelUnplaced"]), (5, [f"[   40.1] {fault.format('ls')}"]), result)
+        self.assertIn("cannot place", " ".join(result["advice"]))
         # An error the later log holds before the anchor, which the earlier snapshot did not, cannot be placed.
         self.kernel_before_status, self.kernel_new = 0, []
         self.answer = lambda name: original_answer(name)[:5] + [f"[    5.5] {fault.format('ls')}", "[    6.0] booted"] \
@@ -1740,6 +1741,30 @@ class Verify(unittest.TestCase):
         self.unit["/system/holey"]["sha1"] = "c" * 40
         result, code = self.verify()
         self.assertEqual(code, 3, result)
+        self.assertIn("reboot bootloader", " ".join(result["advice"]))
+
+    def test_entries_a_folder_block_may_hide_are_no_reason_to_write(self):
+        userdata = "1" * 64
+        (self.folder / "userdata.img.sha256").write_text(f"{userdata}  userdata.img\n")
+        self.write_journal({"system": self.image_hash, "userdata": userdata})
+        # ext4 skips a folder block it cannot read and logs it: find and ls both miss the names in it.
+        del self.unit["/system/bin/sh"], self.unit["/system/bin/ls"]
+        self.kernel_new = ["[   40.1] EXT4-fs error (device vda): ext4_readdir:177: inode #12: comm find: "
+                           "directory contains a hole at lblock 0"]
+        for kernel_readable in (True, False):
+            with self.subTest(kernel_readable=kernel_readable):
+                self.kernel_status = self.kernel_before_status = 0 if kernel_readable else 1
+                result, code = self.verify()
+                self.assertEqual(code, 3, result)
+                self.assertIn("may have a block the kernel could not read", str(result["differences"]))
+                self.assertIn("storage", " ".join(result["advice"]))
+                self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        # With the walks covered by a clean kernel log, a missing name is what was written.
+        self.kernel_status = self.kernel_before_status = 0
+        self.kernel_new = []
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertIn({"path": "/system/bin/sh", "what": "missing on the unit"}, result["differences"])
         self.assertIn("reboot bootloader", " ".join(result["advice"]))
 
     def test_a_stop_advises_another_write_only_for_both_images_the_journal_binds(self):
@@ -1926,8 +1951,8 @@ class Verify(unittest.TestCase):
         seen = {"names": {"/system/link"}, "broken": [], "lstatErrors": {}, "openErrors": {},
                 "stat": {"/system/link": {key: entry[key] for key in install.STAT_FIELDS}},
                 "labels": {"/system/link": {"label": entry["label"], "target": entry["target"][:252] + "..."}},
-                "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [], "kernelUnplaced": [],
-                "limits": []}
+                "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [],
+                "kernelUnplaced": [], "kernelCovered": True, "limits": []}
         result = install.compare_system([entry], seen)
         self.assertEqual(result["verdict"], install.REVIEW)
         self.assertEqual(result["unread"][0]["reason"], "the link target's end not read")
