@@ -293,6 +293,29 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
    `adb -s <serial> shell pm path dev.mirror.repurpose.updater` names the
    supervisor. Keep `adb logcat -b all -d` and `adb shell dmesg` from this
    boot.
+
+   **Then, before anything else, check what was written:**
+   `python tools\install.py verify --images <folder> --serial <serial>`.
+   Nothing between this computer and the partition checks the bytes end to
+   end (fastboot sends them, the bootloader writes them), and the project's
+   flashing computer has flipped single bits in copies of `system.img`
+   (2026-11-26: 5 of 45 copies in memory). The board's boot image keeps
+   `ro.debuggable=0` and its own SELinux policy, so adb's shell can read
+   neither the partition nor the files that policy keeps from it; the stage
+   compares the mounted `/system` with `system.img` entry by entry instead:
+   inode, type and mode, owner, links, size, modification time, symlink
+   target and SELinux label, and every regular file's sha1, hashed on the
+   unit so only digests cross the cable. It needs ADB, not a finished boot.
+   Exit 0: every entry is as written. 5 (review): no difference, but the
+   entries listed could not be read in full; go on only if they are files
+   the factory policy keeps from adb's shell (daemons such as
+   `wpa_supplicant`), not anything Mirror Home or the supervisor needs. 3
+   (Stop): `/system` differs in two readings; `adb -s <serial> reboot
+   bootloader`, run `install.py flash` again with the same folder, and
+   verify again. 1: nothing concluded (a reading could not be used, or two
+   readings disagreed): run it again. `userdata` is not checked this way:
+   Android writes to it from the first boot, and ADB accepting this
+   computer's key shows its key file arrived.
 7. **Device owner:** `adb -s <serial> shell dpm set-device-owner
    dev.mirror.repurpose.updater/.OtaDeviceAdminReceiver` (as in
    [OTA updates](../docs/ota-updates.md) step 4).
@@ -313,3 +336,5 @@ Read over Wi-Fi through Mirror Home 2.3.0-dev.28 on the project's unit
 
 `aboot` is untouched: hold VOL- at power-on, `fastboot getvar all`, and flash
 a corrected `system` (or a fresh `userdata`). Keep the boot log for the fix.
+If ADB comes up but the boot never completes, run `install.py verify` first:
+a `system` that differs from its image is the first thing to rule out.

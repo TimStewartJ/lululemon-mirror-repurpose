@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The installer's `verify` stage (`tools/install.py verify --images <folder>
+  --serial <serial>`) checks, after the first boot and over ADB only, that
+  the unit's `/system` is `system.img` as written: every entry's inode,
+  type and mode, owner, links, size, modification time, symlink target and
+  SELinux label, and every regular file's sha1, hashed on the unit. The
+  expected values come from a new reader of the image's ext4 file system
+  (`tools/ext4image.py`, raw or sparse, no mounting), which gives exactly
+  what the Linux kernel shows for Silvering's image. Entries adb's shell may
+  not read are listed for review; a difference counts only if a second
+  reading of both sides finds the same. Tried on the API 23 emulator, whose
+  toybox and toolbox are Silvering's, including an image with two flipped
+  bits.
+
 - The installer's `flash` stage (`tools/install.py flash --images <folder>
   --serial <serial>`) makes the runbook's two writes: it runs the plan again
   and needs `ready` with only this unit in fastboot, writes nothing until a
