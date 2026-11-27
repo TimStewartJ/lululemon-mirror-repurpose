@@ -8,11 +8,15 @@
   type and mode, owner, links, size, modification time, symlink target and
   SELinux label, and every regular file's sha1, hashed on the unit. The
   expected values come from a new reader of the image's ext4 file system
-  (`tools/ext4image.py`, raw or sparse, no mounting), which gives exactly
-  what the Linux kernel shows for Silvering's image. Entries adb's shell may
-  not read are listed for review; a difference counts only if a second
-  reading of both sides finds the same. Tried on the API 23 emulator, whose
-  toybox and toolbox are Silvering's, including an image with two flipped
+  (`tools/ext4image.py`, raw or sparse, no mounting, decoding as the unit's
+  3.10 kernel does), which gives exactly what the Linux kernel shows for
+  Silvering's image, extended attributes included. Entries adb's shell may
+  not read, and `run-as`'s file capability (no tool on the unit prints
+  one), are listed for review; any other read failure is a difference, and
+  a difference counts only if a second reading of both sides finds the
+  same. A Stop advises writing again only if the unit's flash journal
+  records that very image. Tried on the API 23 emulator, whose toybox,
+  toolbox and mksh are Silvering's, including an image with two flipped
   bits.
 
 - The installer's `flash` stage (`tools/install.py flash --images <folder>

@@ -1372,7 +1372,8 @@ class Flash(unittest.TestCase):
 
 
 class Verify(unittest.TestCase):
-    """The unit is a stand-in that answers each pass as the API 23 emulator's toybox and toolbox do."""
+    """The unit is a stand-in that answers each pass as the API 23 emulator's toybox, toolbox and mksh do
+    through `adb exec-out`."""
 
     def setUp(self):
         image, _ = test_ext4image.sample()
@@ -1380,11 +1381,18 @@ class Verify(unittest.TestCase):
         self.folder = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.folder)
         (self.folder / "system.img").write_bytes(raw)
-        (self.folder / "system.img.sha256").write_text(f"{hashlib.sha256(raw).hexdigest()}  system.img\n")
+        self.image_hash = hashlib.sha256(raw).hexdigest()
+        (self.folder / "system.img.sha256").write_text(f"{self.image_hash}  system.img\n")
         self.expected = test_ext4image.entries(raw)
         self.unit = {entry["path"]: dict(entry) for entry in self.expected}
         self.denied, self.unopened, self.unhashed = set(), set(), set()
+        self.reasons: dict[str, str] = {}
+        self.statuses: dict[str, int] = {}
         self.state, self.readings, self.changes_once, self.calls = "device", 0, None, []
+        journal = self.folder / "journal.jsonl"
+        patcher = unittest.mock.patch.object(install, "default_journal", return_value=journal)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def visible(self, path: str) -> bool:
         ancestors = [path[:index] for index in range(1, len(path)) if path[index] == "/"]
@@ -1400,11 +1408,12 @@ class Verify(unittest.TestCase):
         if name == "names":
             return shown
         if name == "errors":
-            return [f"find: {path}: Permission denied" for path in sorted(self.denied) if path in unit] + \
-                [f"find: No {path}: Permission denied" for path in sorted(self.unopened)]
+            return [f"find: {path}: {self.reasons.get(path, 'Permission denied')}" for path in sorted(self.denied)
+                    if path in unit and self.visible(path.rpartition("/")[0])] + \
+                [f"find: No {path}: {self.reasons.get(path, 'Permission denied')}" for path in sorted(self.unopened)]
         if name == "stat":
-            return [f"{e['inode']} {e['mode']:x} {e['uid']} {e['gid']} {e['links']} {e['size']} {e['mtime']} {path}"
-                    for path, e in ((path, unit[path]) for path in shown)]
+            return [f"{e['inode']} {e['mode']:x} {e['uid']} {e['gid']} {e['links']} {e['size']} "
+                    f"{e['mtime'] % (1 << 64)} {path}" for path, e in ((path, unit[path]) for path in shown)]
         if name == "hashes":
             return [f"{unit[path]['sha1']}  {path}" for path in shown
                     if stat.S_ISREG(unit[path]["mode"]) and path not in self.unhashed]
@@ -1425,6 +1434,9 @@ class Verify(unittest.TestCase):
                           if path.rpartition("/")[0] == folder]
         return lines
 
+    def status(self, name: str) -> int:
+        return self.statuses.get(name, 1 if self.denied or self.unopened else 0)
+
     def runner(self, arguments):
         self.calls.append(arguments)
         tool, *rest = arguments
@@ -1433,13 +1445,23 @@ class Verify(unittest.TestCase):
                 return 0, f"{SERIAL}\tfastboot\n" if self.state == "fastboot" else "", ""
             listed = f"{SERIAL}\t{self.state}\n" if self.state in ("device", "unauthorized") else ""
             return 0, "List of devices attached\n" + listed, ""
-        self.assertEqual(rest[:3], ["-s", SERIAL, "shell"])
-        if rest[3] == "getprop ro.build.fingerprint":
+        self.assertEqual(rest[:3], ["-s", SERIAL, "exec-out"])
+        command = rest[3]
+        if command == "getprop ro.build.fingerprint":
             return 0, "test/silvering:6.0.1/MMB29M/1:userdebug/dev-keys\n", ""
-        for name, command in install.VERIFY_PASSES.items():
-            if rest[3] == f"{command}; echo {install.VERIFY_MARKER}$?":
-                return 0, "".join(f"{line}\n" for line in self.answer(name)) + f"{install.VERIFY_MARKER}0\n", ""
-        self.fail(f"not a read this stage makes: {rest[3]}")
+        end = install.VERIFY_MARKER
+        if command.startswith("for f in "):
+            paths = shlex.split(command[len("for f in "):command.index("; do sha1sum")])
+            lines = [f"sha1sum: {path}: {self.reasons.get(path, 'Permission denied')}" for path in paths]
+            return 0, "".join(f"{line}\n" for line in lines) + f"{end}0\n", ""
+        for name, text in install.VERIFY_PASSES.items():
+            if command == text:
+                if name == "names":
+                    body = "".join(f"{path}\0" for path in self.answer(name))
+                else:
+                    body = "".join(f"{line}\n" for line in self.answer(name))
+                return 0, f"{body}{end}{self.status(name)}\n", ""
+        self.fail(f"not a read this stage makes: {command}")
 
     def verify(self):
         return install.verify(identify.Tools("adb", "fastboot", self.runner), self.folder, None)
@@ -1447,47 +1469,129 @@ class Verify(unittest.TestCase):
     def passes(self) -> int:
         return sum(1 for arguments in self.calls if arguments[1:2] == ["-s"] and "getprop" not in arguments[-1])
 
-    def test_every_entry_as_written_is_verified(self):
+    def journal(self, system_hash: str) -> None:
+        entries = [{"event": "plan", "images": {"system": {"sha256": system_hash}}},
+                   {"event": "write", "partition": "system"},
+                   {"event": "answer", "partition": "system", "outcome": install.WRITTEN}]
+        install.default_journal("").write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+
+    def test_every_entry_as_written_is_verified_apart_from_what_no_tool_reads(self):
         result, code = self.verify()
-        self.assertEqual((result["verdict"], code), (install.VERIFIED, 0), result)
-        self.assertEqual(result["fullyChecked"], len(self.expected))
+        self.assertEqual((result["verdict"], code), (install.REVIEW, 5), result)
+        self.assertEqual(result["differences"], [])
+        # The only entry not read in full carries a file capability, which no tool on the unit prints.
+        self.assertEqual(result["unread"], [{"path": "/system/other", "label": test_ext4image.SYSTEM_LABEL,
+                                             "size": 6, "reason": "security.capability not read"}])
+        self.assertEqual(result["fullyChecked"], len(self.expected) - 1)
         self.assertEqual(result["hashedBytes"], result["fileBytes"])
         self.assertEqual(result["fingerprint"], result["unitFingerprint"])
         self.assertEqual(self.passes(), len(install.VERIFY_PASSES))
         self.assertNotIn(SERIAL, json.dumps(result))
+        for expected in self.expected:
+            expected.pop("attributes", None)
+        self.assertEqual(install.compare_system(self.expected, install.read_system_over_adb(
+            identify.Tools("adb", "fastboot", self.runner), SERIAL))["verdict"], install.VERIFIED)
 
     def test_entries_the_shell_may_not_read_are_listed_for_review(self):
-        self.denied, self.unopened, self.unhashed = {"/system/other"}, {"/system/bin"}, {"/system/build.prop"}
+        self.denied, self.unopened = {"/system/build.prop"}, {"/system/bin", "/system/lost+found"}
+        self.unhashed = {"/system/holey"}
         result, code = self.verify()
         self.assertEqual((result["verdict"], code), (install.REVIEW, 5), result)
         self.assertEqual(result["differences"], [])
         reasons = {item["path"]: item["reason"] for item in result["unread"]}
-        self.assertEqual(reasons, {"/system/other": "find: Permission denied",
+        self.assertEqual(reasons, {"/system/build.prop": "find: Permission denied",
+                                   "/system/bin": "its listing (Permission denied) not read",
                                    "/system/bin/ls": "in a folder adb's shell may not open",
                                    "/system/bin/sh": "in a folder adb's shell may not open",
-                                   "/system/build.prop": "content not read"})
-        self.assertEqual(result["fullyChecked"], len(self.expected) - 4)
+                                   # An empty folder still counts as unread when it cannot be listed.
+                                   "/system/lost+found": "its listing (Permission denied) not read",
+                                   "/system/holey": "content (Permission denied) not read",
+                                   "/system/other": "security.capability not read"})
         self.assertLess(result["hashedBytes"], result["fileBytes"])
+
+    def test_a_read_that_fails_for_any_reason_but_a_refusal_is_a_difference(self):
+        self.unopened, self.unhashed = {"/system/bin"}, {"/system/build.prop"}
+        self.reasons = {"/system/bin": "Structure needs cleaning", "/system/build.prop": "I/O error"}
+        result, code = self.verify()
+        self.assertEqual((result["verdict"], code), (install.STOP, 3), result)
+        self.assertEqual({item["path"]: item["what"] for item in result["differences"]},
+                         {"/system/bin": "find could not open it: Structure needs cleaning",
+                          "/system/build.prop": "sha1sum could not read it: I/O error"})
+        self.assertEqual({item["path"]: item["reason"] for item in result["unread"]
+                          if item["path"].startswith("/system/bin/")},
+                         {"/system/bin/ls": "in a folder find could not read (Structure needs cleaning)",
+                          "/system/bin/sh": "in a folder find could not read (Structure needs cleaning)"})
+        self.denied, self.unopened, self.unhashed, self.calls = {"/system/holey"}, set(), set(), []
+        self.reasons = {"/system/holey": "Input/output error"}
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertEqual(result["differences"], [{"path": "/system/holey",
+                                                  "what": "find could not read it: Input/output error"}])
 
     def test_a_difference_seen_in_two_readings_stops(self):
         self.unit["/system/build.prop"]["sha1"] = "f" * 40
         self.unit["/system/bin/sh"]["label"] = "u:object_r:system_file:s0"
         self.unit["/system/bin/ls"]["target"] = "toybox"
-        self.unit["/system/other"]["mode"] = 0o100600
-        self.unit["/system/extra"] = {**self.unit["/system/other"], "path": "/system/extra"}
+        self.unit["/system/lost+found"]["mode"] = 0o40755
+        self.unit["/system/extra"] = {**self.unit["/system/build.prop"], "path": "/system/extra"}
         del self.unit["/system/holey"]
         result, code = self.verify()
         self.assertEqual((result["verdict"], code), (install.STOP, 3), result)
         self.assertEqual(sorted(item["path"] for item in result["differences"]),
                          ["/system/bin/ls", "/system/bin/sh", "/system/build.prop", "/system/extra", "/system/holey",
-                          "/system/other"])
+                          "/system/lost+found"])
         self.assertIn("missing on the unit", str(result["differences"]))
-        self.assertIn("flash", " ".join(result["advice"]))
         self.assertEqual(self.passes(), 2 * len(install.VERIFY_PASSES))
+        # No record that this folder was written to the unit: never advise another write.
+        self.assertIn("Write nothing yet", " ".join(result["advice"]))
+        self.assertEqual(result["journal"], {"system": None, "state": "no journal"})
+
+    def test_a_stop_advises_another_write_only_for_the_image_the_journal_records(self):
+        self.unit["/system/build.prop"]["sha1"] = "f" * 40
+        for recorded, advice in ((self.image_hash, "run `install.py flash` again"),
+                                 ("0" * 64, "Write nothing yet")):
+            with self.subTest(recorded=recorded):
+                self.journal(recorded)
+                result, code = self.verify()
+                self.assertEqual(code, 3)
+                self.assertIn(advice, " ".join(result["advice"]))
+                self.assertIn("-s <serial>" if recorded == self.image_hash else recorded, " ".join(result["advice"]))
+
+    def test_a_time_before_1970_reads_the_same(self):
+        image, _ = test_ext4image.sample()
+        image.file(15, test_ext4image.PROPERTIES, mtime=-5)
+        raw = image.image()
+        (self.folder / "system.img").write_bytes(raw)
+        (self.folder / "system.img.sha256").write_text(f"{hashlib.sha256(raw).hexdigest()}  system.img\n")
+        self.unit = {entry["path"]: dict(entry) for entry in test_ext4image.entries(raw)}
+        self.assertEqual(self.unit["/system/build.prop"]["mtime"], -5)
+        result, code = self.verify()
+        self.assertEqual((result["differences"], code), ([], 5), result)
+
+    def test_a_name_that_only_looks_the_same_is_a_difference(self):
+        for odd in ("/system/build.prop\r", "/system/build.prop\n", "/system/build prop"):
+            with self.subTest(name=odd):
+                self.unit = {entry["path"]: dict(entry) for entry in self.expected}
+                self.unit[odd] = {**self.unit.pop("/system/build.prop"), "path": odd}
+                result, code = self.verify()
+                self.assertEqual(code, 3, result)
+                self.assertIn({"path": "/system/build.prop", "what": "missing on the unit"}, result["differences"])
+                self.assertIn({"path": install.shown_text(odd), "what": "on the unit, not in system.img"},
+                              result["differences"])
 
     def test_a_difference_seen_in_one_reading_concludes_nothing(self):
         self.changes_once = "/system/build.prop"
         result, code = self.verify()
+        self.assertEqual(code, 1, result)
+        self.assertIn("two readings", result["error"])
+        # The same when this computer reads the image differently the first time.
+        self.changes_once, self.calls = None, []
+        first = test_ext4image.entries((self.folder / "system.img").read_bytes())
+        first[4] = {**first[4], "sha1": "e" * 40}
+        clean = install.expected_system(self.folder)
+        with unittest.mock.patch.object(install, "expected_system",
+                                        side_effect=[(first, *clean[1:]), clean]):
+            result, code = self.verify()
         self.assertEqual(code, 1, result)
         self.assertIn("two readings", result["error"])
 
@@ -1499,21 +1603,32 @@ class Verify(unittest.TestCase):
         self.assertEqual(code, 1, result)
         self.assertEqual(self.calls, [])
 
-    def test_answers_it_cannot_read_conclude_nothing(self):
-        original = self.answer
-        for name, change in (("cut off", lambda name, lines: lines),
-                             ("strange line", lambda name, lines: lines + ["stat: '/system/x': Permission denied"]
-                              if name == "stat" else lines),
-                             ("no /system", lambda name, lines: [line for line in lines if line != "/system"])):
+    def test_answers_it_cannot_account_for_conclude_nothing(self):
+        original_answer, original_runner = self.answer, self.runner
+        cases = {
+            "a pass cut off": ({}, lambda arguments, answer: (answer[0], answer[1].replace(
+                install.VERIFY_MARKER, "") if "sha1sum" in arguments[-1] else answer[1], answer[2])),
+            "find killed": ({"errors": 137}, None),
+            "passes walking differently": ({"hashes": 1}, None),
+            "a strange line": ({}, lambda arguments, answer: (answer[0], answer[1].replace(
+                install.VERIFY_MARKER, "stat: '/system/x': Permission denied\n" + install.VERIFY_MARKER, 1)
+                if "xargs -0 stat" in arguments[-1] else answer[1], answer[2])),
+            "a row missing": ({}, lambda arguments, answer: (answer[0], "\n".join(
+                line for line in answer[1].split("\n") if not line.endswith(" /system/bin/ls"))
+                if "xargs -0 stat" in arguments[-1] else answer[1], answer[2])),
+            "no /system": ({}, lambda arguments, answer: (answer[0], answer[1].replace("/system\0", "", 1)
+                                                          if arguments[-1] == install.VERIFY_PASSES["names"]
+                                                          else answer[1], answer[2])),
+            "adb's own error": ({}, lambda arguments, answer: (answer[0], answer[1], "error: device offline")
+                                if "sha1sum" in arguments[-1] else answer),
+        }
+        for name, (statuses, change) in cases.items():
             with self.subTest(name):
-                self.calls = []
-                self.answer = lambda pass_name, change=change: change(pass_name, original(pass_name))
-                runner = self.runner
-                if name == "cut off":
-                    self.runner = lambda arguments: (lambda code, out, err: (code, out.replace(
-                        install.VERIFY_MARKER, "") if "sha1sum" in arguments[-1] else out, err))(*runner(arguments))
-                result, code = install.verify(identify.Tools("adb", "fastboot", self.runner), self.folder, None)
-                self.runner = runner
+                self.calls, self.statuses, self.answer = [], statuses, original_answer
+                self.runner = original_runner if change is None else (
+                    lambda arguments, change=change: change(arguments, original_runner(arguments)))
+                result, code = self.verify()
+                self.runner = original_runner
                 self.assertEqual(code, 1, result)
                 self.assertNotIn(SERIAL, result["error"])
 
@@ -1524,20 +1639,37 @@ class Verify(unittest.TestCase):
                 result, code = self.verify()
                 self.assertEqual((result["verdict"], code), (install.INCOMPLETE, 4))
                 self.assertIn(advice, result["advice"][0])
+                self.assertNotIn("flash", result["advice"][0])
                 self.assertEqual(self.passes(), 0)
 
-    def test_a_link_target_past_what_ls_shows_is_only_partly_read(self):
+    def test_each_field_counts_on_its_own(self):
         entry = {"path": "/system/link", "inode": 20, "mode": 0o120777, "uid": 0, "gid": 0, "links": 1, "size": 300,
                  "mtime": 0, "label": test_ext4image.SYSTEM_LABEL, "target": "/system/" + "y" * 292}
-        seen = {"names": {"/system/link": True}, "errors": {},
+        seen = {"names": {"/system/link"}, "lstatErrors": {}, "openErrors": {},
                 "stat": {"/system/link": {key: entry[key] for key in install.STAT_FIELDS}},
                 "labels": {"/system/link": {"label": entry["label"], "target": entry["target"][:252] + "..."}},
-                "hashes": {}}
+                "hashes": {}, "hashErrors": {}}
         result = install.compare_system([entry], seen)
         self.assertEqual(result["verdict"], install.REVIEW)
         self.assertEqual(result["unread"][0]["reason"], "the link target's end not read")
         seen["labels"]["/system/link"]["target"] = entry["target"][:251] + "z..."
         self.assertEqual(install.compare_system([entry], seen)["verdict"], install.STOP)
+        # A content mismatch stands although the entry's stat is missing.
+        file = {**entry, "path": "/system/file", "mode": 0o100644, "sha1": "a" * 40}
+        del file["target"]
+        seen = {"names": {"/system/file"}, "lstatErrors": {}, "openErrors": {}, "stat": {},
+                "labels": {"/system/file": {"label": file["label"], "target": None}},
+                "hashes": {"/system/file": "b" * 40}, "hashErrors": {}}
+        self.assertEqual(install.compare_system([file], seen)["verdict"], install.STOP)
+
+    def test_the_passes_avoid_what_the_units_toybox_gets_wrong(self):
+        for name, command in install.VERIFY_PASSES.items():
+            with self.subTest(name):
+                # Its find never runs `-exec ... {} +`; its stat %N prints link targets unterminated.
+                self.assertNotIn("{} +", command)
+                self.assertNotIn("%N", command)
+                self.assertTrue(command.endswith(f"echo {install.VERIFY_MARKER}$?")
+                                or command.endswith(f"echo {install.VERIFY_MARKER}${{PIPESTATUS[0]}}"))
 
 
 if __name__ == "__main__":
