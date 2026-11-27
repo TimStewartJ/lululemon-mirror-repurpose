@@ -2065,17 +2065,19 @@ def read_system_over_adb(tools: identify.Tools, serial: str, expected_sha1: dict
     # later log (its time makes it unique); anything else in the later log that the snapshot did not hold
     # cannot be placed in either period and is listed for review.
     anchor = None if before is None else next((line for line in reversed(before) if line.strip()), "")
-    if disk is not None and anchor is not None and (anchor == "" or log.count(anchor) == 1):
-        start = log.index(anchor) + 1 if anchor else 0
+    if disk is not None and anchor and log.count(anchor) == 1:
+        start = log.index(anchor) + 1
         seen["kernelErrors"] = [line for line in log[start:] if pattern.search(line)]
-        # The log covered the walks: a folder block ext4 could not read (fs/ext4/dir.c skips it and logs
-        # "directory contains a hole") would show here.
+        # The later log still holds the line logged just before the walks, so it holds all they caused: a
+        # folder block ext4 could not read (fs/ext4/dir.c skips it and logs "directory contains a hole")
+        # would show here.
         seen["kernelCovered"] = True
         earlier = log[:start]
     else:
         if disk is not None and before is not None:
-            seen["limits"].append("the kernel log turned over during the walks, so which of its ext4 messages "
-                                  "the walks met is not known; those not logged before them are listed for review")
+            seen["limits"].append("the kernel log turned over during the walks, or held nothing before them, so "
+                                  "which of its ext4 messages the walks met is not known; those not logged before "
+                                  "them are listed for review")
         earlier = log
     seen["kernelUnplaced"] = [line for line in earlier if pattern.search(line) and line not in (before or [])]
     return seen
@@ -2102,7 +2104,9 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
 
     def differ(path: str, what: str) -> None:
         differences.append({"path": shown_text(path), "what": what})
-        evidence[path] = {"image": by_path.get(path), "unit": observed(path) if not seen["broken"] else None}
+        # What it was judged to be belongs to the evidence too: a second reading must reach the same judgement.
+        evidence[path] = {"image": by_path.get(path), "unit": observed(path) if not seen["broken"] else None,
+                          "what": what}
 
     if seen["broken"]:
         for path in seen["broken"]:
@@ -2127,7 +2131,7 @@ def compare_system(expected: list[dict], seen: dict) -> dict:
         if path not in seen["names"] and path not in seen["lstatErrors"]:
             # ext4 skips a folder block it cannot read, so find and ls both miss its names: an absence counts
             # as more than a failed read only when the kernel log covered the walks and logged nothing.
-            trusted = seen["kernelCovered"] and not seen["kernelErrors"]
+            trusted = seen["kernelCovered"] and not seen["kernelErrors"] and not seen["kernelUnplaced"]
             differ(path, "missing on the unit" if trusted else "missing on the unit (its folder may have a "
                          "block the kernel could not read; the kernel log does not rule it out)")
             if not trusted:
@@ -2417,9 +2421,9 @@ def verify(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> t
     else:
         result["advice"] += VERIFY_ADVICE[compared["verdict"]]
         if compared["kernelUnplaced"]:
-            result["advice"].append("The kernel logged an ext4 error for /system that this check cannot place before "
-                                    "or during its walks: run this stage again before going on, and write nothing on "
-                                    "that message alone.")
+            result["advice"].append("The kernel logged an ext4 error whose device or time this check cannot establish "
+                                    "(it may be /system's, during the walks): run this stage again before going on, "
+                                    "and write nothing on that message alone.")
     return result, EXIT_CODES[compared["verdict"]]
 
 
