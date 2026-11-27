@@ -11,13 +11,15 @@
   (`tools/ext4image.py`, raw or sparse, no mounting, decoding as the unit's
   3.10 kernel does), which gives exactly what the Linux kernel shows for
   Silvering's image, extended attributes included. Entries adb's shell may
-  not read, and `run-as`'s file capability (no tool on the unit prints
-  one), are listed for review; any other read failure is a difference, and
-  a difference counts only if a second reading of both sides finds the
-  same. A Stop advises writing again only if the unit's flash journal
-  records that very image. Tried on the API 23 emulator, whose toybox,
-  toolbox and mksh are Silvering's, including an image with two flipped
-  bits.
+    not read, and file capabilities (no tool on the unit prints them), are
+    listed for review; every answer must account for the same names, the
+    kernel log must show no ext4 error for `/system`'s device, a read that
+    fails because the file system is damaged is a difference, and a
+    difference counts only if a second reading of both sides rests on the
+    same evidence. A Stop advises writing again only if the unit's flash
+    journal records both images in the folder as its last complete
+    installation. Tried on the API 23 emulator, whose toybox, toolbox and
+    mksh are Silvering's, including an image with two flipped bits.
 
 - The installer's `flash` stage (`tools/install.py flash --images <folder>
   --serial <serial>`) makes the runbook's two writes: it runs the plan again
