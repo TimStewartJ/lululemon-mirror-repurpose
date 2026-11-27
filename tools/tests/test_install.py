@@ -1524,7 +1524,7 @@ class Verify(unittest.TestCase):
         # so, for every entry, attributes stay a limit of the check.
         self.assertEqual(result["unread"], [{"path": "/system/other", "label": test_ext4image.SYSTEM_LABEL,
                                              "size": 6, "reason": "security.capability not read"}])
-        self.assertEqual(result["limits"], [install.ATTRIBUTES_LIMIT])
+        self.assertEqual(result["limits"], [install.ATTRIBUTES_LIMIT, install.FOLDERS_LIMIT])
         self.assertEqual(result["fullyChecked"], len(self.expected) - 1)
         self.assertEqual(result["hashedBytes"], result["fileBytes"])
         self.assertEqual(result["fingerprint"], result["unitFingerprint"])
@@ -1679,13 +1679,13 @@ class Verify(unittest.TestCase):
         self.answer = original_answer
         self.assertEqual((result["differences"], code), ([], 5), result)
         self.assertEqual(result["kernelHistory"], [f"[    5.0] {fault.format('init')}"])
-        self.assertEqual(len(result["limits"]), 1, result)
+        self.assertEqual(len(result["limits"]), 2, result)
         # The last line before the walks found twice later: which period a message belongs to is not known.
         self.kernel_history = ["[    6.0] booted"]
         self.kernel_new = ["[    6.0] booted", f"[   40.1] {fault.format('ls')}"]
         result, code = self.verify()
         self.assertEqual((result["differences"], code), ([], 5), result)
-        self.assertIn("turned over", result["limits"][1])
+        self.assertIn("turned over", result["limits"][2])
         self.kernel_new = []
         # A log that turned over during the walks is a limit, and its ext4 messages are listed unplaced.
         self.kernel_history = ["[    6.0] booted"]
@@ -1694,14 +1694,14 @@ class Verify(unittest.TestCase):
         result, code = self.verify()
         self.answer = original_answer
         self.assertEqual((result["differences"], code), ([], 5), result)
-        self.assertIn("turned over", result["limits"][1])
+        self.assertIn("turned over", result["limits"][2])
         self.assertEqual(result["kernelUnplaced"], [f"[   99.0] {fault.format('ls')}"])
         self.kernel_history, self.kernel_status = ["dmesg: klogctl: Operation not permitted"], 1
         self.kernel_before_status = 1
         result, code = self.verify()
         self.assertEqual(code, 5, result)
-        self.assertEqual(len(result["limits"]), 2)
-        self.assertIn("kernel log", result["limits"][1])
+        self.assertEqual(len(result["limits"]), 3)
+        self.assertIn("kernel log", result["limits"][2])
         # Each snapshot that was read counts on its own: an error in either is shown for review.
         self.kernel_history, self.kernel_before_status = [f"[    5.0] {fault.format('init')}", "[    6.0] booted"], 0
         result, code = self.verify()
@@ -1782,6 +1782,19 @@ class Verify(unittest.TestCase):
         result, code = self.verify()
         self.assertEqual(code, 3, result)
         self.assertEqual([item["path"] for item in result["differences"]], ["/system"])
+
+    def test_a_folder_whose_listing_matches_still_leaves_a_skipped_block_possible(self):
+        # A sound empty folder and one whose only block ext4 skipped (its error lost from the log) look the same.
+        result, code = self.verify()
+        self.assertEqual(code, 5, result)
+        self.assertIn(install.FOLDERS_LIMIT, result["limits"])
+        self.assertNotIn("Every entry of system.img is on the unit as written", " ".join(result["advice"]))
+
+    def test_a_stop_on_entries_not_seen_claims_no_failed_read(self):
+        del self.unit["/system/holey"]
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertIn("an entry not seen on the unit or a read that fails", " ".join(result["advice"]))
 
     def test_a_stop_advises_another_write_only_for_both_images_the_journal_binds(self):
         self.unit["/system/build.prop"]["sha1"] = "f" * 40
