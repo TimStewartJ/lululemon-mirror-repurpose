@@ -1381,6 +1381,7 @@ class Verify(unittest.TestCase):
         self.denied, self.unopened, self.unhashed = set(), set(), set()
         self.reasons: dict[str, str] = {}
         self.read_failures: set[str] = set()
+        self.read_status = 1
         self.statuses: dict[str, int] = {}
         self.kernel_history = ["[    1.02] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: (null)"]
         self.kernel_new: list[str] = []
@@ -1425,9 +1426,10 @@ class Verify(unittest.TestCase):
                 if stat.S_ISDIR(unit[folder]["mode"]):
                     lines.append(f"@@ {folder}")
                     if folder in self.unopened:
-                        lines.append(f"opendir failed, {self.reasons.get(folder, 'Permission denied')}")
+                        lines += [f"opendir failed, {self.reasons.get(folder, 'Permission denied')}", "## 1"]
                     else:
                         lines += sorted(path.rpartition("/")[2] for path in unit if path.rpartition("/")[0] == folder)
+                        lines.append("## 0")
             return lines
         if name == "stat":
             return [f"{e['inode']} {e['mode']:x} {e['uid']} {e['gid']} {e['links']} {e['size']} "
@@ -1484,7 +1486,8 @@ class Verify(unittest.TestCase):
                     # toybox cat stops on a read error without a word; sha1sum hashes what it got.
                     failed = path in self.read_failures
                     digest = {**self.unit[path], **self.per_reading.get(self.readings, {}).get(path, {})}["sha1"]
-                    lines += [f"@@ {path}", f"{'d' * 40 if failed else digest}  -", f"## {1 if failed else 0}"]
+                    lines += [f"@@ {path}", f"{'d' * 40 if failed else digest}  -",
+                              f"## {self.read_status if failed else 0}"]
             return 0, "".join(f"{line}\n" for line in lines) + f"{end}0\n", ""
         for name, text in install.VERIFY_PASSES.items():
             if command == text:
@@ -1582,10 +1585,27 @@ class Verify(unittest.TestCase):
         (self.folder / "userdata.img.sha256").write_text(f"{'1' * 64}  userdata.img\n")
         result, code = self.verify()
         self.assertEqual(code, 3, result)
-        self.assertEqual(result["differences"], [{"path": "/system/holey", "what": "reading it stops with a read "
-                                                  "error toybox cat does not name"}])
+        self.assertEqual(result["differences"], [{"path": "/system/holey", "what": "reading it stops with an error "
+                                                  "of unknown cause (toybox cat exit 1)"}])
         self.assertIn("storage", " ".join(result["advice"]))
         self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        # A named I/O error alone is no more a reason to write again: failing storage gives it too.
+        self.read_failures, self.unit["/system/holey"]["sha1"] = set(), self.expected[5]["sha1"]
+        for setting in ({"denied": {"/system/build.prop"}}, {"unhashed": {"/system/build.prop"}}):
+            with self.subTest(setting):
+                self.denied, self.unhashed = setting.get("denied", set()), setting.get("unhashed", set())
+                self.reasons = {"/system/build.prop": "I/O error"}
+                result, code = self.verify()
+                self.assertEqual(code, 3, result)
+                self.assertIn("storage", " ".join(result["advice"]))
+                self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        # A reader that was killed says nothing about the partition.
+        self.denied, self.unhashed, self.reasons = set(), set(), {}
+        self.unit["/system/holey"]["sha1"], self.read_failures, self.read_status = "c" * 40, {"/system/holey"}, 137
+        result, code = self.verify()
+        self.assertEqual(code, 1, result)
+        self.read_failures, self.read_status = set(), 1
+        self.unit["/system/holey"]["sha1"] = self.expected[5]["sha1"]
         # bionic's EBADMSG names damage too.
         self.read_failures, self.unhashed = set(), {"/system/build.prop"}
         self.unit["/system/holey"]["sha1"] = self.expected[5]["sha1"]
@@ -1648,19 +1668,33 @@ class Verify(unittest.TestCase):
         self.assertEqual([item["path"] for item in result["differences"]], ["/system"])
         self.assertIn("ext4_readdir", result["differences"][0]["what"])
         self.assertNotIn("vdb", result["differences"][0]["what"])
-        # An error logged before the check began is shown for review, not taken for a difference.
-        self.kernel_history, self.kernel_new = [f"[    5.0] {fault.format('init')}", "[    6.0] booted"], []
-        result, code = self.verify()
-        self.assertEqual((result["differences"], code), ([], 5), result)
-        self.assertEqual(result["kernelHistory"], [f"[    5.0] {fault.format('init')}"])
-        # A log that turned over during the walks, or cannot be read, is a limit.
+        # An error logged before the check began is shown for review, not taken for a difference, even when it
+        # has left the log by the time the walks end; a log ending in a blank line changes nothing.
+        self.kernel_history, self.kernel_new = [f"[    5.0] {fault.format('init')}", "", "[    6.0] booted", ""], []
         original_answer = self.answer
-        self.answer = lambda name: original_answer(name)[:5] + ["[   99.0] later"] if name == "kernel" \
-            else original_answer(name)
+        self.answer = lambda name: [line for line in original_answer(name) if "[    5.0]" not in line] \
+            if name == "kernel" else original_answer(name)
         result, code = self.verify()
         self.answer = original_answer
-        self.assertEqual(code, 5, result)
+        self.assertEqual((result["differences"], code), ([], 5), result)
+        self.assertEqual(result["kernelHistory"], [f"[    5.0] {fault.format('init')}"])
+        self.assertEqual(len(result["limits"]), 1, result)
+        # The last line before the walks found twice later: which period a message belongs to is not known.
+        self.kernel_history = ["[    6.0] booted"]
+        self.kernel_new = ["[    6.0] booted", f"[   40.1] {fault.format('ls')}"]
+        result, code = self.verify()
+        self.assertEqual((result["differences"], code), ([], 5), result)
         self.assertIn("turned over", result["limits"][1])
+        self.kernel_new = []
+        # A log that turned over during the walks is a limit, and its ext4 messages are listed unplaced.
+        self.kernel_history = ["[    6.0] booted"]
+        self.answer = lambda name: original_answer(name)[:5] + [f"[   99.0] {fault.format('ls')}"] \
+            if name == "kernel" else original_answer(name)
+        result, code = self.verify()
+        self.answer = original_answer
+        self.assertEqual((result["differences"], code), ([], 5), result)
+        self.assertIn("turned over", result["limits"][1])
+        self.assertEqual(result["kernelUnplaced"], [f"[   99.0] {fault.format('ls')}"])
         self.kernel_history, self.kernel_status = ["dmesg: klogctl: Operation not permitted"], 1
         result, code = self.verify()
         self.assertEqual(code, 5, result)
@@ -1698,6 +1732,30 @@ class Verify(unittest.TestCase):
                 with self.journal_path.open("a") as stream:
                     stream.write("".join(json.dumps(line) + "\n" for line in lines))
                 self.assertEqual(install.journal_installation(SERIAL), (None, "damaged"))
+        # A plan that changes inside an attempt cannot relabel writes already sent.
+        self.journal_path.write_text("".join(json.dumps(line) + "\n" for line in (
+            {"event": "flash stage"}, {"event": "plan", "images": {"system": {"sha256": "a" * 64},
+                                                                   "userdata": {"sha256": "b" * 64}}},
+            {"event": "write", "partition": "system"},
+            {"event": "answer", "partition": "system", "outcome": install.WRITTEN},
+            {"event": "write", "partition": "userdata"},
+            {"event": "plan", "images": {"system": {"sha256": "c" * 64}, "userdata": {"sha256": "d" * 64}}},
+            {"event": "answer", "partition": "userdata", "outcome": install.WRITTEN})))
+        self.assertEqual(install.journal_installation(SERIAL), (None, "damaged"))
+        # An attempt cut off with a write unanswered, then one that completes on its own, is complete.
+        self.write_journal(this)
+        complete = self.journal_path.read_text()
+        cut_off = "".join(json.dumps(line) + "\n" for line in (
+            {"event": "flash stage"},
+            {"event": "plan", "images": {"system": {"sha256": "e" * 64}, "userdata": {"sha256": "f" * 64}}},
+            {"event": "write", "partition": "system"}))
+        self.journal_path.write_text(complete + cut_off)
+        self.assertEqual(install.journal_installation(SERIAL), (None, "unfinished"))
+        # A later attempt that writes nothing leaves it unfinished, not damaged.
+        self.journal_path.write_text(complete + cut_off + json.dumps({"event": "flash stage"}) + "\n")
+        self.assertEqual(install.journal_installation(SERIAL), (None, "unfinished"))
+        self.journal_path.write_text(complete + cut_off + complete)
+        self.assertEqual(install.journal_installation(SERIAL), (this, "complete"))
 
     def test_a_name_that_only_looks_the_same_is_a_difference(self):
         for odd in ("/system/build.prop\r", "/system/build prop", "/system/build.prop -> x"):
@@ -1792,6 +1850,24 @@ class Verify(unittest.TestCase):
         self.assertEqual(code, 1, result)
         self.assertIn("unaccounted", result["error"])
 
+    def test_a_folder_ls_could_not_open_holds_no_names(self):
+        self.unopened = {"/system/lost+found"}
+        original = self.runner
+        self.runner = lambda arguments: (lambda answer: (answer[0], answer[1].replace(
+            "opendir failed, Permission denied\n", "opendir failed, Permission denied\nunexpected\n")
+            if arguments[-1] == install.VERIFY_PASSES["listing"] else answer[1], answer[2]))(original(arguments))
+        result, code = self.verify()
+        self.runner = original
+        self.assertEqual(code, 1, result)
+        # A name that reads like ls's diagnostic is still a name when ls ends well.
+        self.unopened = set()
+        self.unit["/system/opendir failed, Permission denied"] = {**self.unit["/system/build.prop"],
+                                                                  "path": "/system/opendir failed, Permission denied"}
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertEqual([item["path"] for item in result["differences"]],
+                         ["/system/opendir failed, Permission denied"])
+
     def test_without_android_and_adb_nothing_is_read(self):
         for state, advice in (("unauthorized", "adbkey.pub"), ("fastboot", "Do not restart it"), ("none", "cable")):
             with self.subTest(state):
@@ -1809,7 +1885,8 @@ class Verify(unittest.TestCase):
         seen = {"names": {"/system/link"}, "broken": [], "lstatErrors": {}, "openErrors": {},
                 "stat": {"/system/link": {key: entry[key] for key in install.STAT_FIELDS}},
                 "labels": {"/system/link": {"label": entry["label"], "target": entry["target"][:252] + "..."}},
-                "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [], "limits": []}
+                "hashes": {}, "hashErrors": {}, "readErrors": {}, "kernelErrors": [], "kernelHistory": [], "kernelUnplaced": [],
+                "limits": []}
         result = install.compare_system([entry], seen)
         self.assertEqual(result["verdict"], install.REVIEW)
         self.assertEqual(result["unread"][0]["reason"], "the link target's end not read")
