@@ -22,6 +22,15 @@ Stages arrive one at a time; each says whether it reads or changes the unit.
               before its next step, never during a write. The unit's journal
               (one per unit on this computer) records every command and answer,
               and each run replays it to know what earlier runs left.
+    verify    reads only: after the first boot, the unit's /system over ADB
+              against system.img, entry by entry: inode, type and mode, owner,
+              links, size, modification time, symlink target and SELinux label,
+              and each regular file's sha1, hashed on the unit (sha1sum) so that
+              only digests cross the cable. The board's boot image keeps
+              ro.debuggable=0 and its own SELinux policy, so adb's shell can read
+              neither the partition itself nor the files that policy keeps from
+              it; those are listed as not read. A difference counts only if a
+              second reading of both sides finds the same.
 
 The thermal stage never answers a plain pass yet: which kernel messages prove
 that the limits were registered is not known for this board, so its best
@@ -38,8 +47,16 @@ judges the kernel lines shown), 6 a partition may hold part of an image, or
 only system is written (keep the unit in fastboot and run flash again), 7 both
 partitions written but the restart was not seen (check the cable and
 `fastboot devices` before any power action), 8 written and restarting, but the
-journal could not be completed. 0 is the plan's ``ready`` and the flash done,
-and is kept for a thermal pass once the kernel's own messages are known.
+journal could not be completed. 0 is the plan's ``ready``, the flash done and
+every entry verified, and is kept for a thermal pass once the kernel's own
+messages are known.
+
+For verify: 0 every entry of system.img is on the unit as written and was read
+in full; 5 review: no difference, but adb's shell could not read some entries
+in full (listed); 3 Stop: /system differs from system.img in two readings
+(restart into fastboot and run flash again); 4 incomplete: no unit runs
+Android with ADB authorized; 1 nothing concluded: system.img could not be
+used, the unit's answers could not be read, or two readings disagreed.
 """
 
 from __future__ import annotations
@@ -49,6 +66,7 @@ import codecs
 import datetime
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -65,6 +83,7 @@ from typing import Callable
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import identify  # noqa: E402
+import ext4image  # noqa: E402
 
 THERMAL_NODE = "qcom,msm-thermal"
 DEVICE_TREES = ("/proc/device-tree", "/sys/firmware/devicetree/base")
@@ -1660,6 +1679,304 @@ def command_flash(arguments: argparse.Namespace) -> int:
                  default_journal(arguments.serial), input, interactive=sys.stdin.isatty())
 
 
+# ---------------------------------------------------------------------------
+# The check after the first boot: the unit's /system, entry by entry, against system.img.
+# ---------------------------------------------------------------------------
+
+VERIFIED = "verified"
+EXIT_CODES[VERIFIED] = 0
+SYSTEM_MOUNT = "/system"
+VERIFY_TIMEOUT = 1800
+VERIFY_MARKER = "__mirror_verify_end="
+# What make_ext4fs images hold; only such names can be told apart without doubt in the unit's answers.
+COMPARABLE_NAME = re.compile(r"[A-Za-z0-9._+@,=~-]{1,255}")
+COMPARABLE_TARGET = re.compile(r"[A-Za-z0-9._+@,=~/-]{1,1023}")
+STAT_FORMAT = "%i %f %u %g %h %s %Y %n"
+STAT_LINE = re.compile(r"(\d+) ([0-9a-f]+) (\d+) (\d+) (\d+) (\d+) (-?\d+) (/.+)")
+LABEL_LINE = re.compile(r"([-dlcbps][-rwxsStT]{9}) +\S+ +\S+ +(\S+) (.+)")
+HASH_LINE = re.compile(r"([0-9a-f]{40})  (/.+)")
+FIND_ERROR = re.compile(r"find: (?:No )?(/.+?): ([^:]+)")
+STAT_FIELDS = ("inode", "mode", "uid", "gid", "links", "size", "mtime")
+# toolbox ls reads a link into 256 bytes and shows a longer target as its first 252 and "...".
+LS_LINK_BYTES = 255
+# Each pass prints only standard output: a buffered output and an unbuffered error stream would mix
+# inside lines. This toybox (c96e424, Silvering's and the API 23 emulator's) never runs the command of
+# `find -exec ... {} +`, hence xargs -0, and its `stat %N` prints a link target without ending it, so
+# targets come from toolbox ls.
+VERIFY_PASSES = {
+    "names": f"find {SYSTEM_MOUNT} -xdev 2>/dev/null",
+    "errors": f"find {SYSTEM_MOUNT} -xdev 2>&1 >/dev/null",
+    "stat": f"find {SYSTEM_MOUNT} -xdev -print0 2>/dev/null | xargs -0 stat -c '{STAT_FORMAT}' 2>/dev/null",
+    "labels": f"echo '@@ /'; ls -dZ {SYSTEM_MOUNT} 2>/dev/null; find {SYSTEM_MOUNT} -xdev -type d -print0 "
+              "2>/dev/null | xargs -0 sh -c 'for d; do echo \"@@ $d\"; ls -aZ \"$d\" 2>/dev/null; done' sh",
+    "hashes": f"find {SYSTEM_MOUNT} -xdev -type f -print0 2>/dev/null | xargs -0 sha1sum 2>/dev/null",
+}
+
+
+def verify_runner(arguments: list[str]) -> identify.Result:
+    """Like identify.run_tool, with time to hash a whole system partition, and the unit's bytes read
+    as UTF-8 so that no name it prints can stop the stage."""
+    try:
+        completed = subprocess.run(arguments, capture_output=True, timeout=VERIFY_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 1, "", str(error)
+    return (completed.returncode, completed.stdout.decode("utf-8", "replace"),
+            completed.stderr.decode("utf-8", "replace"))
+
+
+def expected_system(folder: pathlib.Path) -> tuple[list[dict], str, str | None]:
+    """system.img's entries as the unit must show them under /system, its sha256 and its build
+    fingerprint. The image is hashed and read through one open handle; raises ValueError if it does not
+    match its sha256 file or changes while it is read."""
+    image, hash_file = folder / "system.img", folder / "system.img.sha256"
+    expected = recorded_hash(hash_file, image.name)
+    with image.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        digest = hashlib.sha256()
+        while chunk := stream.read(1 << 20):
+            digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise ValueError(f"system.img's sha256 is {digest.hexdigest()}, but {hash_file.name} records {expected}")
+        file_system = ext4image.Ext4(ext4image.Unpacked(stream, opened.st_size))
+        entries = file_system.walk(SYSTEM_MOUNT)
+        fingerprint = None
+        properties = [entry for entry in entries if entry["path"] == f"{SYSTEM_MOUNT}/build.prop"]
+        if properties and stat.S_ISREG(properties[0]["mode"]):
+            text = b"".join(file_system.data(file_system.inode(properties[0]["inode"]))).decode("utf-8", "replace")
+            found = re.search(r"^ro\.build\.fingerprint=(.*)$", text, re.MULTILINE)
+            fingerprint = found.group(1).strip() if found else None
+        if identity(os.fstat(stream.fileno())) != identity(opened) or identity(image.stat()) != identity(opened) \
+                or recorded_hash(hash_file, image.name) != expected:
+            raise ValueError("system.img or its hash changed while it was being read")
+    return entries, expected, fingerprint
+
+
+def read_system_over_adb(tools: identify.Tools, serial: str) -> dict:
+    """What adb's shell sees under /system: names, what find could not read, each entry's lstat, each
+    entry's SELinux label and each regular file's sha1, hashed on the unit so that only digests cross
+    the cable. Raises RuntimeError if a pass did not run to its end or printed a line it should not."""
+    def run(name: str) -> list[str]:
+        code, out, err = tools.adb("-s", serial, "shell", f"{VERIFY_PASSES[name]}; echo {VERIFY_MARKER}$?")
+        body, marker, status = out.rpartition(VERIFY_MARKER)
+        if code != 0 or not marker or not status.strip().isdigit():
+            shown = safe((out + err).replace(serial, "<unit>")[-300:])
+            raise RuntimeError(f"adb did not finish the {name} pass: {shown}")
+        return [line.rstrip("\r") for line in body.split("\n") if line.rstrip("\r")]
+
+    def strange(name: str, line: str) -> RuntimeError:
+        return RuntimeError(f"the {name} pass printed a line this stage does not read: {safe(line)}")
+
+    def under_mount(path: str) -> bool:
+        return path == SYSTEM_MOUNT or path.startswith(SYSTEM_MOUNT + "/")
+
+    def add(found: dict, name: str, path: str, value) -> None:
+        if not under_mount(path) or path in found:
+            raise RuntimeError(f"the {name} pass named {safe(path)} {'twice' if path in found else 'outside /system'}")
+        found[path] = value
+
+    seen: dict = {"names": {}, "errors": {}, "stat": {}, "labels": {}, "hashes": {}}
+    for line in run("names"):
+        add(seen["names"], "names", line, True)
+    for line in run("errors"):
+        match = FIND_ERROR.fullmatch(line)
+        if not match:
+            raise strange("errors", line)
+        add(seen["errors"], "errors", match.group(1), match.group(2).strip())
+    for line in run("stat"):
+        match = STAT_LINE.fullmatch(line)
+        if not match:
+            raise strange("stat", line)
+        inode, mode, uid, gid, links, size, mtime, path = match.groups()
+        add(seen["stat"], "stat", path, {"inode": int(inode), "mode": int(mode, 16), "uid": int(uid), "gid": int(gid),
+                                         "links": int(links), "size": int(size), "mtime": int(mtime)})
+    folder = None
+    for line in run("labels"):
+        if line.startswith("@@ "):
+            folder = line[3:]
+            continue
+        match = LABEL_LINE.fullmatch(line)
+        if not match or folder is None:
+            raise strange("labels", line)
+        name, target = match.group(3), None
+        if match.group(1).startswith("l"):
+            name, arrow, target = name.partition(" -> ")
+            if not arrow:
+                raise strange("labels", line)
+        add(seen["labels"], "labels", f"{folder.rstrip('/')}/{name}", {"label": match.group(2), "target": target})
+    for line in run("hashes"):
+        match = HASH_LINE.fullmatch(line)
+        if not match:
+            raise strange("hashes", line)
+        add(seen["hashes"], "hashes", match.group(2), match.group(1))
+    if SYSTEM_MOUNT not in seen["names"] or SYSTEM_MOUNT not in seen["stat"] \
+            or SYSTEM_MOUNT not in seen["labels"]:
+        raise RuntimeError(f"adb's shell did not list, stat and label {SYSTEM_MOUNT} itself, so its tools did "
+                           "not run as this stage expects")
+    return seen
+
+
+def comparable(entry: dict) -> bool:
+    """Whether every name on the entry's path, and its link target, can be told apart in the unit's answers."""
+    names = entry["path"][len(SYSTEM_MOUNT):].split("/")[1:]
+    return all(COMPARABLE_NAME.fullmatch(name) for name in names) \
+        and ("target" not in entry or bool(COMPARABLE_TARGET.fullmatch(entry["target"])))
+
+
+def compare_system(expected: list[dict], seen: dict) -> dict:
+    """The unit's answers against the image: each entry that differs, and each that adb's shell could
+    not read in full (with what was left unread)."""
+    differences, unread = [], []
+    hashed_bytes = file_bytes = full = 0
+    paths = {entry["path"] for entry in expected}
+    for entry in expected:
+        path = entry["path"]
+        regular = stat.S_ISREG(entry["mode"])
+        file_bytes += entry["size"] if regular else 0
+        what = {"path": path, "label": entry["label"], "size": entry["size"]}
+        if not comparable(entry):
+            unread.append({**what, "reason": "its name or link target holds characters this check cannot compare"})
+            continue
+        found = seen["stat"].get(path)
+        if found is None:
+            ancestors = [path[:index] for index in range(len(path)) if path[index] == "/"]
+            if path in seen["errors"]:
+                unread.append({**what, "reason": f"find: {seen['errors'][path]}"})
+            elif path in seen["names"]:
+                unread.append({**what, "reason": "listed, but stat printed nothing"})
+            elif any(ancestor in seen["errors"] for ancestor in ancestors):
+                unread.append({**what, "reason": "in a folder adb's shell may not open"})
+            else:
+                differences.append({"path": path, "what": "missing on the unit"})
+            continue
+        changed = [f"{field} {entry[field]!r} in the image, {found[field]!r} on the unit"
+                   for field in STAT_FIELDS if entry[field] != found[field]]
+        missing = []
+        listed = seen["labels"].get(path)
+        if listed is not None:
+            if listed["label"] != entry["label"]:
+                changed.append(f"label {entry['label']!r} in the image, {listed['label']!r} on the unit")
+            target = entry.get("target")
+            shown = target if target is None or len(target) <= LS_LINK_BYTES else target[:LS_LINK_BYTES - 3] + "..."
+            if listed["target"] != shown:
+                changed.append(f"target {target!r} in the image, {listed['target']!r} on the unit")
+            elif shown != target:
+                missing.append("the link target's end")
+        else:
+            missing.append("label" + (" and link target" if "target" in entry else ""))
+        if regular:
+            if path in seen["hashes"]:
+                if seen["hashes"][path] != entry["sha1"]:
+                    changed.append(f"sha1 {entry['sha1']} in the image, {seen['hashes'][path]} on the unit")
+                else:
+                    hashed_bytes += entry["size"]
+            else:
+                missing.append("content")
+        if changed:
+            differences.append({"path": path, "what": "; ".join(changed)})
+        elif missing:
+            unread.append({**what, "reason": f"{' and '.join(missing)} not read"})
+        else:
+            full += 1
+    for source in ("names", "errors", "stat", "labels", "hashes"):
+        for path in seen[source]:
+            if path not in paths and not any(item["path"] == path for item in differences):
+                differences.append({"path": path, "what": "on the unit, not in system.img"})
+    verdict = STOP if differences else REVIEW if unread else VERIFIED
+    return {"verdict": verdict, "entries": len(expected), "fullyChecked": full, "differences": differences,
+            "unread": unread, "hashedBytes": hashed_bytes, "fileBytes": file_bytes}
+
+
+def print_verification(result: dict) -> None:
+    print(f"System check: {result['verdict'].upper()}")
+    print(f"  system.img sha256 {result['sha256']}: {result['entries']} entries under {SYSTEM_MOUNT}")
+    if result.get("fingerprint") or result.get("unitFingerprint"):
+        print(f"  Image fingerprint {result.get('fingerprint') or 'not found'}; the unit reports "
+              f"{result.get('unitFingerprint') or 'nothing'}")
+    if "fullyChecked" in result:
+        # Rounded down, so that a share short of every byte never reads as 100%.
+        share = math.floor(10000 * result["hashedBytes"] / result["fileBytes"]) / 100 if result["fileBytes"] else 100
+        print(f"  Read in full and equal: {result['fullyChecked']} of {result['entries']} entries; file content "
+              f"hashed on the unit and equal: {result['hashedBytes']} of {result['fileBytes']} bytes "
+              f"({share:.2f}%)")
+    for item in result.get("differences", [])[:40]:
+        print(f"  Differs: {item['path']}: {item['what']}")
+    if len(result.get("differences", [])) > 40:
+        print(f"  ... and {len(result['differences']) - 40} more differences (--json lists them all)")
+    for item in result.get("unread", [])[:60]:
+        print(f"  Not read: {item['path']} ({item['label']}, {item['size']} bytes): {item['reason']}")
+    if len(result.get("unread", [])) > 60:
+        print(f"  ... and {len(result['unread']) - 60} more not read (--json lists them all)")
+    for line in result["advice"]:
+        print(f"  {line}")
+
+
+VERIFY_ADVICE = {
+    VERIFIED: ["Every entry of system.img is on the unit as written. Go on with the session."],
+    REVIEW: ["Every entry adb's shell could read is as written. Those listed were not read in full: go on only "
+             "if they are entries the board's own SELinux policy keeps from adb's shell (on the project's unit, "
+             "daemons whose labels the factory policy grants no reader), not a folder or file Mirror Home or "
+             "the supervisor needs."],
+    STOP: ["Stop: the unit's /system differs from system.img, in two readings. Do not go on with the session: "
+           "restart it into fastboot (`adb reboot bootloader`), run `install.py flash` again with the same "
+           "folder (it writes system, then userdata), and verify again after the first boot."],
+}
+
+
+def verify(tools: identify.Tools, folder: pathlib.Path, serial: str | None) -> tuple[dict, int]:
+    """The whole stage; the result and the exit code. Sends the unit only `adb shell` reads."""
+    try:
+        expected, image_hash, fingerprint = expected_system(folder)
+    except (OSError, ValueError) as error:
+        return {"verdict": "unverified", "error": f"system.img cannot be used: {error}"}, 1
+    result = {"sha256": image_hash, "entries": len(expected), "fingerprint": fingerprint}
+    try:
+        state, found = find_one_unit(tools, serial)
+    except RuntimeError as error:
+        return {**result, "verdict": "unverified", "error": str(error)}, 1
+    if state != "android" or not found:
+        advice = {
+            "fastboot": "The unit is in fastboot: `fastboot reboot`, wait for Android, and run this stage again.",
+            "android-unauthorized": "ADB does not accept this computer's key: the key in userdata.img is not "
+                                    "this computer's (%USERPROFILE%\\.android\\adbkey.pub), or userdata was not "
+                                    "written as built. Build userdata.img with this computer's key and flash again.",
+        }.get(state, "No unit runs Android with ADB: connect the cable and wait for the first boot to bring up ADB.")
+        return {**result, "verdict": INCOMPLETE, "advice": [advice]}, EXIT_CODES[INCOMPLETE]
+    try:
+        compared = compare_system(expected, read_system_over_adb(tools, found))
+        if compared["verdict"] == STOP:
+            # This computer's memory has flipped bits before: a difference counts only if a second
+            # reading of both sides finds exactly the same.
+            again = compare_system(expected_system(folder)[0], read_system_over_adb(tools, found))
+            if again["differences"] != compared["differences"]:
+                raise RuntimeError("two readings found different differences, so either this computer or the unit "
+                                   "did not read the same bytes twice; nothing is concluded. Run this stage again; "
+                                   "if it happens again, test this computer's memory")
+        code, out, _ = tools.adb("-s", found, "shell", "getprop ro.build.fingerprint")
+        unit_fingerprint = safe(out.strip()) if code == 0 and out.strip() else None
+    except (RuntimeError, OSError, ValueError) as error:
+        return {**result, "verdict": "unverified", "error": str(error).replace(found, "<unit>")}, 1
+    result.update(compared)
+    result["unitFingerprint"] = unit_fingerprint
+    result["advice"] = []
+    if fingerprint and unit_fingerprint and unit_fingerprint != fingerprint:
+        result["advice"].append("The unit reports another build fingerprint than system.img's build.prop: first "
+                                "check that --images names the folder that was written to this unit.")
+    result["advice"] += VERIFY_ADVICE[compared["verdict"]]
+    return result, EXIT_CODES[compared["verdict"]]
+
+
+def command_verify(arguments: argparse.Namespace) -> int:
+    tools = identify.Tools(identify.find_tool("adb"), identify.find_tool("fastboot"), runner=verify_runner)
+    result, code = verify(tools, pathlib.Path(arguments.images), arguments.serial)
+    if arguments.json:
+        print(json.dumps({"schema": "mirror-install-verify/1", **result}, indent=1))
+    elif code == 1:
+        print(f"Could not verify: {result['error']}", file=sys.stderr)
+    else:
+        print_verification(result)
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     stages = parser.add_subparsers(dest="stage", required=True)
@@ -1684,6 +2001,13 @@ def main(argv: list[str] | None = None) -> int:
                              help="the folder `plan` answered ready for")
     flash_stage.add_argument("--serial", required=True, help="the unit, as `fastboot devices` lists it")
     flash_stage.set_defaults(run=command_flash)
+    verify_stage = stages.add_parser("verify", help="reads only: after the first boot, compares the unit's "
+                                                    "/system over ADB with system.img, entry by entry")
+    verify_stage.add_argument("--images", required=True, metavar="FOLDER",
+                              help="the folder `flash` wrote from (system.img and its .sha256 are read)")
+    verify_stage.add_argument("--serial", help="the unit, when more than one is connected")
+    verify_stage.add_argument("--json", action="store_true", help="print the result as JSON")
+    verify_stage.set_defaults(run=command_verify)
     arguments = parser.parse_args(argv)
     return arguments.run(arguments)
 
