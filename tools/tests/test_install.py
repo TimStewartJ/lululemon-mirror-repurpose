@@ -1386,6 +1386,7 @@ class Verify(unittest.TestCase):
         self.kernel_history = ["[    1.02] EXT4-fs (vda): mounted filesystem with ordered data mode. Opts: (null)"]
         self.kernel_new: list[str] = []
         self.kernel_status = self.kernel_before_status = 0
+        self.kernel_status_by_reading: dict[int, int] = {}
         self.drop_errors: set[str] = set()
         self.per_reading: dict[int, dict] = {}
         self.state, self.readings, self.calls = "device", 0, []
@@ -1459,7 +1460,7 @@ class Verify(unittest.TestCase):
 
     def status(self, name: str) -> int:
         if name == "kernel":
-            return self.kernel_status
+            return self.kernel_status_by_reading.get(self.readings, self.kernel_status)
         return self.statuses.get(name, 1 if self.denied or self.unopened else 0)
 
     def runner(self, arguments):
@@ -1709,7 +1710,7 @@ class Verify(unittest.TestCase):
         self.kernel_new = [f"[   40.1] {fault.format('ls')}"]
         result, code = self.verify()
         self.assertEqual((code, result["kernelUnplaced"]), (5, [f"[   40.1] {fault.format('ls')}"]), result)
-        self.assertIn("cannot place", " ".join(result["advice"]))
+        self.assertIn("cannot establish", " ".join(result["advice"]))
         # An error the later log holds before the anchor, which the earlier snapshot did not, cannot be placed.
         self.kernel_before_status, self.kernel_new = 0, []
         self.answer = lambda name: original_answer(name)[:5] + [f"[    5.5] {fault.format('ls')}", "[    6.0] booted"] \
@@ -1766,6 +1767,27 @@ class Verify(unittest.TestCase):
         self.assertEqual(code, 3, result)
         self.assertIn({"path": "/system/bin/sh", "what": "missing on the unit"}, result["differences"])
         self.assertIn("reboot bootloader", " ".join(result["advice"]))
+        # One reading covered and the other not reach different judgements: nothing is concluded, either way.
+        for first, second in ((0, 1), (1, 0)):
+            with self.subTest(first=first, second=second):
+                self.kernel_status_by_reading, self.readings = {1: first, 2: second}, 0
+                result, code = self.verify()
+                self.assertEqual(code, 1, result)
+        self.kernel_status_by_reading = {}
+        # An ext4 error the later log holds but cannot place leaves an absence unconfirmed.
+        original_answer = self.answer
+        self.answer = lambda name: original_answer(name)[:5] + [
+            "[    5.5] EXT4-fs error (device vda): ext4_readdir:177: inode #12: comm find: directory contains a hole "
+            "at lblock 0", *self.kernel_history] if name == "kernel" else original_answer(name)
+        result, code = self.verify()
+        self.answer = original_answer
+        self.assertEqual(code, 3, result)
+        self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
+        # So does a log that held nothing before the walks: it cannot show that none of theirs rolled out.
+        self.kernel_history = []
+        result, code = self.verify()
+        self.assertEqual(code, 3, result)
+        self.assertNotIn("reboot bootloader", " ".join(result["advice"]))
 
     def test_a_stop_advises_another_write_only_for_both_images_the_journal_binds(self):
         self.unit["/system/build.prop"]["sha1"] = "f" * 40
