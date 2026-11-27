@@ -13,6 +13,7 @@ import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.wifi.WifiManager;
@@ -198,10 +199,7 @@ public final class MainActivity extends Activity {
                             | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
                             | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
         }
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        applyImmersiveFullscreen();
 
         configStore = new ConfigStore(this);
         automation = AutomationManager.getInstance(this);
@@ -213,6 +211,7 @@ public final class MainActivity extends Activity {
             WebView.setWebContentsDebuggingEnabled(true);
         }
 
+        getWindow().setFormat(PixelFormat.RGBA_8888);
         root = new FrameLayout(this);
         setContentView(root);
 
@@ -305,7 +304,9 @@ public final class MainActivity extends Activity {
         super.onResume();
         activityResumed = true;
         ActivityDiagnostics.resumed();
+        applyImmersiveFullscreen();
         ForegroundKeeper.dashboardResumed(this);
+        QualcommDisplayPostProcDisabler.getInstance(this).ensureLinearSoon();
         if (root != null) {
             renderDashboard();
         }
@@ -336,6 +337,22 @@ public final class MainActivity extends Activity {
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         ActivityDiagnostics.focusChanged(hasFocus);
+        if (hasFocus) {
+            applyImmersiveFullscreen();
+        }
+    }
+
+    private void applyImmersiveFullscreen() {
+        View decor = getWindow().getDecorView();
+        if (decor != null) {
+            decor.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
     }
 
     @Override
@@ -648,6 +665,12 @@ public final class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        if (NativePanelViewport.isNative1080Panel()) {
+            settings.setUseWideViewPort(true);
+            settings.setLoadWithOverviewMode(true);
+            settings.setUserAgentString(
+                    settings.getUserAgentString() + " " + NativePanelViewport.WEBVIEW_UA_TOKEN);
+        }
         webDashboard.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {

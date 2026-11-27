@@ -46,6 +46,7 @@ public final class MirrorHomeApplication extends Application {
         ScanGuard.getInstance(this).start(this);
         WifiKeeper.getInstance(this).start(this);
         SupervisorHold.getInstance(this).start();
+        QualcommDisplayPostProcDisabler.getInstance(this).start();
         MirrorBinderClient.getInstance(this).connect();
         SystemHelperClient.getInstance(this).connect();
         MediaPlaybackManager.getInstance(this);

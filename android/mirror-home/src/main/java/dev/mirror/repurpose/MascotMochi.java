@@ -13,7 +13,7 @@ final class MascotMochi extends Mascot {
     /** Where on the head's outline an ear stands, in degrees: from, the middle, to. */
     private static final float[] RIGHT_EAR = {291f, 314f, 337f};
     private static final float[] LEFT_EAR = {203f, 226f, 249f};
-    private static final int STEP = 6;
+    private static final int STEP = 2;
 
     private final float[] head = new float[2 * (360 / STEP + 8)];
     private final float[] tip = new float[2];
@@ -59,9 +59,9 @@ final class MascotMochi extends Mascot {
         float glee = Math.max(pose.is(Mood.HAPPY), pose.is(Mood.GREETING));
         float raise = 0.06f * glee - 0.07f * pose.droop;
         for (int side = -1; side <= 1; side += 2) {
-            ink(pen, 0.6f);
-            pen.line(side * 0.37f, 0.2f, side * 0.7f, 0.13f - raise, 0.032f);
-            pen.line(side * 0.37f, 0.27f, side * 0.7f, 0.29f - raise * 0.6f, 0.032f);
+            ink(pen, 0.85f);
+            pen.line(side * 0.37f, 0.2f, side * 0.7f, 0.13f - raise, 0.036f);
+            pen.line(side * 0.37f, 0.27f, side * 0.7f, 0.29f - raise * 0.6f, 0.036f);
         }
         if (glee > 0.02f) {
             blush(pen, glee * 0.75f);
